@@ -36,7 +36,12 @@ ENDPOINTS: dict[EndpointName, Endpoint] = {
     EndpointName.REQUEST_QR: Endpoint("GET", "/account/get_qrcode_url/", False, True),
     EndpointName.QR_STATE: Endpoint("GET", "/account/qr_state/", False, True),
     EndpointName.RESTORE_LOGIN: Endpoint("GET", "/account/restore_login", False, True),
-    EndpointName.CURRENT_USER: Endpoint("GET", "/account/info/", True, True),
+    EndpointName.CURRENT_USER: Endpoint(
+        "GET",
+        "/bbs/app/api/user/permission",
+        True,
+        True,
+    ),
     EndpointName.USER_MESSAGES: Endpoint("GET", "/bbs/app/user/message", True, True),
     EndpointName.POST_TREE: Endpoint("GET", "/bbs/app/link/tree", True, True),
     EndpointName.CREATE_COMMENT: Endpoint(

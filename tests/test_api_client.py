@@ -99,10 +99,13 @@ async def test_notification_queries_use_reference_parameters_and_offset_paging()
     assert observed[0]["os_type"] == "web"
     assert observed[0]["app"] == "heybox"
     assert observed[0]["client_type"] == "web"
+    assert observed[0]["version"] == "999.0.4"
+    assert observed[0]["web_version"] == "3.0"
     assert observed[0]["x_client_type"] == "web"
     assert observed[0]["x_app"] == "heybox_website"
     assert observed[0]["x_os_type"] == "Windows"
     assert observed[0]["_notip"] == "true"
+    assert len(observed[0]["hkey"]) == 7
     assert "type" not in observed[0]
     assert "page" not in observed[0]
     assert observed[1]["list_type"] == "0"
@@ -127,6 +130,42 @@ async def test_authenticated_upstream_failed_status_is_not_silent_success() -> N
         await client.fetch_notifications(NotificationType.MENTION)
     assert client.last_error["category"] == "upstream_rejected"
     assert client.last_success_at is None
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_relogin_business_status_invalidates_credentials() -> None:
+    called = []
+
+    async def callback(profile_id, status):
+        called.append((profile_id, status))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "relogin", "msg": "请重新登录"},
+        )
+
+    client, http_client = client_with_handler(handler, callback=callback)
+    with pytest.raises(CredentialInvalidError, match="relogin"):
+        await client.fetch_notifications(NotificationType.MENTION)
+    assert called == [("default", 401)]
+    assert client.last_error["category"] == "credential_invalid"
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_credential_check_uses_observed_permission_endpoint() -> None:
+    observed = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(request.url.path)
+        return httpx.Response(200, json={"permission": {"comment": True}})
+
+    client, http_client = client_with_handler(handler)
+    result = await client.check_credentials()
+    assert observed == ["/bbs/app/api/user/permission"]
+    assert result == {"permission": {"comment": True}}
     await client.close()
     await http_client.aclose()
 
