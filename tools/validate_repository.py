@@ -8,7 +8,17 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-EXCLUDED = {".git", ".pytest_cache", ".ruff_cache", "work", "outputs", "__pycache__"}
+EXCLUDED = {
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    "work",
+    "outputs",
+    "__pycache__",
+    "build",
+    "dist",
+}
+EXCLUDED_FILES = {".coverage", "coverage.xml"}
 FORBIDDEN_SUFFIXES = {".db", ".db-shm", ".db-wal", ".log", ".qr"}
 MAX_ARCHIVE_INPUT_BYTES = 5 * 1024 * 1024
 
@@ -31,7 +41,11 @@ def files() -> list[Path]:
     return [
         path
         for path in ROOT.rglob("*")
-        if path.is_file() and not any(part in EXCLUDED for part in path.relative_to(ROOT).parts)
+        if path.is_file()
+        and path.name not in EXCLUDED_FILES
+        and not any(
+            part in EXCLUDED or part.endswith(".egg-info") for part in path.relative_to(ROOT).parts
+        )
     ]
 
 
