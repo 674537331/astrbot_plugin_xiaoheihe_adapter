@@ -78,11 +78,7 @@ async def test_reference_qr_contract_preserves_query_and_reads_cookie_uid() -> N
         observed_query.update(dict(request.url.params))
         return httpx.Response(
             200,
-            json=load_fixture("qr_reference_success.json"),
-            headers=[
-                ("set-cookie", "pkey=mock-pkey; Path=/; Secure"),
-                ("set-cookie", "user_heybox_id=10001; Path=/; Secure"),
-            ],
+            json=load_fixture("qr_direct_credentials_success.json"),
         )
 
     client, http_client = client_with_handler(handler, authenticated=False)
@@ -99,7 +95,39 @@ async def test_reference_qr_contract_preserves_query_and_reads_cookie_uid() -> N
     assert result_credentials.uid == "10001"
     assert result_credentials.nickname == "MockUser"
     assert result_credentials.cookies["qr_session"] == "mock-session"
-    assert result_credentials.cookies["pkey"] == "mock-pkey"
+    assert result_credentials.cookies["pkey"] == "redacted-fixture-pkey"
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_qr_success_restores_missing_credentials() -> None:
+    paths = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/account/get_qrcode_url/":
+            payload = load_fixture("qr_reference_response.json")
+        elif request.url.path == "/account/qr_state/":
+            payload = {
+                "status": "ok",
+                "result": {
+                    "error": "ok",
+                    "heyboxid": "10001",
+                    "nickname": "MockUser",
+                },
+            }
+        else:
+            payload = load_fixture("restore_login_success.json")
+        return httpx.Response(200, json=payload)
+
+    client, http_client = client_with_handler(handler, authenticated=False)
+    qr = await client.request_qr()
+    state, _, result_credentials = await client.check_qr(qr)
+
+    assert state.value == "success"
+    assert paths[-1] == "/account/restore_login"
+    assert result_credentials.uid == "10001"
+    assert result_credentials.cookies["pkey"] == "redacted-restored-pkey"
     await client.close()
     await http_client.aclose()
 

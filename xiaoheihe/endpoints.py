@@ -13,6 +13,7 @@ API_BASE_URL = "https://api.xiaoheihe.cn"
 class EndpointName(StrEnum):
     REQUEST_QR = "request_qr"
     QR_STATE = "qr_state"
+    RESTORE_LOGIN = "restore_login"
     CURRENT_USER = "current_user"
     USER_MESSAGES = "user_messages"
     POST_TREE = "post_tree"
@@ -32,6 +33,7 @@ class Endpoint:
 ENDPOINTS: dict[EndpointName, Endpoint] = {
     EndpointName.REQUEST_QR: Endpoint("GET", "/account/get_qrcode_url/", False, True),
     EndpointName.QR_STATE: Endpoint("GET", "/account/qr_state/", False, True),
+    EndpointName.RESTORE_LOGIN: Endpoint("GET", "/account/restore_login", False, True),
     EndpointName.CURRENT_USER: Endpoint("GET", "/account/info/", True, True),
     EndpointName.USER_MESSAGES: Endpoint("GET", "/bbs/app/user/message", True, True),
     EndpointName.POST_TREE: Endpoint("GET", "/bbs/app/link/tree", True, True),

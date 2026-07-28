@@ -6,6 +6,7 @@ from tests.helpers import load_fixture
 from xiaoheihe.models import LoginState, NotificationType
 from xiaoheihe.parsers import (
     ResponseShapeError,
+    parse_credentials,
     parse_login_state,
     parse_notifications,
     parse_qr_response,
@@ -32,7 +33,7 @@ def test_reference_login_state_error_marker_variants() -> None:
                 "result": {"error": "wait", "error_msg": "请在手机端确认登录"},
             }
         )[0]
-        is LoginState.SCANNED_WAITING_CONFIRM
+        is LoginState.WAITING_SCAN
     )
     assert (
         parse_login_state(
@@ -43,6 +44,25 @@ def test_reference_login_state_error_marker_variants() -> None:
         )[0]
         is LoginState.WAITING_SCAN
     )
+    assert (
+        parse_login_state({"status": "ok", "result": {"error": "ready"}})[0]
+        is LoginState.SCANNED_WAITING_CONFIRM
+    )
+
+
+def test_direct_login_credentials_support_current_result_fields() -> None:
+    credentials = parse_credentials(
+        "default",
+        load_fixture("qr_direct_credentials_success.json"),
+        {},
+        logged_in_at="2026-07-28T00:00:00+00:00",
+    )
+    assert credentials.uid == "10001"
+    assert credentials.nickname == "MockUser"
+    assert credentials.cookies == {
+        "pkey": "redacted-fixture-pkey",
+        "heybox_id": "10001",
+    }
 
 
 def test_fixture_contracts() -> None:
