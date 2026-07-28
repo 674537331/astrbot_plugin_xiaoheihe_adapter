@@ -65,6 +65,45 @@ async def test_qr_wait_scan_success_and_notification_parse() -> None:
     await http_client.aclose()
 
 
+async def test_reference_qr_contract_preserves_query_and_reads_cookie_uid() -> None:
+    observed_query = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/account/get_qrcode_url/":
+            return httpx.Response(
+                200,
+                json=load_fixture("qr_reference_response.json"),
+                headers={"set-cookie": "qr_session=mock-session; Path=/; Secure"},
+            )
+        observed_query.update(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json=load_fixture("qr_reference_success.json"),
+            headers=[
+                ("set-cookie", "pkey=mock-pkey; Path=/; Secure"),
+                ("set-cookie", "user_heybox_id=10001; Path=/; Secure"),
+            ],
+        )
+
+    client, http_client = client_with_handler(handler, authenticated=False)
+    qr = await client.request_qr()
+    assert qr.poll_params == {"qr_ticket": "mock-ticket", "device": "web"}
+    assert qr.request_id
+
+    state, _, result_credentials = await client.check_qr(qr)
+
+    assert state.value == "success"
+    assert "request_id" not in observed_query
+    assert observed_query["qr_ticket"] == "mock-ticket"
+    assert observed_query["device"] == "web"
+    assert result_credentials.uid == "10001"
+    assert result_credentials.nickname == "MockUser"
+    assert result_credentials.cookies["qr_session"] == "mock-session"
+    assert result_credentials.cookies["pkey"] == "mock-pkey"
+    await client.close()
+    await http_client.aclose()
+
+
 async def test_comment_send_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/bbs/app/comment/create"

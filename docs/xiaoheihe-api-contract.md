@@ -12,6 +12,19 @@
 `httpx.MockTransport`。在真实环境验证前必须保持 `dry_run: true`；本文不会把 fixture
 测试描述成真实可用性证明。
 
+### v1.0.1 扫码兼容修正
+
+用户真实扫码暴露出 v1.0.0 的状态解析不匹配；修正依据仍来自公开参考项目，不包含真实
+Cookie 或响应转储。当前契约兼容：
+
+- 二维码字段 `result.qr_url` 和有效期字段 `result.expire`；
+- 将 `qr_url` 自带查询参数原样用于 `/account/qr_state/`，不附加臆造参数；
+- `result.error == "ok"` 表示确认成功，其他非终止标记继续等待；
+- 昵称来自 `result.nickname`，UID 可来自登录响应的 `user_heybox_id` Cookie；
+- 获取二维码和查询状态共用同一个长生命周期 Cookie 会话。
+
+该修正已由脱敏 fixture 覆盖；真实账号完整登录成功仍需用户升级后复测确认。
+
 ## 端点清单
 
 | 功能 | 方法与路径 | 参考观察 | 本项目状态 |
@@ -93,4 +106,3 @@ WebUI 只接收二维码图片、公开状态、昵称、UID 和时间；Cookie�
 
 任何真实响应样本在提交前都必须移除 Cookie、Token、设备 ID、UID、昵称、私有帖子内容和
 可追踪 URL 参数。
-

@@ -3,10 +3,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
+
+
+@dataclass(frozen=True, slots=True)
+class ExecuteResult:
+    rowcount: int
+    lastrowid: int | None
+
 
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (
@@ -256,25 +264,41 @@ class Database:
         )
         return int(row["version"]) if row else 0
 
-    async def execute(self, sql: str, parameters: Iterable[Any] = ()) -> aiosqlite.Cursor:
+    async def execute(self, sql: str, parameters: Iterable[Any] = ()) -> ExecuteResult:
         async with self._write_lock:
             cursor = await self.connection.execute(sql, tuple(parameters))
-            await self.connection.commit()
-            return cursor
+            try:
+                await self.connection.commit()
+                return ExecuteResult(
+                    rowcount=cursor.rowcount,
+                    lastrowid=cursor.lastrowid,
+                )
+            finally:
+                await cursor.close()
 
-    async def executemany(self, sql: str, parameters: Iterable[Iterable[Any]]) -> aiosqlite.Cursor:
+    async def executemany(
+        self,
+        sql: str,
+        parameters: Iterable[Iterable[Any]],
+    ) -> ExecuteResult:
         async with self._write_lock:
             cursor = await self.connection.executemany(sql, [tuple(items) for items in parameters])
-            await self.connection.commit()
-            return cursor
+            try:
+                await self.connection.commit()
+                return ExecuteResult(
+                    rowcount=cursor.rowcount,
+                    lastrowid=cursor.lastrowid,
+                )
+            finally:
+                await cursor.close()
 
     async def fetchone(self, sql: str, parameters: Iterable[Any] = ()) -> aiosqlite.Row | None:
-        cursor = await self.connection.execute(sql, tuple(parameters))
-        return await cursor.fetchone()
+        async with self.connection.execute(sql, tuple(parameters)) as cursor:
+            return await cursor.fetchone()
 
     async def fetchall(self, sql: str, parameters: Iterable[Any] = ()) -> list[aiosqlite.Row]:
-        cursor = await self.connection.execute(sql, tuple(parameters))
-        return list(await cursor.fetchall())
+        async with self.connection.execute(sql, tuple(parameters)) as cursor:
+            return list(await cursor.fetchall())
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
@@ -290,12 +314,17 @@ class Database:
 
     async def checkpoint(self) -> None:
         async with self._write_lock:
-            await self.connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            async with self.connection.execute("PRAGMA wal_checkpoint(PASSIVE)") as cursor:
+                await cursor.fetchall()
 
     async def incremental_vacuum(self, pages: int = 200) -> None:
         safe_pages = max(1, min(int(pages), 5000))
         async with self._write_lock:
-            await self.connection.execute(f"PRAGMA incremental_vacuum({safe_pages})")
+            async with self.connection.execute(
+                f"PRAGMA incremental_vacuum({safe_pages})"
+            ) as cursor:
+                await cursor.fetchall()
+            await self.connection.commit()
 
     async def close(self) -> None:
         if self._closed:

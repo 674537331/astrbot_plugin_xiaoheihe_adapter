@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 from .models import (
     ApiPage,
@@ -59,24 +61,58 @@ def parse_qr_response(
 ) -> QRLoginSession:
     body = _data(payload)
     qr_content = str(_first(body, "qrcode", "qr_url", "url", "qr_content"))
-    request_id = _id(body, "request_id", "qr_id", "token", "nonce")
     if not qr_content:
         raise ResponseShapeError("二维码响应缺少 qrcode/qr_url")
+    poll_params = {
+        str(key): str(value)
+        for key, value in parse_qsl(
+            urlsplit(qr_content).query,
+            keep_blank_values=True,
+        )
+    }
+    request_id = _id(body, "request_id", "qr_id", "token", "nonce")
     if not request_id:
-        request_id = qr_content.rsplit("?", 1)[-1][:160]
-    ttl = int(_first(body, "expires_in", "ttl", default=180))
+        request_id = next(
+            (
+                poll_params[key]
+                for key in ("request_id", "qr_id", "token", "nonce")
+                if poll_params.get(key)
+            ),
+            "",
+        )
+    if not request_id:
+        request_id = hashlib.sha256(qr_content.encode("utf-8")).hexdigest()[:32]
     started = now if now is not None else time.time()
+    raw_expiry = _first(body, "expires_in", "ttl", "expire", default=180)
+    try:
+        expiry = float(raw_expiry)
+    except (TypeError, ValueError) as exc:
+        raise ResponseShapeError("二维码过期时间不是数字") from exc
+    if expiry > 10_000_000_000:
+        expiry /= 1000
+    ttl = expiry - started if expiry > 1_000_000_000 else expiry
     return QRLoginSession(
         profile_id=profile_id,
         request_id=request_id,
         qr_content=qr_content,
         expires_at=started + max(10, min(ttl, 600)),
+        poll_params=poll_params,
     )
 
 
 def parse_login_state(payload: Mapping[str, Any]) -> tuple[LoginState, str]:
     body = _data(payload)
-    raw_state = str(_first(body, "state", "status", "qr_state", default="waiting")).lower()
+    message = str(
+        _first(
+            body,
+            "message",
+            "msg",
+            "error_msg",
+            "err_msg",
+        )
+    )
+    result_marker = str(_first(body, "error", "err", default="")).strip().lower()
+    raw_state = str(_first(body, "state", "status", "qr_state", default="")).strip().lower()
     state_map = {
         "0": LoginState.WAITING_SCAN,
         "waiting": LoginState.WAITING_SCAN,
@@ -92,7 +128,34 @@ def parse_login_state(payload: Mapping[str, Any]) -> tuple[LoginState, str]:
         "-1": LoginState.FAILED,
         "failed": LoginState.FAILED,
     }
-    return state_map.get(raw_state, LoginState.FAILED), str(_first(body, "message", "msg"))
+    if raw_state in state_map:
+        return state_map[raw_state], message
+    if result_marker in {"ok", "success", "confirmed"}:
+        return LoginState.SUCCESS, message
+
+    hint = f"{result_marker} {message}".casefold()
+    if any(token in hint for token in ("expired", "timeout", "过期", "失效", "超时")):
+        return LoginState.EXPIRED, message
+    if any(
+        token in hint
+        for token in (
+            "scanned",
+            "confirm",
+            "已扫码",
+            "已扫描",
+            "待确认",
+            "请确认",
+            "确认",
+        )
+    ):
+        return LoginState.SCANNED_WAITING_CONFIRM, message
+
+    # The reference web login contract keeps returning a non-"ok" error marker
+    # while it waits. Unknown waiting markers must not terminate a valid QR
+    # session merely because the private API changed its wording.
+    if result_marker or message:
+        return LoginState.WAITING_SCAN, message
+    return LoginState.WAITING_SCAN, ""
 
 
 def parse_credentials(
@@ -103,13 +166,26 @@ def parse_credentials(
     logged_in_at: str,
 ) -> Credentials:
     body = _data(payload)
-    user = _mapping(body.get("user", body.get("account", body)), "登录用户")
+    candidate = body.get("user", body.get("account"))
+    user = candidate if isinstance(candidate, Mapping) else body
     uid = _id(user, "uid", "heybox_id", "user_id", "id")
     nickname = str(_first(user, "nickname", "username", "name"))
     cookies = {str(key): str(value) for key, value in response_cookies.items()}
     embedded_cookies = body.get("cookies")
     if isinstance(embedded_cookies, Mapping):
         cookies.update({str(key): str(value) for key, value in embedded_cookies.items()})
+    if not uid:
+        uid = str(
+            _first(
+                cookies,
+                "user_heybox_id",
+                "heybox_id",
+                "user_id",
+                "uid",
+            )
+        )
+    if not nickname:
+        nickname = str(_first(body, "nickname", "username", "name"))
     access_token = str(_first(body, "access_token", "token"))
     if not uid or not (cookies or access_token):
         raise ResponseShapeError("登录成功响应缺少 UID 或凭证")

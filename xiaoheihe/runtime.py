@@ -506,13 +506,14 @@ class RuntimeServices:
             )
         task_failures = self.tasks.failures()
         if task_failures:
+            latest_failure = task_failures[-1]
             alerts["background_task"] = {
                 "key": "background_task",
                 "level": "error",
-                "message": f"后台任务退出: {task_failures[-1]['task']}",
+                "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
         return {
-            "version": "v1.0.0",
+            "version": "v1.0.1",
             "profiles": profiles,
             "adapters": [
                 {
@@ -610,26 +611,53 @@ class RuntimeServices:
         self._alerts.pop(f"{profile_id}:proactive_circuit", None)
 
     async def _cleanup_loop(self) -> None:
-        try:
-            await asyncio.sleep(60)
-            while True:
-                config = self.config.snapshot()
-                removed = await self.repository.cleanup(config["retention"])
-                pruned = await self.repository.prune_event_bodies(config["retention"])
-                pressure = await self.repository.enforce_soft_limit(config["retention"])
-                self.last_cleanup_at = _iso_now()
+        await self._cleanup_sleep(60)
+        while True:
+            retry_delay = 86400
+            try:
+                await self._run_cleanup_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                safe_error = redact_text(str(exc))[:1000] or type(exc).__name__
+                retry_delay = 3600
+                self._alerts["cleanup"] = {
+                    "key": "cleanup",
+                    "level": "warning",
+                    "message": f"自动清理失败，将在一小时后重试：{safe_error}",
+                }
                 self.logging.emit(
-                    "INFO",
-                    "自动安全清理完成",
-                    details={
-                        "removed": removed,
-                        "pruned_bodies": pruned,
-                        "storage_pressure": pressure,
-                    },
+                    "ERROR",
+                    f"自动安全清理失败：{safe_error}",
+                    details={"exception_type": type(exc).__name__},
                 )
-                await asyncio.sleep(86400)
-        except asyncio.CancelledError:
-            raise
+                with suppress(Exception):
+                    await self.repository.add_runtime_error(
+                        "cleanup",
+                        safe_error,
+                        details={"exception_type": type(exc).__name__},
+                    )
+            await self._cleanup_sleep(retry_delay)
+
+    async def _cleanup_sleep(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+
+    async def _run_cleanup_once(self) -> None:
+        config = self.config.snapshot()
+        removed = await self.repository.cleanup(config["retention"])
+        pruned = await self.repository.prune_event_bodies(config["retention"])
+        pressure = await self.repository.enforce_soft_limit(config["retention"])
+        self.last_cleanup_at = _iso_now()
+        self._alerts.pop("cleanup", None)
+        self.logging.emit(
+            "INFO",
+            "自动安全清理完成",
+            details={
+                "removed": removed,
+                "pruned_bodies": pruned,
+                "storage_pressure": pressure,
+            },
+        )
 
     async def _health_loop(self) -> None:
         while True:

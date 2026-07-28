@@ -137,7 +137,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.0",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.1",
                 },
             )
         if self.credentials:
@@ -151,10 +151,16 @@ class XiaoheiheApiClient:
     async def check_qr(
         self, qr_session: QRLoginSession
     ) -> tuple[LoginState, str, Credentials | None]:
-        params = {"request_id": qr_session.request_id}
-        qr_query = dict(parse_qsl(urlsplit(qr_session.qr_content).query))
-        for key, value in qr_query.items():
-            params.setdefault(key, value)
+        params = dict(qr_session.poll_params)
+        if not params:
+            params = dict(
+                parse_qsl(
+                    urlsplit(qr_session.qr_content).query,
+                    keep_blank_values=True,
+                )
+            )
+        if not params and qr_session.request_id:
+            params["request_id"] = qr_session.request_id
         response = await self._request(EndpointName.QR_STATE, params=params)
         state, message = parse_login_state(response.payload)
         credentials = None
@@ -404,7 +410,7 @@ class XiaoheiheApiClient:
             self.last_error = None
             return ApiResponse(
                 payload=payload,
-                cookies={key: value for key, value in response.cookies.items()},
+                cookies=_cookie_jar_values(self._client, response),
                 headers=response.headers,
             )
 
@@ -459,3 +465,17 @@ def _safe_response_payload(response: httpx.Response) -> Any:
     except json.JSONDecodeError:
         return {"body": response.text[:500]}
     return redact_data(payload)
+
+
+def _cookie_jar_values(
+    client: httpx.AsyncClient,
+    response: httpx.Response,
+) -> dict[str, str]:
+    """Return the full session cookie jar without logging or exposing it."""
+
+    cookies: dict[str, str] = {}
+    for cookie in client.cookies.jar:
+        cookies[str(cookie.name)] = str(cookie.value)
+    for cookie in response.cookies.jar:
+        cookies[str(cookie.name)] = str(cookie.value)
+    return cookies
