@@ -52,6 +52,7 @@ class NotificationService:
         self._pending_per_user: Counter[str] = Counter()
         self._recovery_ids: dict[str, int] = {}
         self._floor_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        self._poll_summary_signatures: dict[str, tuple[Any, ...]] = {}
         self._sequence = itertools.count()
         self._stop = asyncio.Event()
         self._startup_time = time.time()
@@ -131,6 +132,7 @@ class NotificationService:
                     page=page_index,
                     page_size=int(self.config["polling"]["page_size"]),
                 )
+                self._report_poll_summary(event_type, page_index)
                 for wrapper in page.items:
                     notification = wrapper["notification"]
                     if first_run and notification.created_at < baseline:
@@ -143,6 +145,36 @@ class NotificationService:
                 cursor = page.next_cursor
                 if not cursor and page_index >= max_pages:
                     break
+
+    def _report_poll_summary(self, event_type: NotificationType, page_index: int) -> None:
+        summaries = getattr(self.client, "last_notification_polls", {})
+        summary = summaries.get(event_type.value, {})
+        raw_count = int(summary.get("raw_count") or 0)
+        accepted_count = int(summary.get("accepted_count") or 0)
+        message_types = tuple(str(value) for value in summary.get("message_types", []))
+        signature = (raw_count, accepted_count, message_types)
+        if self._poll_summary_signatures.get(event_type.value) == signature:
+            return
+        self._poll_summary_signatures[event_type.value] = signature
+        level = (
+            "WARNING"
+            if event_type is NotificationType.MENTION and raw_count > 0 and not accepted_count
+            else "INFO"
+        )
+        self.logger.emit(
+            level,
+            (f"{event_type.value} 通知页结构：原始 {raw_count} 条，接收 {accepted_count} 条"),
+            profile_id=self.profile_id,
+            details={
+                "event_type": event_type.value,
+                "page": page_index,
+                "raw_count": raw_count,
+                "accepted_count": accepted_count,
+                "message_types": list(message_types),
+                "result_type": summary.get("result_type", ""),
+                "list_field": summary.get("list_field", ""),
+            },
+        )
 
     async def enqueue(self, notification: Notification) -> bool:
         uid = str(notification.sender_uid)

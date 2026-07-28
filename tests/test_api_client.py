@@ -8,8 +8,10 @@ import pytest
 from tests.helpers import load_fixture
 from xiaoheihe.api_client import (
     CredentialInvalidError,
+    ResponseContractError,
     SendUncertainError,
     XiaoheiheApiClient,
+    XiaoheiheApiError,
 )
 from xiaoheihe.models import Credentials, NotificationType, RoutingTarget
 from xiaoheihe.rate_limiter import AsyncRateLimiter
@@ -95,11 +97,64 @@ async def test_notification_queries_use_reference_parameters_and_offset_paging()
     assert observed[0]["no_more"] == "false"
     assert observed[0]["heybox_id"] == "10001"
     assert observed[0]["os_type"] == "web"
+    assert observed[0]["app"] == "heybox"
+    assert observed[0]["client_type"] == "web"
+    assert observed[0]["x_client_type"] == "web"
+    assert observed[0]["x_app"] == "heybox_website"
+    assert observed[0]["x_os_type"] == "Windows"
+    assert observed[0]["_notip"] == "true"
     assert "type" not in observed[0]
     assert "page" not in observed[0]
     assert observed[1]["list_type"] == "0"
     assert observed[1]["offset"] == "40"
     assert "message_type" not in observed[1]
+    assert client.last_notification_polls["mention"]["raw_count"] == 1
+    assert client.last_notification_polls["mention"]["accepted_count"] == 1
+    assert client.last_notification_polls["mention"]["message_types"] == ["16"]
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_authenticated_upstream_failed_status_is_not_silent_success() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "failed", "msg": "request rejected", "result": None},
+        )
+
+    client, http_client = client_with_handler(handler)
+    with pytest.raises(XiaoheiheApiError, match="非成功状态 failed"):
+        await client.fetch_notifications(NotificationType.MENTION)
+    assert client.last_error["category"] == "upstream_rejected"
+    assert client.last_success_at is None
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_notification_shape_error_keeps_only_safe_structure_details() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "result": {
+                    "messages": [
+                        {
+                            "message_type": 16,
+                            "comment_a_text": "private notification text",
+                        }
+                    ]
+                },
+            },
+        )
+
+    client, http_client = client_with_handler(handler)
+    with pytest.raises(ResponseContractError):
+        await client.fetch_notifications(NotificationType.MENTION)
+    details = client.last_error["details"]
+    assert details["raw_count"] == 1
+    assert "comment_a_text" in details["item_fields"]
+    assert "private notification text" not in str(details)
     await client.close()
     await http_client.aclose()
 

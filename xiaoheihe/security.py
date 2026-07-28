@@ -20,7 +20,8 @@ LONG_RUN_RE = re.compile(r"(.)\1{19,}", re.S)
 MULTI_BLANK_RE = re.compile(r"\n{3,}")
 URL_RE = re.compile(r"https?://[^\s<>()]+", re.I)
 SENSITIVE_KEY_RE = re.compile(
-    r"(cookie|token|secret|authorization|device[_-]?id|session|signing[_-]?key)",
+    r"(?:cookie|token|secret|authorization|pkey|device[_-]?id|"
+    r"signing[_-]?key|^session$|^session[_-]?(?:id|key|token)$)",
     re.I,
 )
 BEARER_RE = re.compile(r"(?i)\b(Bearer|Token)\s+[A-Za-z0-9._~+/=-]{8,}")

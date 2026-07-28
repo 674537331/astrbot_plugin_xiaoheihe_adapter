@@ -39,6 +39,17 @@ from .security import redact_data
 
 AuthInvalidCallback = Callable[[str, int], Awaitable[None]]
 
+AUTHENTICATED_WEB_PARAMS = {
+    "app": "heybox",
+    "client_type": "web",
+    "x_client_type": "web",
+    "x_client_version": "",
+    "x_app": "heybox_website",
+    "x_os_type": "Windows",
+    "device_info": "Chrome",
+    "_notip": "true",
+}
+
 
 class XiaoheiheApiError(RuntimeError):
     def __init__(
@@ -115,6 +126,7 @@ class XiaoheiheApiClient:
         self._closed = False
         self.last_success_at: str | None = None
         self.last_error: dict[str, Any] | None = None
+        self.last_notification_polls: dict[str, dict[str, Any]] = {}
         self.consecutive_status: dict[int, int] = {401: 0, 403: 0, 429: 0}
 
     @property
@@ -137,7 +149,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.4",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.5",
                 },
             )
         if self.credentials:
@@ -232,8 +244,9 @@ class XiaoheiheApiClient:
         else:
             params["list_type"] = 0
         response = await self._request(EndpointName.USER_MESSAGES, params=params)
+        summary = _notification_response_summary(response.payload)
         try:
-            return parse_notifications(
+            parsed = parse_notifications(
                 self.profile_id,
                 response.payload,
                 event_type,
@@ -241,9 +254,14 @@ class XiaoheiheApiClient:
                 offset=offset,
             )
         except ResponseShapeError as exc:
-            raise ResponseContractError(
-                str(exc), category="response_shape", details=response.payload
-            ) from exc
+            summary["error"] = str(exc)
+            self.last_notification_polls[event_type.value] = summary
+            error = ResponseContractError(str(exc), category="response_shape", details=summary)
+            self._remember_error(error)
+            raise error from exc
+        summary["accepted_count"] = len(parsed.items)
+        self.last_notification_polls[event_type.value] = summary
+        return parsed
 
     async def fetch_thread_context(
         self, post_id: str, *, root_comment_id: str = ""
@@ -255,9 +273,13 @@ class XiaoheiheApiClient:
         try:
             return parse_thread_context(response.payload, post_id)
         except ResponseShapeError as exc:
-            raise ResponseContractError(
-                str(exc), category="response_shape", details=response.payload
-            ) from exc
+            error = ResponseContractError(
+                str(exc),
+                category="response_shape",
+                details=_response_shape_summary(response.payload),
+            )
+            self._remember_error(error)
+            raise error from exc
 
     async def send_comment(self, route: RoutingTarget, content: str) -> SendResult:
         body = {
@@ -271,9 +293,13 @@ class XiaoheiheApiClient:
         try:
             return parse_send_result(response.payload)
         except ResponseShapeError as exc:
-            raise ResponseContractError(
-                str(exc), category="response_shape", details=response.payload
-            ) from exc
+            error = ResponseContractError(
+                str(exc),
+                category="response_shape",
+                details=_response_shape_summary(response.payload),
+            )
+            self._remember_error(error)
+            raise error from exc
 
     async def recent_comments(
         self, route: RoutingTarget, *, limit: int = 20
@@ -336,6 +362,9 @@ class XiaoheiheApiClient:
         request_params.setdefault("os_type", "web")
         if self.credentials and self.credentials.uid:
             request_params.setdefault("heybox_id", self.credentials.uid)
+        if contract.authenticated:
+            for key, value in AUTHENTICATED_WEB_PARAMS.items():
+                request_params.setdefault(key, value)
         signed = self._signer.sign(
             contract.method,
             contract.path,
@@ -464,6 +493,16 @@ class XiaoheiheApiClient:
                 )
                 self._remember_error(error)
                 raise error
+            upstream_error = _upstream_error(payload)
+            if upstream_error:
+                error = XiaoheiheApiError(
+                    upstream_error,
+                    status_code=response.status_code,
+                    category="upstream_rejected",
+                    details=_response_shape_summary(payload),
+                )
+                self._remember_error(error)
+                raise error
             self._reset_status_counts()
             self.last_success_at = datetime.now(UTC).isoformat()
             self.last_error = None
@@ -478,6 +517,7 @@ class XiaoheiheApiClient:
             "category": error.category,
             "status_code": error.status_code,
             "message": str(error),
+            "details": error.details,
         }
 
     def _count_status(self, status: int) -> None:
@@ -545,3 +585,64 @@ def _result_field_names(payload: Mapping[str, Any]) -> list[str]:
     if not isinstance(candidate, Mapping):
         return []
     return sorted(str(key) for key in candidate)[:50]
+
+
+def _upstream_error(payload: Mapping[str, Any]) -> str:
+    marker = payload.get("status", payload.get("stat"))
+    if marker is None or isinstance(marker, (Mapping, list)):
+        return ""
+    normalized = str(marker).strip().casefold()
+    if not normalized or normalized in {"ok", "success", "200"}:
+        return ""
+    raw_message = payload.get("msg", payload.get("message", payload.get("error", "")))
+    message = redact_data(str(raw_message)) if raw_message else ""
+    suffix = f": {str(message)[:300]}" if message else ""
+    return f"小黑盒 API 返回非成功状态 {str(marker)[:80]}{suffix}"
+
+
+def _response_shape_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    candidate = payload.get("result", payload.get("data", payload))
+    summary: dict[str, Any] = {
+        "top_fields": sorted(str(key) for key in payload)[:50],
+        "result_type": type(candidate).__name__,
+    }
+    marker = payload.get("status", payload.get("stat"))
+    if marker is not None and not isinstance(marker, (Mapping, list)):
+        summary["status"] = str(marker)[:80]
+    if isinstance(candidate, Mapping):
+        summary["result_fields"] = sorted(str(key) for key in candidate)[:50]
+    elif isinstance(candidate, list):
+        summary["result_count"] = len(candidate)
+    return summary
+
+
+def _notification_response_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    summary = _response_shape_summary(payload)
+    candidate = payload.get("result", payload.get("data", payload))
+    raw_items: Any = []
+    if isinstance(candidate, Mapping):
+        for key in ("items", "messages", "list"):
+            if key in candidate:
+                raw_items = candidate[key]
+                summary["list_field"] = key
+                break
+    elif isinstance(candidate, list):
+        raw_items = candidate
+        summary["list_field"] = "result"
+    if isinstance(raw_items, list):
+        summary["raw_count"] = len(raw_items)
+        field_names: set[str] = set()
+        message_types: set[str] = set()
+        for item in raw_items[:5]:
+            if not isinstance(item, Mapping):
+                continue
+            field_names.update(str(key) for key in item)
+            marker = item.get("message_type", item.get("type"))
+            if marker is not None:
+                message_types.add(str(marker)[:40])
+        summary["item_fields"] = sorted(field_names)[:80]
+        summary["message_types"] = sorted(message_types)[:20]
+    else:
+        summary["list_type"] = type(raw_items).__name__
+    summary["checked_at"] = datetime.now(UTC).isoformat()
+    return summary

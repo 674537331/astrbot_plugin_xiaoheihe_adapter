@@ -155,6 +155,12 @@ td.wrap { min-width: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
   white-space: pre-wrap;
 }
 .sse-state { margin-bottom: 0.6rem; color: var(--muted); font-size: 0.82rem; }
+.diagnostics-fallback { margin-top: 1rem; }
+.diagnostics-fallback p { margin-top: 0; }
+#diagnostics-output {
+  min-height: 320px;
+  font: 0.78rem/1.5 ui-monospace, "Cascadia Code", monospace;
+}
 .result { min-height: 1.2rem; }
 
 .toast {
@@ -181,4 +187,3 @@ td.wrap { min-width: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .two-column { grid-template-columns: 1fr; }
   .section-heading { align-items: start; flex-direction: column; }
 }
-
