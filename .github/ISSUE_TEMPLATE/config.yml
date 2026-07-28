@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/security/advisories/new
+    about: 请私密报告安全问题
+

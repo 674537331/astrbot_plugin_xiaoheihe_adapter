@@ -1,0 +1,30 @@
+{
+  "result": {
+    "items": [
+      {
+        "notification_id": "notice-1",
+        "comment": {
+          "comment_id": "comment-1",
+          "content": "@Robot <b>你好</b>",
+          "root_comment_id": "root-1",
+          "parent_comment_id": "root-1",
+          "images": [
+            "https://cdn.example.com/a.png"
+          ]
+        },
+        "sender": {
+          "heybox_id": "20002",
+          "nickname": "Alice"
+        },
+        "post": {
+          "link_id": "30003",
+          "author_uid": "40004"
+        },
+        "created_at": 1800000000
+      }
+    ],
+    "next_cursor": "",
+    "has_more": false
+  }
+}
+

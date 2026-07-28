@@ -1,0 +1,27 @@
+{
+  "result": {
+    "post": {
+      "link_id": "30003",
+      "title": "测试帖子",
+      "content": "<p>帖子正文</p>",
+      "author": {
+        "heybox_id": "40004",
+        "nickname": "Poster"
+      },
+      "images": [
+        "https://cdn.example.com/post.png"
+      ]
+    },
+    "comments": [
+      {
+        "id": "root-1",
+        "content": "第一条",
+        "user": {
+          "heybox_id": "20002",
+          "nickname": "Alice"
+        }
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[test]" ruff PyYAML
+      - name: JSON, YAML, page and package checks
+        run: python tools/validate_repository.py
+      - name: Ruff check
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+      - name: Python compile smoke
+        run: python -m compileall -q .
+      - name: Frontend JavaScript syntax
+        run: node --check pages/xiaoheihe/app.js
+      - name: AstrBot API stub import smoke
+        run: >-
+          python -c "from tests.astrbot_stubs import install; install();
+          import xiaoheihe.adapter, xiaoheihe.event, xiaoheihe.web_api"
+      - name: Tests and coverage
+        run: |
+          coverage run -m pytest -q
+          coverage report
+          coverage xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  astrbot-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        astrbot-version: ["4.24.2", "4.26.2"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install AstrBot package without heavy runtime dependencies
+        run: python -m pip install --no-deps "AstrBot==${{ matrix.astrbot-version }}"
+      - name: Validate required AstrBot files and symbols
+        run: >-
+          python tools/check_astrbot_contract.py
+          --expected-version "${{ matrix.astrbot-version }}"
+
+  astrbot-latest-stable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install latest supported AstrBot package
+        run: python -m pip install --no-deps "AstrBot>=4.24.2,<5"
+      - name: Validate latest stable AstrBot API contract
+        run: python tools/check_astrbot_contract.py

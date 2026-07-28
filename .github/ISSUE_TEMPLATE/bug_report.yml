@@ -1,0 +1,42 @@
+name: Bug report
+description: 报告可复现问题，不要提交凭证或未脱敏数据
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 请先删除 Cookie、Token、设备 ID、二维码、真实 UID、昵称和私有正文。
+  - type: input
+    id: astrbot_version
+    attributes:
+      label: AstrBot 版本
+    validations:
+      required: true
+  - type: input
+    id: plugin_version
+    attributes:
+      label: 插件版本
+      value: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: dry_run
+    attributes:
+      label: 是否为 dry-run
+      options:
+        - "是"
+        - "否"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 脱敏诊断
+      description: 不要粘贴凭证文件、数据库、二维码或完整 Cookie。
+

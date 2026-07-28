@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="小黑盒适配器">
+  <rect width="128" height="128" rx="28" fill="#12191d"/>
+  <path d="M32 38h64v52c0 8-6 14-14 14H46c-8 0-14-6-14-14V38Z" fill="#20c77a"/>
+  <path d="M44 27h40l12 11H32l12-11Z" fill="#76e6b2"/>
+  <circle cx="52" cy="67" r="8" fill="#12191d"/>
+  <circle cx="76" cy="67" r="8" fill="#12191d"/>
+  <path d="M48 87c9 7 23 7 32 0" fill="none" stroke="#12191d" stroke-width="7" stroke-linecap="round"/>
+</svg>
+
