@@ -8,7 +8,7 @@ from typing import Any
 
 # The hkey algorithm is independently ported to Python from the MIT-licensed
 # heybox-core implementation by XiaHouSheng. See THIRD_PARTY_NOTICES.md.
-_HKEY_ALPHABET = "AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89"
+_HKEY_ALPHABET = "AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89"  # gitleaks:allow
 # MD5 is required by the upstream compatibility contract. It is not used for
 # password storage, integrity protection, or any local security decision.
 
