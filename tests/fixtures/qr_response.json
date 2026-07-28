@@ -1,0 +1,8 @@
+{
+  "result": {
+    "qrcode": "https://api.xiaoheihe.cn/account/qr_login/?request_id=mock-qr-1",
+    "request_id": "mock-qr-1",
+    "expires_in": 180
+  }
+}
+

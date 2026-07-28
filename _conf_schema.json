@@ -1,0 +1,427 @@
+{
+  "profiles": {
+    "type": "template_list",
+    "description": "小黑盒账号档案",
+    "hint": "v1.0.0 正式支持单账号运行；结构和存储均按 profile_id 隔离。凭证不会保存在这里。",
+    "templates": {
+      "account": {
+        "name": "账号档案",
+        "display_item": "profile_id",
+        "hide_hint_in_list": true,
+        "items": {
+          "profile_id": {
+            "description": "档案 ID",
+            "type": "string",
+            "default": "default",
+            "hint": "仅允许字母、数字、下划线和短横线；须与机器人页面适配器的 profile_id 一致。"
+          },
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "默认账号"
+          },
+          "enabled": {
+            "description": "启用档案",
+            "type": "bool",
+            "default": true
+          },
+          "poll_mentions": {
+            "description": "轮询 @ 通知",
+            "type": "bool",
+            "default": true
+          },
+          "poll_replies": {
+            "description": "轮询评论回复",
+            "type": "bool",
+            "default": true
+          },
+          "dry_run": {
+            "description": "仅演练，不发送真实评论",
+            "type": "bool",
+            "default": true
+          },
+          "owner_uid": {
+            "description": "主人小黑盒 UID",
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    },
+    "default": [
+      {
+        "__template_key": "account",
+        "profile_id": "default",
+        "display_name": "默认账号",
+        "enabled": true,
+        "poll_mentions": true,
+        "poll_replies": true,
+        "dry_run": true,
+        "owner_uid": ""
+      }
+    ]
+  },
+  "polling": {
+    "type": "object",
+    "description": "通知轮询",
+    "items": {
+      "poll_interval_seconds": {
+        "description": "轮询间隔（秒）",
+        "type": "int",
+        "default": 60,
+        "slider": {
+          "min": 30,
+          "max": 1800,
+          "step": 5
+        }
+      },
+      "poll_jitter_seconds": {
+        "description": "轮询随机抖动（秒）",
+        "type": "float",
+        "default": 5.0
+      },
+      "max_pages_per_poll": {
+        "description": "每类通知最大页数",
+        "type": "int",
+        "default": 3
+      },
+      "page_size": {
+        "description": "单页通知数",
+        "type": "int",
+        "default": 20
+      },
+      "initial_backfill_count": {
+        "description": "首次启动回溯条数",
+        "type": "int",
+        "default": 0,
+        "hint": "默认 0，不处理已有历史通知。"
+      }
+    }
+  },
+  "context": {
+    "type": "object",
+    "description": "上下文与图片",
+    "items": {
+      "max_post_chars": {
+        "description": "帖子正文最大字符数",
+        "type": "int",
+        "default": 6000
+      },
+      "max_thread_comments": {
+        "description": "楼层最大评论数",
+        "type": "int",
+        "default": 40
+      },
+      "context_cache_ttl_seconds": {
+        "description": "上下文缓存 TTL",
+        "type": "int",
+        "default": 300
+      },
+      "context_cache_max_entries": {
+        "description": "上下文缓存最大条目",
+        "type": "int",
+        "default": 256
+      },
+      "enable_image_understanding": {
+        "description": "启用图片理解",
+        "type": "bool",
+        "default": true
+      },
+      "max_images_per_event": {
+        "description": "每事件最大图片数",
+        "type": "int",
+        "default": 6
+      },
+      "max_image_size_mb": {
+        "description": "单图上限 MB",
+        "type": "int",
+        "default": 8
+      },
+      "max_total_image_size_mb": {
+        "description": "单事件图片总上限 MB",
+        "type": "int",
+        "default": 24
+      },
+      "image_timeout_seconds": {
+        "description": "图片读取超时",
+        "type": "int",
+        "default": 15
+      }
+    }
+  },
+  "reply": {
+    "type": "object",
+    "description": "回复策略",
+    "items": {
+      "dry_run_mark_processed": {
+        "description": "dry-run 后标记完成",
+        "type": "bool",
+        "default": true
+      },
+      "max_reply_chars": {
+        "description": "最大回复字符数",
+        "type": "int",
+        "default": 500,
+        "hint": "小黑盒实际限制待真实环境确认。"
+      },
+      "reply_timeout_seconds": {
+        "description": "回复生成超时",
+        "type": "int",
+        "default": 120
+      },
+      "max_retries": {
+        "description": "安全请求最大重试次数",
+        "type": "int",
+        "default": 3
+      },
+      "only_explicit_mentions": {
+        "description": "只回复明确 @",
+        "type": "bool",
+        "default": true
+      },
+      "reply_to_direct_replies": {
+        "description": "回复别人对机器人评论的直接回复",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "permissions": {
+    "type": "object",
+    "description": "身份与过滤",
+    "items": {
+      "whitelist_mode": {
+        "description": "启用用户白名单模式",
+        "type": "bool",
+        "default": false
+      },
+      "user_whitelist": {
+        "description": "用户 UID 白名单",
+        "type": "list",
+        "default": [],
+        "items": {
+          "type": "string"
+        }
+      },
+      "user_blacklist": {
+        "description": "用户 UID 黑名单",
+        "type": "list",
+        "default": [],
+        "items": {
+          "type": "string"
+        }
+      },
+      "author_whitelist": {
+        "description": "帖子作者 UID 白名单",
+        "type": "list",
+        "default": [],
+        "items": {
+          "type": "string"
+        }
+      },
+      "author_blacklist": {
+        "description": "帖子作者 UID 黑名单",
+        "type": "list",
+        "default": [],
+        "items": {
+          "type": "string"
+        }
+      },
+      "keyword_blacklist": {
+        "description": "关键词黑名单",
+        "type": "list",
+        "default": [],
+        "items": {
+          "type": "string"
+        }
+      },
+      "map_owner_to_astrbot_admin": {
+        "description": "将主人映射为 AstrBot 管理员",
+        "type": "bool",
+        "default": false,
+        "hint": "高风险选项，默认关闭。"
+      }
+    }
+  },
+  "network": {
+    "type": "object",
+    "description": "网络、并发和重试",
+    "items": {
+      "request_timeout_seconds": {
+        "description": "请求总超时",
+        "type": "int",
+        "default": 20
+      },
+      "connect_timeout_seconds": {
+        "description": "连接超时",
+        "type": "int",
+        "default": 8
+      },
+      "read_timeout_seconds": {
+        "description": "读取超时",
+        "type": "int",
+        "default": 15
+      },
+      "min_request_interval_seconds": {
+        "description": "最小请求间隔",
+        "type": "float",
+        "default": 1.0
+      },
+      "max_reply_concurrency": {
+        "description": "最大回复并发",
+        "type": "int",
+        "default": 2
+      },
+      "max_pending_events": {
+        "description": "待处理事件硬上限",
+        "type": "int",
+        "default": 50
+      },
+      "max_pending_per_user": {
+        "description": "单用户待处理上限",
+        "type": "int",
+        "default": 5
+      }
+    }
+  },
+  "proactive_feed": {
+    "type": "object",
+    "description": "主动刷帖（高风险）",
+    "items": {
+      "enabled": {
+        "description": "启用主动刷帖",
+        "type": "bool",
+        "default": false
+      },
+      "dry_run": {
+        "description": "主动刷帖仅演练",
+        "type": "bool",
+        "default": true
+      },
+      "review_required": {
+        "description": "真实发送前要求人工审核",
+        "type": "bool",
+        "default": true
+      },
+      "interval_seconds": {
+        "description": "运行间隔",
+        "type": "int",
+        "default": 900
+      },
+      "jitter_seconds": {
+        "description": "每轮附加随机抖动",
+        "type": "int",
+        "default": 60
+      },
+      "max_per_run": {
+        "description": "每轮最大候选数",
+        "type": "int",
+        "default": 1
+      },
+      "max_per_day": {
+        "description": "每日真实发送上限",
+        "type": "int",
+        "default": 10
+      },
+      "source": {
+        "description": "帖子来源",
+        "type": "string",
+        "default": "follow"
+      },
+      "keywords": {
+        "description": "允许关键词",
+        "type": "list",
+        "default": [],
+        "items": {
+          "type": "string"
+        }
+      },
+      "allowed_post_types": {
+        "description": "允许的帖子类型（空列表表示不限制）",
+        "type": "list",
+        "default": [],
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "retention": {
+    "type": "object",
+    "description": "数据保留与上限",
+    "items": {
+      "incoming_body_days": {
+        "description": "通知正文保留天数",
+        "type": "int",
+        "default": 30
+      },
+      "dry_run_days": {
+        "description": "dry-run 正文保留天数",
+        "type": "int",
+        "default": 30
+      },
+      "failed_days": {
+        "description": "失败记录保留天数",
+        "type": "int",
+        "default": 30
+      },
+      "success_reply_days": {
+        "description": "成功回复正文保留天数",
+        "type": "int",
+        "default": 90
+      },
+      "session_mapping_days": {
+        "description": "会话映射闲置保留天数",
+        "type": "int",
+        "default": 180
+      },
+      "dedup_days": {
+        "description": "去重键保留天数",
+        "type": "int",
+        "default": 365
+      },
+      "database_warn_mb": {
+        "description": "数据库警告阈值 MB",
+        "type": "int",
+        "default": 150
+      },
+      "database_soft_limit_mb": {
+        "description": "数据库软上限 MB",
+        "type": "int",
+        "default": 200
+      },
+      "log_total_limit_mb": {
+        "description": "日志总上限 MB",
+        "type": "int",
+        "default": 100
+      },
+      "image_cache_soft_limit_mb": {
+        "description": "图片缓存软上限 MB",
+        "type": "int",
+        "default": 200
+      }
+    }
+  },
+  "logging": {
+    "type": "object",
+    "description": "日志",
+    "items": {
+      "level": {
+        "description": "最低日志级别",
+        "type": "string",
+        "default": "INFO",
+        "options": [
+          "DEBUG",
+          "INFO",
+          "WARNING",
+          "ERROR"
+        ]
+      },
+      "max_memory_entries": {
+        "description": "WebUI 内存日志条数",
+        "type": "int",
+        "default": 2000
+      }
+    }
+  }
+}

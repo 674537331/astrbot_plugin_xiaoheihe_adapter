@@ -1,0 +1,453 @@
+# AstrBot 小黑盒适配器
+
+> 将小黑盒帖子与评论接入 AstrBot 原生会话、人格和 Agent 链路。
+
+[![CI](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+`astrbot_plugin_xiaoheihe_adapter` 是一个 AstrBot 原生平台适配器。小黑盒的 @ 通知和对机器人
+评论的直接回复会被规范化为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 正常消息
+管线，再由当前模型提供商、人格、原生会话、长期记忆、Agent Runner、MCP、Skills、Web
+Search、视觉模型以及获准的插件和工具处理。
+
+本插件不配置第二套模型 API，不直接请求 OpenAI 兼容接口，也不注册任何聊天命令。
+
+## 风险提示
+
+小黑盒没有为本项目提供稳定、公开的机器人 API。v1.0.0 的网络契约基于公开参考项目的功能
+行为独立实现，当前只经过脱敏 fixture 和 Mock HTTP 测试，**尚未使用真实小黑盒账号验证**。
+
+- 首次使用必须保持 `dry_run: true`；
+- 主动刷帖默认关闭，且即使启用也默认只生成待审核候选；
+- 真实评论路径、参数、签名、返回字段、字符限制和近期评论一致性仍待真实环境验证；
+- 使用自动化可能触发平台限制，使用者需要自行确认平台规则并承担账号风险；
+- 本项目不提供验证码、风控、封禁或设备指纹绕过。
+
+准确边界见 [小黑盒 API 契约](docs/xiaoheihe-api-contract.md)。
+
+## 核心特性
+
+- 原生平台类型 `xiaoheihe`，可在“机器人 → 新增适配器”创建；
+- Plugin Page 内扫码登录，不提供 `/小黑盒登录` 等聊天指令；
+- @ 与直接回复进入 AstrBot 原生事件队列；
+- “帖子 + 根楼层”确定性会话隔离；
+- 帖子、楼层、作者、引用和图片作为本轮不可信临时上下文；
+- SQLite 事务幂等、唯一约束、事件状态机和重启恢复；
+- 登录 UID、外部评论 ID、发送记录、内容哈希和数据库约束共同防止自循环；
+- dry-run 完成整个原生推理链路但不调用评论接口；
+- 主动帖子默认关闭、默认 dry-run、默认人工审核；
+- 401/403 熔断、429 `Retry-After`、安全重试和 `send_unknown` 核对；
+- 一个账号一个长生命周期异步 HTTP Client；
+- 有界队列、单用户上限、同楼层串行和有限并行；
+- 管理页提供状态、登录、设置、事件、审核、日志、SSE 和存储管理；
+- 凭证原子保存、日志/诊断脱敏和安全退出。
+
+## 环境要求
+
+- AstrBot `>=4.24.2,<5`；
+- 重点兼容 AstrBot 4.26.2；
+- 已对 2026-07-28 的当前稳定版 AstrBot 4.26.7 做包级 API 契约检查；
+- Python 3.12–3.14（AstrBot 4.26.2 要求 Python 3.12+）；
+- AstrBot 运行环境能够安装 `requirements.txt` 中的依赖；
+- 可以访问小黑盒所需 HTTPS 域名。
+
+适配器运行时必须由 AstrBot 提供 API，但本仓库不复制或修改 AstrBot 源码。版本接口结论见
+[兼容性说明](docs/compatibility.md)。
+
+AstrBot 4.24.2 的官方包没有 `astrbot.api.web`：核心适配器会安全加载，但小黑盒管理页后端
+不可用，也不会回退到 Dashboard 私有对象。首次扫码登录和完整管理页要求 AstrBot 4.26.2。
+
+## 安装
+
+### 从 GitHub 安装
+
+在 AstrBot WebUI 的插件市场或插件安装界面中使用仓库地址：
+
+```text
+https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter
+```
+
+AstrBot 会按 `requirements.txt` 安装 `aiosqlite`、`httpx` 和 `qrcode`。安装完成后启用插件。
+
+### 手动安装
+
+将仓库目录放入 AstrBot 的插件目录，目录名保持
+`astrbot_plugin_xiaoheihe_adapter`，安装依赖后重载插件：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+不要把 `data/`、凭证、数据库、日志或真实二维码复制进插件目录。
+
+## 快速上手
+
+```text
+安装并启用插件
+  → 打开插件详情页的“小黑盒管理”
+  → 选择 profile_id 并扫码登录
+  → 在“机器人 → 新增适配器”选择“小黑盒”
+  → 适配器 profile_id 选择同一档案
+  → 保持 dry-run 观察事件与生成结果
+  → 完成真实接口验证后再关闭 dry-run
+```
+
+### 1. 扫码登录
+
+打开插件详情页中的“小黑盒管理”：
+
+1. 在“扫码登录”选择账号档案；
+2. 点击“生成二维码”；
+3. 使用小黑盒客户端扫码并确认；
+4. 点击“检查登录”，直到显示 `success`；
+5. 核对昵称、UID、登录时间和最近检查时间。
+
+管理页不返回 Cookie、Token、设备 ID或签名材料。二维码有倒计时；过期后重新生成。
+
+### 2. 创建小黑盒适配器
+
+进入“机器人 → 新增适配器”，选择“小黑盒”，填写：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | AstrBot 平台实例 ID；同一实例内唯一 |
+| `enable` | 是否启用该实例 |
+| `profile_id` | 管理页中已登录的账号档案 ID |
+
+如果目标 AstrBot 版本没有公开 API 允许 Plugin Page 修改平台实例的 `profile_id`，请始终在
+机器人/适配器页面修改。本插件不会编辑 AstrBot 核心配置文件。
+
+### 3. dry-run 验证
+
+默认账号档案已启用 `dry_run: true`。此模式会执行：
+
+- 获取和解析通知；
+- 数据库幂等；
+- 权限与自身消息过滤；
+- 帖子、楼层和图片上下文；
+- AstrBot 原生人格、会话、记忆、Agent 和工具链；
+- 回复聚合、脱敏、空内容检查和长度限制；
+- 保存生成结果与耗时状态。
+
+它不会调用真实评论发送接口。默认 `dry_run_mark_processed: true`，相同通知不会反复消耗
+模型额度。在事件记录中确认 session、目标楼层、上下文、图片和回复均正确，再考虑真实启用。
+
+## 配置说明
+
+配置只有两个来源层级，不重复保存：
+
+1. 机器人/适配器配置：`id`、`enable`、`profile_id`；
+2. 插件 `AstrBotConfig`：账号档案和全部运行设置。
+
+Plugin Page 设置页和 AstrBot 原生插件设置操作同一个 `AstrBotConfig` 对象。保存时后端重新
+校验并调用 `save_config()`；失败会回滚内存配置并显示错误。保存成功后只安全刷新受影响的
+后台服务，不重启整个 AstrBot。
+
+### 账号档案
+
+v1.0.0 正式支持一个运行账号，结构已按 `profile_id` 为多账号扩展：
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `profile_id` | `default` | 账号档案 ID，只允许字母、数字、`_`、`-` |
+| `display_name` | `默认账号` | 管理页显示名 |
+| `enabled` | `true` | 是否启用档案 |
+| `poll_mentions` | `true` | 轮询 @ 通知 |
+| `poll_replies` | `true` | 轮询直接回复 |
+| `dry_run` | `true` | 禁止真实评论 |
+| `owner_uid` | 空 | 主人小黑盒数字 UID，按字符串处理 |
+
+### 关键默认值
+
+| 分组 | 字段 | 默认值 |
+| --- | --- | --- |
+| 轮询 | `poll_interval_seconds` | `60`，后端硬限制不低于 30 秒 |
+| 轮询 | `max_pages_per_poll` / `initial_backfill_count` | `3` / `0` |
+| 上下文 | `context_cache_ttl_seconds` / 最大条目 | `300` / `256` |
+| 图片 | `enable_image_understanding` | `true` |
+| 图片 | 每事件最大图片数 | `6` |
+| 回复 | `max_reply_chars` / `reply_timeout_seconds` | `500` / `120` |
+| 网络 | `min_request_interval_seconds` | `1.0` |
+| 并发 | worker / 总积压 / 单用户积压 | `2` / `50` / `5` |
+| 重试 | `max_retries` | `3`，评论 POST 不盲重试 |
+| 主动帖子 | enabled / dry-run / review | `false` / `true` / `true` |
+| 主动帖子 | 间隔 / 抖动 / 每轮 / 每日 | `900` / `60` / `1` / `10` |
+
+完整字段、类型、边界与中文说明位于 `_conf_schema.json`。
+
+## 会话映射
+
+小黑盒评论区以“帖子 + 根评论楼层”隔离：
+
+```text
+group_id             xhh_post_<post_id>
+帖子 session_id      xhh_post_<post_id>
+楼层 session_id      xhh_thread_<post_id>_<root_comment_id>
+message_id           xhh_<event_type>_<notification_id>_<comment_id>
+```
+
+同一根楼层始终得到同一 session，不同帖子和不同根楼层不会串上下文。映射可从外部 ID
+重新计算，即使删除插件本地 `session_mappings` 记录也不改变结果。
+
+`send_by_session()` 会严格解析上述格式；不能恢复目标时明确报错，绝不把评论猜测发送到其他
+帖子。帖子 ID 或根评论 ID 含下划线时按最后一个下划线分割楼层路由；真实环境启用前应确认
+小黑盒 ID 字符集。
+
+## 上下文与 Prompt 安全
+
+当前评论正文是原生用户消息。帖子标题、正文、作者、父/根评论、完整楼层和必要图片由
+`on_llm_request` 注入：
+
+```xml
+<xiaoheihe_context trust="untrusted">
+  ...
+</xiaoheihe_context>
+```
+
+该内容使用 `TextPart.mark_as_temp()`，仅属于本轮用户侧临时上下文：
+
+- 不修改 system prompt；
+- 不把完整帖子永久写入会话历史；
+- 不允许帖子内容覆盖人格或安全规则；
+- 清理 HTML、控制字符、表情占位、重复行、追踪参数和异常连续字符。
+
+## 图片理解
+
+v1.0.0 的重点是接收并理解图片。经过校验和去重的公开 HTTPS 图片 URL 被转换为 AstrBot
+原生 `Image` 组件，由核心媒体和视觉模型流程处理。
+
+- 默认每事件最多 6 张；
+- 拒绝 `file:`、HTTP 明文、带认证信息、localhost、明显内网和保留地址；
+- 域名在提交媒体组件前解析，任一 DNS 结果为内网或保留地址时拒绝；
+- 只传 URL，不在插件内下载，因此不会创建本地图片缓存；
+- 当前提供商明确声明不支持 `image` 输入时，插件会移除本轮图片、保留文本，并在管理页显示降级警告；
+- 提供商未声明 `modalities` 时遵循 AstrBot 的向后兼容语义，不擅自判定为不支持。
+
+AstrBot 实际抓取时仍应再次校验最终 DNS 地址和重定向链，降低校验与抓取之间 DNS 重绑定的
+时间窗口。若未来在插件内增加下载，必须同时落实 Content-Type、文件头、大小、总量、
+重定向和官方临时文件跟踪。
+
+**评论区输出图片未实现。** 小黑盒图片上传接口未经真实验证，v1.0.0 不声称支持。
+
+## 白名单、黑名单与主人 UID
+
+固定优先级：
+
+```text
+机器人自身 → 黑名单 → 主人 UID → 白名单 → 普通触发规则
+```
+
+支持用户 UID、帖子作者 UID、关键词的白/黑名单。身份只按字符串 UID 判断，不使用昵称。
+主人可以绕过普通白名单并获得队列高优先级，但仍受硬上限。
+
+主人 UID 不等于 AstrBot 管理员。`map_owner_to_astrbot_admin` 是独立开关且默认 `false`。
+普通小黑盒用户默认不会被映射为管理员；高风险工具的最终权限仍由 AstrBot 和已安装插件决定。
+
+## 防止机器人自我循环
+
+插件同时使用登录账号 UID、通知发送者 UID、外部评论 ID、本地发送记录、内容哈希、目标
+帖子/楼层、进程内积压集合和 SQLite 唯一约束。机器人发出的评论重新出现在通知时会被
+忽略，不依赖昵称、固定前缀或仅比较文本。
+
+## 回复稳定性
+
+- 合并最终 `Plain` 文本段，空回复不发送；
+- 删除调试/工具片段、异常堆栈线索和敏感认证文本；
+- 按 Unicode 字符安全截断；
+- 平台声明不支持流式消息，事件层仍聚合所有片段；
+- 同一入站事件用锁保证最多一条真实评论；
+- 评论 POST 不参与网络自动重试；
+- 超时或连接中断进入 `send_unknown`；
+- 只在同一帖子/楼层、同一机器人 UID、同一规范文本的近期评论中核对成功；
+- 核对不到时进入人工检查，不自动补发。
+
+默认 500 字只是保守配置，实际平台限制待真实验证后调整。
+
+## 主动刷帖审核
+
+这是高风险能力，默认：
+
+```yaml
+enabled: false
+dry_run: true
+review_required: true
+interval_seconds: 900
+max_per_run: 1
+max_per_day: 10
+```
+
+启用后帖子先经过空正文、广告、推广、抽奖、交易、敏感/引战类型和关键词过滤，再创建
+`proactive_feed` 合成事件进入同一 AstrBot 原生管线。最终文本保存为候选，不会立即发送。
+
+管理页可以编辑、批准、拒绝和批量拒绝过期候选。批准使用当前已审核文本，不重新调用模型。
+真实发送只有在主动配置关闭 dry-run、候选通过人工审核且未超每日上限时发生。
+
+由于帖子流和评论端点仍待真实验证，建议 v1.0.0 保持该功能关闭。
+
+## 数据目录与 SQLite
+
+运行数据由 `StarTools.get_data_dir()` 定位，标准部署通常是：
+
+```text
+data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
+├── credentials/
+│   └── <profile_id>.json
+├── logs/
+└── xiaoheihe.db
+```
+
+SQLite 不需要 MySQL、PostgreSQL 或其他服务。启用 WAL、外键、busy timeout、NORMAL
+synchronous 和增量回收。
+
+迁移版本：`3`（v3 增加持久化重试计数、下次重试时间和索引）。表包括：
+
+- `schema_migrations`
+- `account_state`
+- `incoming_events`
+- `processed_event_keys`
+- `outgoing_replies`
+- `self_comment_ids`
+- `session_mappings`
+- `feed_candidates`
+- `runtime_errors`
+- `daily_counters`
+
+`profile_id + external_event_id` 和 `profile_id + external_comment_id` 都有唯一约束。
+
+## 自动清理与存储上限
+
+启动 60 秒后清理一次，此后每 24 小时执行；每类每批最多 500 条，不在每次轮询时清理，
+不执行频繁完整 `VACUUM`。默认：
+
+- 通知正文、dry-run、失败和运行错误：30 天；
+- 成功回复正文：90 天；
+- 会话映射：180 天；
+- 轻量去重键：365 天；
+- 自身评论 ID、账号状态和每日统计：长期保留；
+- 数据库警告/软上限：150 MB / 200 MB；
+- 日志总上限：100 MB；
+- 图片缓存软上限：200 MB（v1.0.0 不下载图片）。
+
+正文到期后仍保留轻量去重键。清理只操作插件自身数据库和日志，绝不删除 AstrBot 原生
+会话数据库。管理页支持清理预览和显式确认后的安全清理。
+
+超过数据库软上限后，每轮按最多 500 条依次处理已拒绝/过期候选、dry-run 正文、历史终态
+通知正文和成功回复正文。不会为了降到软上限而删除待处理、待重试、未审核候选、自身评论
+记录、账号状态或必要去重键。
+
+## 凭证安全
+
+- 每个 `profile_id` 独立 JSON 文件；
+- 临时文件写入并 `fsync` 后原子替换；
+- POSIX 目录尽量 `0700`、文件尽量 `0600`；
+- Cookie、Token、设备 ID 和签名键不写入 AstrBotConfig；
+- WebUI、日志、错误详情和诊断自动脱敏；
+- 安全退出仅删除选中档案的凭证，并尽力覆盖小文件；
+- 更新和重装插件不得覆盖插件数据目录；
+- 凭证失效后停止真实发送并触发熔断。
+
+Windows 无 POSIX 权限位，请使用 AstrBot 运行账号的 NTFS ACL 保护整个
+`data/plugin_data/astrbot_plugin_xiaoheihe_adapter/`，不要让其他本地用户读取。
+
+## 日志与错误提醒
+
+管理页提供脱敏结构化日志、级别/关键词筛选、SSE 实时刷新、自动重连和关闭页面时取消订阅。
+内存和订阅队列均有界，日志按总大小轮转。
+
+顶部告警展示登录失效、401/403 熔断、数据库健康、存储阈值和后台状态。API 响应结构变化会
+以 `response_shape` 错误记录，便于生成脱敏诊断。
+
+## 常见故障
+
+### 新增适配器中没有“小黑盒”
+
+确认插件已启用，`main.py` 能导入 `xiaoheihe.adapter`，然后重载插件并刷新机器人页面。
+检查 AstrBot 版本是否在支持范围内。
+
+### 管理页打不开或 API 不匹配
+
+确认 AstrBot 版本支持 Plugin Pages；刷新插件详情页。后端路由必须带插件名前缀，页面调用
+必须使用不带前缀的相对 endpoint。不要在独立浏览器地址中直接打开 `index.html`。
+
+### 扫码后一直等待
+
+二维码可能已过期，重新生成并检查系统时间。若仍失败，查看脱敏日志中的 `response_shape`
+分类；这通常表示扫码状态字段与 fixture 契约不同。
+
+### HTTP 401
+
+凭证失效。适配器会停止真实发送并打开熔断。使用管理页安全退出，重新扫码，点击“检查
+登录”确认 `success` 后再观察 dry-run。
+
+### HTTP 403
+
+可能是接口权限、账号状态或请求契约变化。不要高频重试，不要尝试绕过风控。保持 dry-run，
+等待熔断，核对脱敏诊断和 [API 契约](docs/xiaoheihe-api-contract.md)。
+
+### HTTP 429
+
+尊重 `Retry-After`，增大轮询间隔和最小请求间隔，减少分页与并发。不要通过多设备或伪造
+指纹规避限流。
+
+### API 响应结构变化
+
+保存脱敏响应形状，不保存真实正文或凭证；新增 fixture，只修改 `endpoints.py` /
+`parsers.py`，运行全部测试。不要在业务层临时散落字段兼容。
+
+### 图片没有被理解
+
+确认图片是公开 HTTPS URL、未指向内网，当前模型支持视觉且 AstrBot 媒体流程可访问该域名。
+视觉不可用时插件按文本降级，不应永久卡住事件。
+
+## 开发与测试
+
+```bash
+python -m pip install -e ".[test]"
+ruff check .
+ruff format --check .
+python -m coverage run -m pytest -q
+python -m coverage report
+python -m compileall -q .
+```
+
+普通测试没有真实网络请求。当前本地执行结果和测试边界见
+[测试说明](docs/testing.md)。GitHub 仓库永久配置 CI、CodeQL、Dependency Review、
+Gitleaks 和 Dependabot。
+
+建议为 `main` 开启分支保护：
+
+- 禁止直接推送和 force push；
+- PR 必须通过 CI；
+- CodeQL 不得有高危结果；
+- 至少一次人工审查。
+
+## 隐私与安全
+
+小黑盒通知和评论可能包含个人信息。仅保留排错与幂等所需数据，按保留策略清理正文；分享
+诊断前仍应人工检查。不要公开数据库、日志、二维码或凭证文件。
+
+安全问题请参阅 [SECURITY.md](SECURITY.md)，贡献流程参阅
+[CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 已知限制
+
+- 所有小黑盒真实网络接口仍待独立账号验证；
+- v1.0.0 正式运行支持一个账号，多档案仅提供隔离基础；
+- 不支持评论图片上传；
+- 不下载入站图片，DNS 重绑定和重定向链由 AstrBot 核心媒体流程继续防护；
+- Plugin Page 不修改机器人适配器实例的 `profile_id`；
+- 主动帖子来源和审核后真实发送仍建议保持关闭；
+- 本机没有启动完整 AstrBot 4.24.2/4.26.2/4.26.7 服务做端到端登录验收，CI 负责包级契约检查。
+
+## 致谢
+
+- [AstrBot](https://github.com/AstrBotDevs/AstrBot)：平台适配器和原生 Agent 管线；
+- [SomeOvO/xhhRobot](https://github.com/SomeOvO/xhhRobot)：用于理解登录、通知、帖子和评论的
+  功能行为。因未确认明确许可，本项目没有复制其实现；
+- [674537331/astrbot_plugin_mihome](https://github.com/674537331/astrbot_plugin_mihome)：
+  README 信息组织与中文说明风格参考。
+
+## License
+
+[MIT License](LICENSE) © RyanVaderAn

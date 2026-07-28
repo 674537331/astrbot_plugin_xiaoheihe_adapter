@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import ast
+import importlib.util
+import sys
+from pathlib import Path
+
+from astrbot.api import AstrBotConfig
+from astrbot.api.provider import ProviderRequest
+
+
+def test_main_registers_no_chat_commands() -> None:
+    tree = ast.parse(Path("main.py").read_text(encoding="utf-8"))
+    command_decorators = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in {"command", "command_group", "regex"}:
+                command_decorators.append(node.func.attr)
+    assert command_decorators == []
+
+
+def test_no_independent_model_endpoint_configuration() -> None:
+    forbidden = ("openai_api_key", "openai_base_url", "model_name")
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in Path(".").glob("xiaoheihe/*.py")
+    ).lower()
+    assert all(item not in source for item in forbidden)
+
+
+async def test_plugin_main_import_and_explicit_vision_fallback() -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_using_provider(self, umo=None):
+            return type("Provider", (), {"provider_config": {"modalities": ["text"]}})()
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_extra": lambda self, key, default="": (
+                '<xiaoheihe_context trust="untrusted">背景</xiaoheihe_context>'
+                if key == "xiaoheihe_dynamic_context"
+                else default
+            ),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/a.png"]
+    await plugin.inject_xiaoheihe_context(event, request)
+    assert request.image_urls == []
+    assert request.extra_user_content_parts[0].temp is True
+    assert plugin.runtime._alerts["vision_unsupported"]["level"] == "warning"
+    await plugin.terminate()
+    sys.modules.pop(spec.name, None)

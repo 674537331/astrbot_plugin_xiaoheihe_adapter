@@ -21,3 +21,4 @@ data/
 *.png
 credentials/
 .env
+

@@ -1,0 +1,13 @@
+{
+  "result": {
+    "state": "success",
+    "user": {
+      "heybox_id": "10001",
+      "nickname": "MockUser"
+    },
+    "cookies": {
+      "mock_sid": "redacted-fixture-value"
+    }
+  }
+}
+
