@@ -1,0 +1,31 @@
+{
+  "status": "ok",
+  "result": {
+    "messages": [
+      {
+        "message_id": "90001",
+        "message_type": 16,
+        "comment_a_id": "70001",
+        "comment_a_text": "@MockBot 请介绍一下这个帖子",
+        "comment_b_id": "70000",
+        "comment_b_text": "被回复的上一条评论",
+        "root_comment_id": "70000",
+        "linkid": "60001",
+        "userid_a": "50001",
+        "timestamp": "1800000000",
+        "user_a": {
+          "userid": "50001",
+          "username": "FixtureUser"
+        },
+        "link": {
+          "linkid": "60001",
+          "title": "脱敏测试帖子",
+          "user": {
+            "userid": "40001",
+            "username": "FixtureAuthor"
+          }
+        }
+      }
+    ]
+  }
+}

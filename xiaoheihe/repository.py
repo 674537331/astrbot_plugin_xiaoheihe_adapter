@@ -285,22 +285,23 @@ class Repository:
                 """,
                 (external_comment_id, now, outgoing_id),
             )
-            await connection.execute(
-                """
-                INSERT OR IGNORE INTO self_comment_ids(
-                    profile_id, external_comment_id, post_id, root_comment_id,
-                    content_hash, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["profile_id"],
-                    external_comment_id,
-                    row["post_id"],
-                    row["root_comment_id"],
-                    row["content_hash"],
-                    now,
-                ),
-            )
+            if external_comment_id:
+                await connection.execute(
+                    """
+                    INSERT OR IGNORE INTO self_comment_ids(
+                        profile_id, external_comment_id, post_id, root_comment_id,
+                        content_hash, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["profile_id"],
+                        external_comment_id,
+                        row["post_id"],
+                        row["root_comment_id"],
+                        row["content_hash"],
+                        now,
+                    ),
+                )
 
     async def recent_outgoing_match(
         self,

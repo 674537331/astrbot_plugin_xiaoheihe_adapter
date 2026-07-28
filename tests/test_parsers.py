@@ -78,6 +78,89 @@ def test_fixture_contracts() -> None:
     assert parse_send_result(load_fixture("send_success.json")).confirmed is True
 
 
+def test_reference_notification_fields_are_normalized() -> None:
+    page = parse_notifications(
+        "default",
+        load_fixture("notifications_reference_messages.json"),
+        NotificationType.MENTION,
+    )
+    notification = page.items[0]["notification"]
+    assert notification.external_event_id == "90001"
+    assert notification.external_comment_id == "70001"
+    assert notification.post_id == "60001"
+    assert notification.sender_uid == "50001"
+    assert notification.sender_nickname == "FixtureUser"
+    assert notification.root_comment_id == "70000"
+    assert notification.parent_comment_id == "70001"
+    assert notification.content == "@MockBot 请介绍一下这个帖子"
+    assert notification.post_author_uid == "40001"
+
+
+def test_notification_result_array_and_reply_type_filter() -> None:
+    result = [
+        {
+            "message_id": "reply-event",
+            "message_type": 2,
+            "comment_a_id": "reply-comment",
+            "comment_a_text": "回复机器人",
+            "root_comment_id": "root-comment",
+            "linkid": "post",
+            "userid_a": "user",
+            "timestamp": 1_800_000_000,
+        },
+        {
+            "message_id": "like-event",
+            "message_type": 4,
+            "comment_a_id": "like-comment",
+            "comment_a_text": "点赞通知",
+            "root_comment_id": "root-comment",
+            "linkid": "post",
+            "userid_a": "user",
+            "timestamp": 1_800_000_000,
+        },
+    ]
+    page = parse_notifications(
+        "default",
+        {"status": "ok", "result": result},
+        NotificationType.REPLY,
+        page_size=2,
+        offset=20,
+    )
+    assert [item["notification"].external_event_id for item in page.items] == ["reply-event"]
+    assert page.has_more is True
+    assert page.next_cursor == "22"
+
+
+def test_reference_rich_post_content_extracts_text_and_images() -> None:
+    thread = parse_thread_context(
+        {
+            "status": "ok",
+            "result": {
+                "link": {
+                    "title": "Rich post",
+                    "text": (
+                        '[{"type":"text","text":"第一段"},'
+                        '{"type":"html","text":"<b>第二段</b>"},'
+                        '{"type":"image","url":"https://cdn.example.com/post.png"}]'
+                    ),
+                    "user": {"userid": "author", "username": "Author"},
+                }
+            },
+        },
+        "post",
+    )
+    assert thread.body == "第一段\n<b>第二段</b>"
+    assert thread.image_urls == ["https://cdn.example.com/post.png"]
+
+
+def test_send_result_accepts_reference_top_level_comment_id() -> None:
+    result = parse_send_result({"status": "ok", "commentid": "sent-reference"})
+    assert result.external_comment_id == "sent-reference"
+    assert parse_send_result({"status": "ok"}).external_comment_id == ""
+    with pytest.raises(ResponseShapeError, match="成功状态"):
+        parse_send_result({"status": "failed", "msg": "rejected"})
+
+
 def test_response_shape_change_is_explicit() -> None:
     with pytest.raises(ResponseShapeError, match="缺少"):
         parse_qr_response("default", {"result": {}}, now=100)

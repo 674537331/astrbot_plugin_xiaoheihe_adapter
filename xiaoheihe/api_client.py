@@ -137,7 +137,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.3",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.4",
                 },
             )
         if self.credentials:
@@ -212,16 +212,34 @@ class XiaoheiheApiClient:
         page: int = 1,
         page_size: int = 20,
     ) -> ApiPage:
-        params: dict[str, Any] = {
-            "type": "at" if event_type is NotificationType.MENTION else "reply",
-            "page": max(1, page),
-            "limit": max(1, min(page_size, 100)),
-        }
+        normalized_page_size = max(1, min(page_size, 100))
+        offset = (max(1, page) - 1) * normalized_page_size
         if cursor:
-            params["cursor"] = cursor
+            try:
+                offset = max(0, int(cursor))
+            except ValueError:
+                pass
+        params: dict[str, Any] = {
+            "offset": offset,
+            "limit": normalized_page_size,
+            "no_more": "false",
+            "os_type": "web",
+        }
+        if self.credentials and self.credentials.uid:
+            params["heybox_id"] = self.credentials.uid
+        if event_type is NotificationType.MENTION:
+            params["message_type"] = 16
+        else:
+            params["list_type"] = 0
         response = await self._request(EndpointName.USER_MESSAGES, params=params)
         try:
-            return parse_notifications(self.profile_id, response.payload, event_type)
+            return parse_notifications(
+                self.profile_id,
+                response.payload,
+                event_type,
+                page_size=normalized_page_size,
+                offset=offset,
+            )
         except ResponseShapeError as exc:
             raise ResponseContractError(
                 str(exc), category="response_shape", details=response.payload
@@ -242,15 +260,14 @@ class XiaoheiheApiClient:
             ) from exc
 
     async def send_comment(self, route: RoutingTarget, content: str) -> SendResult:
-        body: dict[str, Any] = {
+        body = {
+            "is_cy": "0",
             "link_id": route.post_id,
-            "content": content,
+            "reply_id": route.parent_comment_id or "-1",
+            "root_id": route.root_comment_id or "-1",
+            "text": content,
         }
-        if route.root_comment_id:
-            body["root_comment_id"] = route.root_comment_id
-        if route.parent_comment_id:
-            body["parent_comment_id"] = route.parent_comment_id
-        response = await self._request(EndpointName.CREATE_COMMENT, json_body=body)
+        response = await self._request(EndpointName.CREATE_COMMENT, form_body=body)
         try:
             return parse_send_result(response.payload)
         except ResponseShapeError as exc:
@@ -305,6 +322,7 @@ class XiaoheiheApiClient:
         *,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        form_body: dict[str, Any] | None = None,
     ) -> ApiResponse:
         await self.start()
         if self._client is None:
@@ -314,17 +332,34 @@ class XiaoheiheApiClient:
             raise CredentialInvalidError(
                 "账号未登录", status_code=401, category="credential_invalid"
             )
+        request_params = dict(params or {})
+        request_params.setdefault("os_type", "web")
+        if self.credentials and self.credentials.uid:
+            request_params.setdefault("heybox_id", self.credentials.uid)
         signed = self._signer.sign(
             contract.method,
             contract.path,
-            params=params,
-            json_body=json_body,
+            params=request_params,
+            json_body=json_body or form_body,
             signing_key=self.credentials.signing_key if self.credentials else "",
             device_id=self.credentials.device_id if self.credentials else "",
         )
         headers = dict(signed.headers)
+        headers["Referer"] = "https://www.xiaoheihe.cn/"
         if self.credentials and self.credentials.access_token:
             headers["Authorization"] = f"Bearer {self.credentials.access_token}"
+        if form_body is not None:
+            headers.update(
+                {
+                    "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+                    "Origin": "https://www.xiaoheihe.cn",
+                }
+            )
+        request_url = (
+            contract.path
+            if contract.base_url.rstrip("/") == self._base_url
+            else f"{contract.base_url.rstrip('/')}{contract.path}"
+        )
 
         retry_count = 0
         while True:
@@ -332,9 +367,10 @@ class XiaoheiheApiClient:
             try:
                 response = await self._client.request(
                     contract.method,
-                    contract.path,
+                    request_url,
                     params=signed.params,
                     json=json_body,
+                    data=form_body,
                     headers=headers,
                     timeout=self._timeout,
                 )

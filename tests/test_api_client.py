@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -61,6 +61,45 @@ async def test_qr_wait_scan_success_and_notification_parse() -> None:
     client.credentials = result_credentials
     page = await client.fetch_notifications(NotificationType.MENTION)
     assert page.items[0]["notification"].message_id == "xhh_mention_notice-1_comment-1"
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_notification_queries_use_reference_parameters_and_offset_paging() -> None:
+    observed = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json=load_fixture("notifications_reference_messages.json"),
+        )
+
+    client, http_client = client_with_handler(handler)
+    mention_page = await client.fetch_notifications(
+        NotificationType.MENTION,
+        page=2,
+        page_size=20,
+    )
+    await client.fetch_notifications(
+        NotificationType.REPLY,
+        cursor="40",
+        page=3,
+        page_size=20,
+    )
+
+    assert mention_page.items[0]["notification"].external_comment_id == "70001"
+    assert observed[0]["message_type"] == "16"
+    assert observed[0]["offset"] == "20"
+    assert observed[0]["limit"] == "20"
+    assert observed[0]["no_more"] == "false"
+    assert observed[0]["heybox_id"] == "10001"
+    assert observed[0]["os_type"] == "web"
+    assert "type" not in observed[0]
+    assert "page" not in observed[0]
+    assert observed[1]["list_type"] == "0"
+    assert observed[1]["offset"] == "40"
+    assert "message_type" not in observed[1]
     await client.close()
     await http_client.aclose()
 
@@ -135,10 +174,18 @@ async def test_qr_success_restores_missing_credentials() -> None:
 async def test_comment_send_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/bbs/app/comment/create"
-        body = json.loads(request.content)
-        assert body["link_id"] == "30003"
-        assert body["root_comment_id"] == "root-1"
-        return httpx.Response(200, json=load_fixture("send_success.json"))
+        assert request.url.host == "workshopapi.xiaoheihe.cn"
+        assert request.headers["origin"] == "https://www.xiaoheihe.cn"
+        assert request.headers["referer"] == "https://www.xiaoheihe.cn/"
+        body = parse_qs(request.content.decode("utf-8"))
+        assert body == {
+            "is_cy": ["0"],
+            "link_id": ["30003"],
+            "reply_id": ["parent-1"],
+            "root_id": ["root-1"],
+            "text": ["hello"],
+        }
+        return httpx.Response(200, json={"status": "ok", "commentid": "sent-comment-1"})
 
     client, http_client = client_with_handler(handler)
     result = await client.send_comment(
