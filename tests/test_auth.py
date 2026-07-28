@@ -67,6 +67,8 @@ async def test_auth_qr_success_persists_credentials(tmp_path, repository) -> Non
     assert qr["qr_image"].startswith("data:image/png;base64,")
     result = await auth.check("default")
     assert result["state"] == "success"
+    assert "qr_image" not in result
+    assert "default" not in auth._sessions
     assert store.load("default").nickname == "MockUser"
     state = await repository.account_state("default")
     assert state["consecutive_401"] == 0

@@ -380,6 +380,12 @@ v1.0.0 未兼容参考登录响应的 `result.error = "ok"` 成功标记；v1.0.
 `Set-Cookie`。v1.0.2 已兼容 JSON 中的 `heyboxid`、`pkey` 和 `account_detail.userid`，
 并增加登录态恢复。请升级，不要继续使用旧二维码。
 
+### 管理页提示缺少 `plugin_tag`
+
+如果管理页顶部出现 `Formatting field not found in record: 'plugin_tag'`，请升级到
+v1.0.3。旧版插件文件日志会直接传播到 AstrBot 根格式器，导致状态接口在记录日志时中断；
+v1.0.3 已隔离文件日志并通过 AstrBot 公共 logger 输出控制台日志。
+
 ### 后台任务退出：xhh-cleanup
 
 v1.0.1 起，自动清理遇到临时 SQLite 锁或维护错误会记录脱敏原因并在一小时后重试，不再
