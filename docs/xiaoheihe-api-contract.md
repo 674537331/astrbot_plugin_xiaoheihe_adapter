@@ -25,12 +25,27 @@ Cookie 或响应转储。当前契约兼容：
 
 该修正已由脱敏 fixture 覆盖；真实账号完整登录成功仍需用户升级后复测确认。
 
+### v1.0.2 凭证字段兼容
+
+第二轮真实扫码复测确认状态已进入成功，但 v1.0.1 未能提取 UID 或凭证。v1.0.2 新增以下
+独立解析规则：
+
+- UID：`heyboxid`、`heybox_id`、`user_heybox_id`、`profile.heybox_id` 或
+  `account_detail.userid`；
+- 登录密钥：`pkey`、`user_pkey` 或已设置的会话 Cookie；
+- 状态：`wait` 为等待扫码、`ready` 为已扫码待确认、`ok` 为成功；
+- 成功响应不完整时，用相同 HTTP 会话请求 `restore_login`，合并两次响应后再校验。
+
+诊断只记录响应字段名和凭证数量，不记录字段值、Cookie、二维码参数或 Token。上述形状已加入
+脱敏 fixture，仍需用户对 v1.0.2 进行真实账号复测。
+
 ## 端点清单
 
 | 功能 | 方法与路径 | 参考观察 | 本项目状态 |
 | --- | --- | --- | --- |
 | 获取二维码 | `GET /account/get_qrcode_url/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
 | 查询扫码状态 | `GET /account/qr_state/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
+| 恢复完整登录态 | `GET /account/restore_login` | 官网兼容流程观察 | fixture 已测，待真实验证 |
 | 当前账号 | `GET /account/info/` | 本项目隔离契约 | fixture 已测，路径和字段待真实验证 |
 | @/回复通知 | `GET /bbs/app/user/message` | 参考项目出现该路径 | 分页和多形状解析已测，参数/字段待真实验证 |
 | 帖子与评论树 | `GET /bbs/app/link/tree` | 参考项目出现该路径 | fixture 已测，字段待真实验证 |

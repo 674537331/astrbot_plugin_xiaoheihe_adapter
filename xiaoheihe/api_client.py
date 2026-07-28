@@ -137,7 +137,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.1",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.2",
                 },
             )
         if self.credentials:
@@ -165,12 +165,35 @@ class XiaoheiheApiClient:
         state, message = parse_login_state(response.payload)
         credentials = None
         if state is LoginState.SUCCESS:
-            credentials = parse_credentials(
-                self.profile_id,
-                response.payload,
-                response.cookies,
-                logged_in_at=datetime.now(UTC).isoformat(),
-            )
+            logged_in_at = datetime.now(UTC).isoformat()
+            try:
+                credentials = parse_credentials(
+                    self.profile_id,
+                    response.payload,
+                    response.cookies,
+                    logged_in_at=logged_in_at,
+                )
+            except ResponseShapeError:
+                restored = await self._request(EndpointName.RESTORE_LOGIN)
+                merged_cookies = {**response.cookies, **restored.cookies}
+                try:
+                    credentials = parse_credentials(
+                        self.profile_id,
+                        restored.payload,
+                        merged_cookies,
+                        logged_in_at=logged_in_at,
+                        fallback_payloads=(response.payload,),
+                    )
+                except ResponseShapeError as exc:
+                    raise ResponseContractError(
+                        str(exc),
+                        category="response_shape",
+                        details={
+                            "qr_result_fields": _result_field_names(response.payload),
+                            "restore_result_fields": _result_field_names(restored.payload),
+                            "session_credential_count": len(merged_cookies),
+                        },
+                    ) from exc
             self.credentials = credentials
         return state, message, credentials
 
@@ -479,3 +502,10 @@ def _cookie_jar_values(
     for cookie in response.cookies.jar:
         cookies[str(cookie.name)] = str(cookie.value)
     return cookies
+
+
+def _result_field_names(payload: Mapping[str, Any]) -> list[str]:
+    candidate = payload.get("result", payload.get("data", payload))
+    if not isinstance(candidate, Mapping):
+        return []
+    return sorted(str(key) for key in candidate)[:50]

@@ -132,6 +132,10 @@ def parse_login_state(payload: Mapping[str, Any]) -> tuple[LoginState, str]:
         return state_map[raw_state], message
     if result_marker in {"ok", "success", "confirmed"}:
         return LoginState.SUCCESS, message
+    if result_marker in {"ready", "scanned"}:
+        return LoginState.SCANNED_WAITING_CONFIRM, message
+    if result_marker in {"wait", "waiting"}:
+        return LoginState.WAITING_SCAN, message
 
     hint = f"{result_marker} {message}".casefold()
     if any(token in hint for token in ("expired", "timeout", "过期", "失效", "超时")):
@@ -164,42 +168,125 @@ def parse_credentials(
     response_cookies: Mapping[str, str],
     *,
     logged_in_at: str,
+    fallback_payloads: tuple[Mapping[str, Any], ...] = (),
 ) -> Credentials:
-    body = _data(payload)
-    candidate = body.get("user", body.get("account"))
-    user = candidate if isinstance(candidate, Mapping) else body
-    uid = _id(user, "uid", "heybox_id", "user_id", "id")
-    nickname = str(_first(user, "nickname", "username", "name"))
+    bodies = [_data(item) for item in (payload, *fallback_payloads)]
+    containers: list[Mapping[str, Any]] = []
+    for body in bodies:
+        for candidate in (
+            body,
+            body.get("user"),
+            body.get("account"),
+            body.get("profile"),
+            body.get("account_detail"),
+        ):
+            if isinstance(candidate, Mapping):
+                containers.append(candidate)
+
+    uid = _first_from_mappings(
+        containers,
+        "uid",
+        "heybox_id",
+        "user_heybox_id",
+        "heyboxid",
+        "user_id",
+        "userid",
+        "id",
+    )
+    nickname = _first_from_mappings(
+        containers,
+        "nickname",
+        "username",
+        "name",
+    )
     cookies = {str(key): str(value) for key, value in response_cookies.items()}
-    embedded_cookies = body.get("cookies")
-    if isinstance(embedded_cookies, Mapping):
-        cookies.update({str(key): str(value) for key, value in embedded_cookies.items()})
+    for body in bodies:
+        embedded_cookies = body.get("cookies")
+        if isinstance(embedded_cookies, Mapping):
+            cookies.update({str(key): str(value) for key, value in embedded_cookies.items()})
+    _copy_login_cookie(cookies, containers, "pkey", "pkey", "user_pkey", "key")
+    _copy_login_cookie(
+        cookies,
+        containers,
+        "heybox_id",
+        "heybox_id",
+        "user_heybox_id",
+        "heyboxid",
+        "user_id",
+        "userid",
+    )
+    _copy_login_cookie(
+        cookies,
+        containers,
+        "x_xhh_tokenid",
+        "x_xhh_tokenid",
+    )
     if not uid:
-        uid = str(
-            _first(
-                cookies,
-                "user_heybox_id",
-                "heybox_id",
-                "user_id",
-                "uid",
-            )
+        uid = _first_from_mappings(
+            (cookies,),
+            "user_heybox_id",
+            "heybox_id",
+            "heyboxid",
+            "user_id",
+            "userid",
+            "uid",
         )
-    if not nickname:
-        nickname = str(_first(body, "nickname", "username", "name"))
-    access_token = str(_first(body, "access_token", "token"))
-    if not uid or not (cookies or access_token):
-        raise ResponseShapeError("登录成功响应缺少 UID 或凭证")
+    access_token = _first_from_mappings(bodies, "access_token", "token")
+    refresh_token = _first_from_mappings(bodies, "refresh_token")
+    device_id = _first_from_mappings(bodies, "device_id")
+    signing_key = _first_from_mappings(bodies, "signing_key", "sign_key")
+    identity_cookie_names = {
+        "heybox_id",
+        "user_heybox_id",
+        "heyboxid",
+        "uid",
+        "userid",
+        "user_id",
+    }
+    has_cookie_credentials = any(name.casefold() not in identity_cookie_names for name in cookies)
+    has_credentials = bool(has_cookie_credentials or access_token or refresh_token)
+    if not uid:
+        suffix = "（已收到凭证）" if has_credentials else "和登录凭证"
+        raise ResponseShapeError(f"登录成功响应缺少 UID{suffix}")
+    if not has_credentials:
+        raise ResponseShapeError("登录成功响应缺少登录凭证")
     return Credentials(
         profile_id=profile_id,
         uid=uid,
         nickname=nickname,
         cookies=cookies,
         access_token=access_token,
-        refresh_token=str(_first(body, "refresh_token")),
-        device_id=str(_first(body, "device_id")),
-        signing_key=str(_first(body, "signing_key", "sign_key")),
+        refresh_token=refresh_token,
+        device_id=device_id,
+        signing_key=signing_key,
         logged_in_at=logged_in_at,
     )
+
+
+def _first_from_mappings(
+    mappings: Any,
+    *keys: str,
+) -> str:
+    for mapping in mappings:
+        if not isinstance(mapping, Mapping):
+            continue
+        value = _first(mapping, *keys)
+        if value is not None and value != "":
+            return str(value)
+    return ""
+
+
+def _copy_login_cookie(
+    destination: dict[str, str],
+    containers: list[Mapping[str, Any]],
+    normalized_name: str,
+    *aliases: str,
+) -> None:
+    if destination.get(normalized_name):
+        return
+    value = _first_from_mappings(containers, *aliases)
+    if value:
+        destination[normalized_name] = value
 
 
 def parse_notifications(
