@@ -10,6 +10,11 @@ from typing import Any
 from .security import redact_data, redact_text
 from .task_manager import TaskManager
 
+try:
+    from astrbot.api import logger as astrbot_logger
+except ImportError:
+    astrbot_logger = None
+
 
 class LoggingService:
     def __init__(
@@ -25,12 +30,15 @@ class LoggingService:
             maxlen=max(100, min(max_memory_entries, 10000))
         )
         self._tasks = task_manager
-        self._logger = logging.getLogger("astrbot.xiaoheihe")
-        self._logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-        self._logger.propagate = True
         log_dir = data_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = log_dir / "xiaoheihe.log"
+        self._logger = logging.getLogger(f"astrbot.xiaoheihe.file.{id(self)}")
+        self._logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+        # AstrBot's root formatter expects fields injected only by its public
+        # logger. Keep the plugin file logger isolated, then emit separately
+        # through astrbot.api.logger when that public API is available.
+        self._logger.propagate = False
         per_file = 5 * 1024 * 1024
         backups = max(1, min(39, int(total_limit_mb) // 5 - 1))
         handler = RotatingFileHandler(
@@ -72,6 +80,18 @@ class LoggingService:
             safe_message,
             entry["details"] or "",
         )
+        if astrbot_logger is not None:
+            astrbot_log_method = getattr(
+                astrbot_logger,
+                normalized_level.lower(),
+                astrbot_logger.info,
+            )
+            astrbot_log_method(
+                "[小黑盒][profile=%s] %s %s",
+                profile_id or "-",
+                safe_message,
+                entry["details"] or "",
+            )
         self._tasks.publish_sse({"type": "log", "entry": entry})
         return entry
 

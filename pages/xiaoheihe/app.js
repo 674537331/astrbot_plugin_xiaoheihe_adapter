@@ -157,6 +157,10 @@ function renderLogin(result) {
     $("qr-image").src = result.qr_image;
     $("qr-image").hidden = false;
     $("qr-placeholder").hidden = true;
+  } else {
+    $("qr-image").removeAttribute("src");
+    $("qr-image").hidden = true;
+    $("qr-placeholder").hidden = false;
   }
   clearInterval(state.loginTimer);
   if (result.expires_at) {

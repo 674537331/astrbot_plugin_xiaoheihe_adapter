@@ -513,7 +513,7 @@ class RuntimeServices:
                 "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
         return {
-            "version": "v1.0.2",
+            "version": "v1.0.3",
             "profiles": profiles,
             "adapters": [
                 {
