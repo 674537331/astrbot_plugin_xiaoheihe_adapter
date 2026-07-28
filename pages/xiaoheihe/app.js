@@ -48,6 +48,12 @@ function metric(label, value) {
   return card;
 }
 
+function notificationMetric(profile, eventType) {
+  const poll = profile.notification_polls?.[eventType];
+  if (!poll) return "—";
+  return `${Number(poll.raw_count || 0)} / ${Number(poll.accepted_count || 0)}`;
+}
+
 function table(headers, rows) {
   const tableNode = document.createElement("table");
   const head = document.createElement("thead");
@@ -103,6 +109,8 @@ async function loadStatus() {
     metric("最后轮询", first.last_poll_at),
     metric("最近成功请求", first.last_success_request_at),
     metric("最近错误", first.last_error || first.last_client_error?.message),
+    metric("@通知 原始/接收", notificationMetric(first, "mention")),
+    metric("回复通知 原始/接收", notificationMetric(first, "reply")),
     metric("待处理队列", state.status.queue_length || 0),
     metric("今日回复", first.reply_count || 0),
     metric("今日主动回复", first.proactive_count || 0),
@@ -382,8 +390,24 @@ $("reject-expired").addEventListener("click", () => busy($("reject-expired"), as
 }));
 $("copy-diagnostics").addEventListener("click", () => busy($("copy-diagnostics"), async () => {
   const result = await bridge.apiGet("diagnostics");
-  await navigator.clipboard.writeText(JSON.stringify(result, null, 2));
-  toast("脱敏诊断已复制");
+  const diagnosticText = JSON.stringify(result, null, 2);
+  const fallback = $("diagnostics-fallback");
+  const output = $("diagnostics-output");
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+    await navigator.clipboard.writeText(diagnosticText);
+    fallback.hidden = true;
+    toast("脱敏诊断已复制");
+  } catch {
+    output.value = diagnosticText;
+    fallback.hidden = false;
+    output.focus();
+    output.select();
+    let copied = false;
+    try { copied = document.execCommand("copy"); }
+    catch { copied = false; }
+    toast(copied ? "脱敏诊断已复制" : "浏览器禁止自动复制，请在下方文本框中手动复制");
+  }
 }));
 $("preview-cleanup").addEventListener("click", () => busy($("preview-cleanup"), async () => {
   $("cleanup-output").textContent = JSON.stringify(await bridge.apiGet("storage/cleanup-preview"), null, 2);

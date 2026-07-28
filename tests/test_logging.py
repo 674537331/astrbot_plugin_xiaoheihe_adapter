@@ -17,6 +17,7 @@ async def test_logging_redacts_and_rotates_service_closes(tmp_path) -> None:
     )
     assert "secret-value" not in entry["message"]
     assert entry["details"]["cookie"] == "[REDACTED]"
+    assert logging_module.redact_data({"session_mappings": 2}) == {"session_mappings": 2}
     assert service.list(limit=1)[0] == entry
     assert service.total_size() >= 0
     service.reconfigure(level="ERROR", max_memory_entries=250, total_limit_mb=50)

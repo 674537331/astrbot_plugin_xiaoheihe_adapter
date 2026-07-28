@@ -478,6 +478,7 @@ class RuntimeServices:
                     int(state.get("consecutive_429") or 0),
                     client.consecutive_status[429],
                 )
+                state["notification_polls"] = client.last_notification_polls
             if state.get("status") == "credential_invalid":
                 alerts[f"{profile_id}:credential_invalid"] = {
                     "key": f"{profile_id}:credential_invalid",
@@ -485,10 +486,11 @@ class RuntimeServices:
                     "message": f"账号 {profile_id} 登录凭证已失效",
                 }
             if int(state.get("consecutive_poll_failures") or 0) >= 3:
+                reason = str(state.get("last_error") or "请查看运行日志")
                 alerts[f"{profile_id}:polling"] = {
                     "key": f"{profile_id}:polling",
                     "level": "error",
-                    "message": f"账号 {profile_id} 连续轮询失败",
+                    "message": f"账号 {profile_id} 连续轮询失败：{reason[:300]}",
                 }
             if int(state.get("consecutive_429") or 0) >= 3:
                 alerts[f"{profile_id}:429"] = {
@@ -513,7 +515,7 @@ class RuntimeServices:
                 "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
         return {
-            "version": "v1.0.4",
+            "version": "v1.0.5",
             "profiles": profiles,
             "adapters": [
                 {
