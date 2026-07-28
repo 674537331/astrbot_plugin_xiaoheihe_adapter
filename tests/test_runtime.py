@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -75,9 +76,41 @@ async def test_runtime_dry_run_can_remain_replayable(tmp_path, fake_config) -> N
 async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
     runtime = RuntimeServices(fake_config, tmp_path)
     status = await runtime.status()
-    assert status["version"] == "v1.0.0"
+    assert status["version"] == "v1.0.1"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
+    await runtime.close()
+
+
+async def test_cleanup_loop_recovers_after_transient_failure(
+    tmp_path,
+    fake_config,
+    monkeypatch,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    attempts = 0
+    delays = []
+
+    async def cleanup_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("database is locked")
+        raise asyncio.CancelledError
+
+    async def no_wait(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(runtime, "_run_cleanup_once", cleanup_once)
+    monkeypatch.setattr(runtime, "_cleanup_sleep", no_wait)
+
+    with pytest.raises(asyncio.CancelledError):
+        await runtime._cleanup_loop()
+
+    assert attempts == 2
+    assert delays[:2] == [60, 3600]
+    assert runtime.tasks.failures() == []
+    assert "cleanup" in runtime._alerts
     await runtime.close()
 
 

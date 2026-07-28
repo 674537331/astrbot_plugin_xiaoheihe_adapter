@@ -736,18 +736,22 @@ class Repository:
                 (error_cutoff,),
             ),
             (
-                "incoming_events",
-                """
-                SELECT rowid FROM incoming_events
-                WHERE status = 'dead_letter' AND completed_at < ?
-                """,
-                (failure_cutoff,),
-            ),
-            (
                 "outgoing_replies",
                 """
                 SELECT rowid FROM outgoing_replies
                 WHERE status = 'failed' AND attempted_at < ?
+                """,
+                (failure_cutoff,),
+            ),
+            (
+                "incoming_events",
+                """
+                SELECT rowid FROM incoming_events
+                WHERE status = 'dead_letter' AND completed_at < ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM outgoing_replies
+                      WHERE outgoing_replies.incoming_event_id = incoming_events.id
+                  )
                 """,
                 (failure_cutoff,),
             ),

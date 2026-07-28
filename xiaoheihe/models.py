@@ -107,6 +107,7 @@ class QRLoginSession:
     request_id: str
     qr_content: str
     expires_at: float
+    poll_params: dict[str, str] = field(default_factory=dict)
     state: LoginState = LoginState.WAITING_SCAN
     message: str = ""
 

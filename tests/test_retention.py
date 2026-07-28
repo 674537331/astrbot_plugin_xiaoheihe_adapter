@@ -64,6 +64,33 @@ async def test_cleanup_removes_old_sessions_and_runtime_errors(repository) -> No
     assert removed["runtime_errors"] == 1
 
 
+async def test_cleanup_deletes_failed_reply_before_linked_dead_letter(repository) -> None:
+    now = time.time()
+    notification = old_notification("linked", now - 40 * 86400)
+    event_id = await repository.claim_event(notification)
+    await repository.mark_event(event_id, EventState.DEAD_LETTER, error="failed")
+    await repository.db.execute(
+        "UPDATE incoming_events SET completed_at = ?, updated_at = ? WHERE id = ?",
+        (now - 40 * 86400, now - 40 * 86400, event_id),
+    )
+    await repository.record_outgoing_attempt(
+        "default",
+        event_id,
+        notification.route,
+        "failed reply",
+        status="failed",
+    )
+    await repository.db.execute(
+        "UPDATE outgoing_replies SET attempted_at = ? WHERE incoming_event_id = ?",
+        (now - 40 * 86400, event_id),
+    )
+
+    removed = await repository.cleanup(DEFAULT_CONFIG["retention"], now=now)
+
+    assert removed["outgoing_replies"] == 1
+    assert removed["incoming_events"] == 1
+
+
 async def test_soft_limit_prunes_only_low_priority_content(repository) -> None:
     now = time.time()
     dry_id = await repository.claim_event(old_notification("dry", now))

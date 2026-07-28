@@ -1,0 +1,8 @@
+{
+  "status": "ok",
+  "result": {
+    "qr_url": "https://api.xiaoheihe.cn/account/qr_login/?qr_ticket=mock-ticket&device=web",
+    "expire": 180,
+    "error_msg": ""
+  }
+}

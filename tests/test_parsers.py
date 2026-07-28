@@ -20,7 +20,29 @@ def test_login_state_matrix() -> None:
         LoginState.SCANNED_WAITING_CONFIRM
     )
     assert parse_login_state({"result": {"state": "expired"}})[0] is LoginState.EXPIRED
-    assert parse_login_state({"result": {"state": "unexpected"}})[0] is LoginState.FAILED
+    assert parse_login_state({"result": {"state": "unexpected"}})[0] is (LoginState.WAITING_SCAN)
+
+
+def test_reference_login_state_error_marker_variants() -> None:
+    assert parse_login_state({"status": "ok", "result": {"error": "ok"}})[0] is LoginState.SUCCESS
+    assert (
+        parse_login_state(
+            {
+                "status": "ok",
+                "result": {"error": "wait", "error_msg": "请在手机端确认登录"},
+            }
+        )[0]
+        is LoginState.SCANNED_WAITING_CONFIRM
+    )
+    assert (
+        parse_login_state(
+            {
+                "status": "ok",
+                "result": {"error": "wait", "error_msg": "等待扫码"},
+            }
+        )[0]
+        is LoginState.WAITING_SCAN
+    )
 
 
 def test_fixture_contracts() -> None:
