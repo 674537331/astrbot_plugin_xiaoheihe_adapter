@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from xiaoheihe.request_signing import RequestSigner
+from xiaoheihe.request_signing import RequestSigner, generate_hkey
 
 
 def test_signing_is_canonical_and_secret_optional() -> None:
@@ -26,7 +26,8 @@ def test_signing_is_canonical_and_secret_optional() -> None:
         nonce="fixed",
     )
     assert first == second
-    assert len(first.headers["X-XHH-Signature"]) == 64
+    assert first.headers == {}
+    assert len(first.params["hkey"]) == 7
     unsigned = signer.sign(
         "GET",
         "/login",
@@ -38,3 +39,15 @@ def test_signing_is_canonical_and_secret_optional() -> None:
         nonce="fixed",
     )
     assert unsigned.headers == {}
+    assert unsigned.params["hkey"]
+
+
+def test_hkey_matches_mit_reference_vector() -> None:
+    assert (
+        generate_hkey(
+            "/bbs/app/user/message",
+            1_700_000_000,
+            "0123456789ABCDEF0123456789ABCDEF",
+        )
+        == "YT27P47"
+    )

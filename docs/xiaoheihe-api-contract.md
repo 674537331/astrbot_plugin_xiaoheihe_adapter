@@ -69,6 +69,23 @@ Cookie 或响应转储。当前契约兼容：
 - 没有复制参考项目的私有 `hkey` 常量或混淆/签名实现。若接口明确要求该私有签名，仍需
   通过许可清晰的来源或小黑盒公开契约独立实现，不能伪称已经验证。
 
+### v1.0.6 hkey 与 relogin
+
+用户真实日志确认通知端点返回 HTTP 200，但业务状态为
+`status=relogin, msg=请重新登录`。这表明 v1.0.4 的空列表是认证失败，不是通知为空。
+v1.0.6：
+
+- 使用 MIT 许可的 `XiaHouSheng/heybox-core` 作为许可清晰的行为来源，将动态 `hkey` 算法
+  独立移植为 Python，并在 `THIRD_PARTY_NOTICES.md` 保留版权与许可；
+- 每次请求重新生成 `_time`、大写随机 nonce 和对应路径的 `hkey`；
+- 账号检查改用已观察到的 `/bbs/app/api/user/permission`；
+- `relogin` 或明确要求重新登录的响应转换为 `CredentialInvalidError`，触发 AstrBot
+  运行时熔断与适配器任务刷新；
+- 没有引入 Node/Bun 运行时，没有复制许可证不明确项目的签名源码或特殊常量。
+
+上述算法有固定向量和 MockTransport 测试，但通知接口仍需用户重新扫码后真实复测。
+Workshop 评论所需 `_rnd` 不在本次范围，继续标记为待真实验证。
+
 ## 端点清单
 
 | 功能 | 方法与路径 | 参考观察 | 本项目状态 |
@@ -76,7 +93,7 @@ Cookie 或响应转储。当前契约兼容：
 | 获取二维码 | `GET /account/get_qrcode_url/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
 | 查询扫码状态 | `GET /account/qr_state/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
 | 恢复完整登录态 | `GET /account/restore_login` | 官网兼容流程观察 | fixture 已测，待真实验证 |
-| 当前账号 | `GET /account/info/` | 本项目隔离契约 | fixture 已测，路径和字段待真实验证 |
+| 当前账号权限 | `GET /bbs/app/api/user/permission` | MIT 参考项目出现该路径 | Mock 已测，待用户复测 |
 | @/回复通知 | `GET /bbs/app/user/message` | 参考项目出现该路径 | offset 分页、消息类型筛选和多形状解析已测，待用户复测 |
 | 帖子与评论树 | `GET /bbs/app/link/tree` | 参考项目出现该路径 | fixture 已测，字段待真实验证 |
 | 创建评论 | `POST https://workshopapi.xiaoheihe.cn/bbs/app/comment/create` | 参考项目出现该主机与路径 | 表单和响应 Mock 已测，动态签名与真实限制待验证 |

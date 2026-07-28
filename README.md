@@ -400,6 +400,13 @@ v1.0.3 已隔离文件日志并通过 AstrBot 公共 logger 输出控制台日�
 诊断用于补充解析 fixture。Plugin Page 禁止 Clipboard API 时，页面会自动显示只读文本框，
 可长按或全选后手动复制。
 
+### 提示 `relogin: 请重新登录`
+
+v1.0.5 首次正确识别出小黑盒 HTTP 200 响应中的 `relogin`，同时证明此前的“成功空轮询”
+不是真正成功。请升级到 v1.0.6；该版本补齐动态 `hkey`，并在仍收到 `relogin` 时立即把
+账号标为 `credential_invalid`、停止轮询和真实发送。升级后应先安全退出，再重新扫码，
+不要连续点击“检查登录”进行高频试探。
+
 ### 后台任务退出：xhh-cleanup
 
 v1.0.1 起，自动清理遇到临时 SQLite 锁或维护错误会记录脱敏原因并在一小时后重试，不再
@@ -476,9 +483,13 @@ Gitleaks 和 Dependabot。
 - [AstrBot](https://github.com/AstrBotDevs/AstrBot)：平台适配器和原生 Agent 管线；
 - [SomeOvO/xhhRobot](https://github.com/SomeOvO/xhhRobot)：用于理解登录、通知、帖子和评论的
   功能行为。因未确认明确许可，本项目没有复制其实现；
+- [XiaHouSheng/heybox-core](https://github.com/XiaHouSheng/heybox-core)：依据其 MIT 许可
+  独立移植小黑盒动态 `hkey` 行为；版权和许可全文见
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；
 - [674537331/astrbot_plugin_mihome](https://github.com/674537331/astrbot_plugin_mihome)：
   README 信息组织与中文说明风格参考。
 
 ## License
 
-[MIT License](LICENSE) © RyanVaderAn
+[MIT License](LICENSE) © RyanVaderAn。第三方组件声明见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

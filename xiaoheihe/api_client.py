@@ -42,6 +42,8 @@ AuthInvalidCallback = Callable[[str, int], Awaitable[None]]
 AUTHENTICATED_WEB_PARAMS = {
     "app": "heybox",
     "client_type": "web",
+    "version": "999.0.4",
+    "web_version": "3.0",
     "x_client_type": "web",
     "x_client_version": "",
     "x_app": "heybox_website",
@@ -149,7 +151,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.5",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.6",
                 },
             )
         if self.credentials:
@@ -493,15 +495,19 @@ class XiaoheiheApiClient:
                 )
                 self._remember_error(error)
                 raise error
-            upstream_error = _upstream_error(payload)
+            upstream_error = _upstream_error(payload) if contract.authenticated else ""
             if upstream_error:
-                error = XiaoheiheApiError(
+                credential_invalid = _is_relogin_response(payload)
+                error_type = CredentialInvalidError if credential_invalid else XiaoheiheApiError
+                error = error_type(
                     upstream_error,
-                    status_code=response.status_code,
-                    category="upstream_rejected",
+                    status_code=401 if credential_invalid else response.status_code,
+                    category=("credential_invalid" if credential_invalid else "upstream_rejected"),
                     details=_response_shape_summary(payload),
                 )
                 self._remember_error(error)
+                if credential_invalid and self._on_auth_invalid is not None:
+                    await self._on_auth_invalid(self.profile_id, 401)
                 raise error
             self._reset_status_counts()
             self.last_success_at = datetime.now(UTC).isoformat()
@@ -598,6 +604,25 @@ def _upstream_error(payload: Mapping[str, Any]) -> str:
     message = redact_data(str(raw_message)) if raw_message else ""
     suffix = f": {str(message)[:300]}" if message else ""
     return f"小黑盒 API 返回非成功状态 {str(marker)[:80]}{suffix}"
+
+
+def _is_relogin_response(payload: Mapping[str, Any]) -> bool:
+    marker = str(payload.get("status", payload.get("stat", ""))).strip().casefold()
+    message = str(payload.get("msg", payload.get("message", payload.get("error", ""))))
+    hint = f"{marker} {message}".casefold()
+    return any(
+        token in hint
+        for token in (
+            "relogin",
+            "login required",
+            "not login",
+            "unauthorized",
+            "重新登录",
+            "请登录",
+            "未登录",
+            "登录失效",
+        )
+    )
 
 
 def _response_shape_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
