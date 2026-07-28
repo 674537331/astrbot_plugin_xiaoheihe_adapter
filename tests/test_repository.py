@@ -42,6 +42,31 @@ async def test_outgoing_confirmation_self_loop_and_recent_match(repository) -> N
     assert row["external_comment_id"] == "self-comment"
 
 
+async def test_confirmed_send_without_returned_comment_id_does_not_store_blank_self_id(
+    repository,
+) -> None:
+    route = RoutingTarget("default", "post", "root", "parent")
+    outgoing_id = await repository.record_outgoing_attempt(
+        "default",
+        None,
+        route,
+        "sent without response id",
+        "sending",
+    )
+    await repository.confirm_outgoing(outgoing_id, "")
+    row = await repository.db.fetchone(
+        "SELECT status, external_comment_id FROM outgoing_replies WHERE id = ?",
+        (outgoing_id,),
+    )
+    self_row = await repository.db.fetchone(
+        "SELECT 1 FROM self_comment_ids WHERE profile_id = ? AND external_comment_id = ''",
+        ("default",),
+    )
+    assert row["status"] == "sent"
+    assert row["external_comment_id"] == ""
+    assert self_row is None
+
+
 async def test_event_filters_counters_and_recovery(repository) -> None:
     first_id = await repository.claim_event(make_notification("first", "100", "p1"))
     second_id = await repository.claim_event(make_notification("second", "200", "p2"))

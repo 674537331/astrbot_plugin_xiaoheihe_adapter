@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 API_BASE_URL = "https://api.xiaoheihe.cn"
+WORKSHOP_API_BASE_URL = "https://workshopapi.xiaoheihe.cn"
 
 
 class EndpointName(StrEnum):
@@ -28,6 +29,7 @@ class Endpoint:
     path: str
     authenticated: bool
     retry_safe: bool
+    base_url: str = API_BASE_URL
 
 
 ENDPOINTS: dict[EndpointName, Endpoint] = {
@@ -37,7 +39,13 @@ ENDPOINTS: dict[EndpointName, Endpoint] = {
     EndpointName.CURRENT_USER: Endpoint("GET", "/account/info/", True, True),
     EndpointName.USER_MESSAGES: Endpoint("GET", "/bbs/app/user/message", True, True),
     EndpointName.POST_TREE: Endpoint("GET", "/bbs/app/link/tree", True, True),
-    EndpointName.CREATE_COMMENT: Endpoint("POST", "/bbs/app/comment/create", True, False),
+    EndpointName.CREATE_COMMENT: Endpoint(
+        "POST",
+        "/bbs/app/comment/create",
+        True,
+        False,
+        WORKSHOP_API_BASE_URL,
+    ),
     EndpointName.RECENT_COMMENTS: Endpoint("GET", "/bbs/app/comment/user", True, True),
     EndpointName.FEED: Endpoint("GET", "/bbs/app/feeds", True, True),
 }

@@ -39,6 +39,25 @@ Cookie 或响应转储。当前契约兼容：
 诊断只记录响应字段名和凭证数量，不记录字段值、Cookie、二维码参数或 Token。上述形状已加入
 脱敏 fixture，仍需用户对 v1.0.2 进行真实账号复测。
 
+### v1.0.4 通知与评论契约修正
+
+用户真实运行日志确认 v1.0.3 的通知请求取得了非预期的 `result` 数组，原先
+`type=at/reply&page=` 的请求假设不成立。再次核对参考项目后，本项目独立实现以下契约：
+
+- @ 通知：`message_type=16&offset=<n>&limit=<n>&no_more=false`；
+- 评论/回复：`list_type=0&offset=<n>&limit=<n>&no_more=false`，只保留
+  `message_type=1/2`；
+- 通知主体：`result.messages`，并兼容顶层结果数组；
+- 通知字段：`message_id`、`comment_a_id`、`comment_a_text`、`root_comment_id`、
+  `linkid`、`userid_a` 和 `user_a`；
+- 帖子正文：`result.link.text` 可以是 JSON 富文本段，图片 URL 与文本分别规范化；
+- 评论创建：Workshop 主机上的表单请求，字段为
+  `is_cy/link_id/reply_id/root_id/text`。
+
+该修正由脱敏 fixture 和 MockTransport 覆盖。通知参数和字段仍需用户升级后复测；评论写接口
+的一次性签名尚未通过真实账号验证，因此必须继续保持 dry-run，不能把 Mock 成功等同于真实
+评论发送可用。
+
 ## 端点清单
 
 | 功能 | 方法与路径 | 参考观察 | 本项目状态 |
@@ -47,9 +66,9 @@ Cookie 或响应转储。当前契约兼容：
 | 查询扫码状态 | `GET /account/qr_state/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
 | 恢复完整登录态 | `GET /account/restore_login` | 官网兼容流程观察 | fixture 已测，待真实验证 |
 | 当前账号 | `GET /account/info/` | 本项目隔离契约 | fixture 已测，路径和字段待真实验证 |
-| @/回复通知 | `GET /bbs/app/user/message` | 参考项目出现该路径 | 分页和多形状解析已测，参数/字段待真实验证 |
+| @/回复通知 | `GET /bbs/app/user/message` | 参考项目出现该路径 | offset 分页、消息类型筛选和多形状解析已测，待用户复测 |
 | 帖子与评论树 | `GET /bbs/app/link/tree` | 参考项目出现该路径 | fixture 已测，字段待真实验证 |
-| 创建评论 | `POST /bbs/app/comment/create` | 参考项目出现该路径 | Mock 已测，参数、限制和返回字段待真实验证 |
+| 创建评论 | `POST https://workshopapi.xiaoheihe.cn/bbs/app/comment/create` | 参考项目出现该主机与路径 | 表单和响应 Mock 已测，动态签名与真实限制待验证 |
 | 近期评论核对 | `GET /bbs/app/comment/user` | 本项目隔离契约 | Mock 已测，路径、排序和一致性待真实验证 |
 | 主动帖子流 | `GET /bbs/app/feeds` | 本项目隔离契约 | Mock 已测，来源参数和字段待真实验证 |
 
