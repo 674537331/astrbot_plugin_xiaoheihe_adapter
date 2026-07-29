@@ -20,7 +20,7 @@ except ModuleNotFoundError as exc:
 @register(
     PLUGIN_NAME,
     "RyanVaderAn",
-    "AstrBot ???????????",
+    "AstrBot 的小黑盒原生平台适配器",
     "1.0.7",
 )
 class XiaoheiheAdapterPlugin(Star):

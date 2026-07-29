@@ -38,7 +38,7 @@ class CredentialStore:
         safe_id = validate_profile_id(profile_id)
         path = (self.directory / f"{safe_id}.json").resolve(strict=False)
         if path.parent != self.directory.resolve(strict=False):
-            raise SecurityError("??????")
+            raise SecurityError("凭证路径越界")
         return path
 
     def save(self, credentials: Credentials) -> None:
@@ -51,10 +51,10 @@ class CredentialStore:
         with path.open(encoding="utf-8") as handle:
             payload = json.load(handle)
         if not isinstance(payload, dict):
-            raise ValueError("????????")
+            raise ValueError("凭证文件格式无效")
         cookies = payload.get("cookies")
         if not isinstance(cookies, dict):
-            raise ValueError("?? Cookie ????")
+            raise ValueError("凭证 Cookie 格式无效")
         return Credentials(
             profile_id=validate_profile_id(str(payload.get("profile_id", profile_id))),
             uid=str(payload.get("uid", "")),
@@ -184,7 +184,7 @@ class AuthService:
                         "profile_id": profile_id,
                         "state": LoginState.IDLE.value,
                         "has_credentials": False,
-                        "message": "?????????????????",
+                        "message": "尚未生成二维码，或扫码登录尚未成功",
                     }
                 client: XiaoheiheApiClient = await self._client_factory(profile_id)
                 try:

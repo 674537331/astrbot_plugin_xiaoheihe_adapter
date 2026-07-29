@@ -182,7 +182,7 @@ async def test_idle_check_explains_that_no_qr_or_credentials_exist(
     auth = AuthService(CredentialStore(tmp_path), repository, factory)
     result = await auth.check("default")
     assert result["state"] == LoginState.IDLE.value
-    assert "???????" in result["message"]
+    assert "尚未生成二维码" in result["message"]
 
 
 async def test_background_login_poll_notifies_runtime(tmp_path, repository, monkeypatch) -> None:

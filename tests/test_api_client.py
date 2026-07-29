@@ -127,7 +127,7 @@ async def test_authenticated_upstream_failed_status_is_not_silent_success() -> N
         )
 
     client, http_client = client_with_handler(handler)
-    with pytest.raises(XiaoheiheApiError, match="????? failed"):
+    with pytest.raises(XiaoheiheApiError, match="非成功状态 failed"):
         await client.fetch_notifications(NotificationType.MENTION)
     assert client.last_error["category"] == "upstream_rejected"
     assert client.last_success_at is None
@@ -144,7 +144,7 @@ async def test_relogin_business_status_invalidates_credentials() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"status": "relogin", "msg": "?????"},
+            json={"status": "relogin", "msg": "请重新登录"},
         )
 
     client, http_client = client_with_handler(handler, callback=callback)
