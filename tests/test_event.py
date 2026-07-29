@@ -66,6 +66,7 @@ async def test_once_only_send_and_parent_state() -> None:
     assert runtime.deliveries[0]["generated_ms"] >= 0
     assert event.parent_send_count == 1
     assert runtime.logging.entries
+    assert runtime.logging.entries[0][0][0] == "DEBUG"
 
 
 async def test_streaming_is_aggregated_to_one_comment() -> None:

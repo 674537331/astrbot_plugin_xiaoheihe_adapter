@@ -55,8 +55,8 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
         async with self._send_lock:
             if self._final_send_done:
                 self.runtime.logging.emit(
-                    "WARNING",
-                    "同一入站事件尝试发送多次，后续发送已抑制",
+                    "DEBUG",
+                    "检测到同一入站事件的额外消息段，已按单评论策略忽略",
                     profile_id=self.route.profile_id,
                 )
                 return

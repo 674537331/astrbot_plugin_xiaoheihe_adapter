@@ -203,7 +203,7 @@ class RuntimeServices:
                 else:
                     await self.repository.defer_event(
                         event_id,
-                        "dry-run 已生成，但按配置未标记处理完成",
+                        "模拟运行已生成，但按配置未标记处理完成",
                         delay_seconds=float(config["polling"]["poll_interval_seconds"]),
                     )
             return {"status": EventState.DRY_RUN.value, "text": text}
@@ -540,7 +540,7 @@ class RuntimeServices:
                 "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
         return {
-            "version": "v1.0.8",
+            "version": "v1.0.9",
             "profiles": profiles,
             "adapters": [
                 {

@@ -77,7 +77,7 @@ async def test_runtime_dry_run_can_remain_replayable(tmp_path, fake_config) -> N
 async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
     runtime = RuntimeServices(fake_config, tmp_path)
     status = await runtime.status()
-    assert status["version"] == "v1.0.8"
+    assert status["version"] == "v1.0.9"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     await runtime.close()

@@ -102,6 +102,22 @@ class Repository:
             result = await row.fetchone()
             return int(result["id"]) if result else None
 
+    async def is_event_queueable(self, profile_id: str, external_event_id: str) -> bool:
+        row = await self.db.fetchone(
+            """
+            SELECT status, next_retry_at
+            FROM incoming_events
+            WHERE profile_id = ? AND external_event_id = ?
+            """,
+            (profile_id, external_event_id),
+        )
+        if row is None:
+            return True
+        return (
+            str(row["status"]) == EventState.RETRY_WAIT.value
+            and float(row["next_retry_at"] or 0) <= time.time()
+        )
+
     async def mark_event(
         self,
         event_id: int,

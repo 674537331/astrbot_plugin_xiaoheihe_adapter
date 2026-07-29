@@ -15,6 +15,7 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const text = (value) => value === null || value === undefined || value === "" ? "—" : String(value);
+const eventStatusText = (value) => value === "dry_run" ? "模拟运行" : text(value);
 const bytes = (value) => {
   const number = Number(value || 0);
   if (number < 1024) return `${number} B`;
@@ -344,7 +345,7 @@ async function loadStatus() {
     metric("待处理队列", state.status.queue_length || 0),
     metric("今日回复", first.reply_count || 0),
     metric("今日主动回复", first.proactive_count || 0),
-    metric("dry-run", first.dry_run ? "开启" : "关闭"),
+    metric("模拟运行", first.dry_run ? "开启" : "关闭"),
     metric("数据库", bytes(state.status.database_size)),
     metric("日志", bytes(state.status.log_size)),
     metric("后台任务", (state.status.tasks || []).length),
@@ -442,7 +443,7 @@ async function loadEvents() {
     result.items.map((item) => [
       new Date(item.discovered_at * 1000).toLocaleString(),
       item.event_type,
-      item.status,
+      eventStatusText(item.status),
       item.sender_uid,
       `${item.post_id} / ${item.root_comment_id || "帖子"}`,
       `${item.content || ""}\n${item.reply_text ? `→ ${item.reply_text}` : ""}\n${item.error || ""}`.trim(),

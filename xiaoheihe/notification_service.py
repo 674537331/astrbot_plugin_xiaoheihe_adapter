@@ -50,6 +50,8 @@ class NotificationService:
         )
         self._max_per_user = int(network["max_pending_per_user"])
         self._pending_per_user: Counter[str] = Counter()
+        self._pending_event_keys: set[str] = set()
+        self._limit_warning_users: set[str] = set()
         self._recovery_ids: dict[str, int] = {}
         self._floor_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self._poll_summary_signatures: dict[str, tuple[Any, ...]] = {}
@@ -176,15 +178,32 @@ class NotificationService:
             },
         )
 
-    async def enqueue(self, notification: Notification) -> bool:
+    async def enqueue(self, notification: Notification, *, recovered: bool = False) -> bool:
         uid = str(notification.sender_uid)
+        event_key = notification.external_event_id
+        if event_key in self._pending_event_keys:
+            return False
         if self._pending_per_user[uid] >= self._max_per_user:
+            if uid not in self._limit_warning_users:
+                self._limit_warning_users.add(uid)
+                self.logger.emit(
+                    "WARNING",
+                    "单用户待处理事件达到上限，保留通知供后续轮询处理",
+                    profile_id=self.profile_id,
+                    details={"sender_uid": uid},
+                )
+            return False
+        if self._queue.full():
             self.logger.emit(
                 "WARNING",
-                "单用户待处理事件达到上限，保留通知供下轮去重处理",
+                "待处理事件队列已满，停止本轮入队",
                 profile_id=self.profile_id,
-                details={"sender_uid": uid},
             )
+            return False
+        if not recovered and not await self.repository.is_event_queueable(
+            notification.profile_id,
+            event_key,
+        ):
             return False
         decision = self.permissions.decide(notification)
         priority = 0 if decision.is_owner else 10
@@ -198,6 +217,7 @@ class NotificationService:
             )
             return False
         self._pending_per_user[uid] += 1
+        self._pending_event_keys.add(event_key)
         return True
 
     async def recover_pending(self) -> int:
@@ -240,7 +260,7 @@ class NotificationService:
                     continue
                 event_id = claimed_id
             self._recovery_ids[notification.external_event_id] = event_id
-            if await self.enqueue(notification):
+            if await self.enqueue(notification, recovered=True):
                 recovered += 1
             else:
                 self._recovery_ids.pop(notification.external_event_id, None)
@@ -275,6 +295,9 @@ class NotificationService:
                 self._pending_per_user[uid] -= 1
                 if self._pending_per_user[uid] <= 0:
                     self._pending_per_user.pop(uid, None)
+                if self._pending_per_user.get(uid, 0) < self._max_per_user:
+                    self._limit_warning_users.discard(uid)
+                self._pending_event_keys.discard(notification.external_event_id)
                 self._queue.task_done()
 
     async def _handle(self, notification: Notification, *, event_id: int | None = None) -> None:
@@ -333,6 +356,8 @@ class NotificationService:
         with suppress(TimeoutError):
             await asyncio.wait_for(self._queue.join(), timeout=5)
         self._floor_locks.clear()
+        self._pending_event_keys.clear()
+        self._limit_warning_users.clear()
 
 
 def _iso_now() -> str:

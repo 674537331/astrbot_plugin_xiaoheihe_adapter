@@ -36,7 +36,7 @@
             "default": true
           },
           "dry_run": {
-            "description": "仅演练，不发送真实评论",
+            "description": "模拟运行（仅生成，不发送）",
             "type": "bool",
             "default": true
           },
@@ -154,7 +154,7 @@
     "description": "回复策略",
     "items": {
       "dry_run_mark_processed": {
-        "description": "dry-run 后标记完成",
+        "description": "模拟运行后标记完成",
         "type": "bool",
         "default": true
       },
@@ -294,7 +294,7 @@
         "default": false
       },
       "dry_run": {
-        "description": "主动刷帖仅演练",
+        "description": "主动帖子模拟运行",
         "type": "bool",
         "default": true
       },
@@ -356,7 +356,7 @@
         "default": 30
       },
       "dry_run_days": {
-        "description": "dry-run 正文保留天数",
+        "description": "模拟运行正文保留天数",
         "type": "int",
         "default": 30
       },

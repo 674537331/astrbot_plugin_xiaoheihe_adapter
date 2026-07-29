@@ -11,7 +11,7 @@
       <div>
         <p class="eyebrow">ASTRBOT PLATFORM ADAPTER</p>
         <h1>小黑盒管理</h1>
-        <p id="hero-summary">安全登录、原生事件、dry-run 与人工审核。</p>
+        <p id="hero-summary">安全登录、原生事件、模拟运行与人工审核。</p>
       </div>
       <button id="refresh-all" class="secondary">刷新总览</button>
     </header>
@@ -81,7 +81,7 @@
           <div class="filters">
             <select id="event-status">
               <option value="">全部状态</option>
-              <option>sent</option><option>dry_run</option><option>ignored</option>
+              <option>sent</option><option value="dry_run">模拟运行</option><option>ignored</option>
               <option>retry_wait</option><option>send_unknown</option>
               <option>dead_letter</option><option>dispatched</option>
             </select>

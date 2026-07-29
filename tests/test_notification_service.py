@@ -179,8 +179,40 @@ async def test_enqueue_enforces_per_user_and_queue_limits(repository) -> None:
     service._max_per_user = 10
     service._queue = service._queue.__class__(maxsize=1)
     service._pending_per_user.clear()
+    service._pending_event_keys.clear()
     assert await service.enqueue(notice("three", time.time()))
     assert not await service.enqueue(replace(notice("four", time.time()), sender_uid="other"))
+
+
+async def test_enqueue_skips_in_memory_and_completed_duplicates(repository) -> None:
+    async def dispatch(*args):
+        return None
+
+    service = make_service(repository, [], dispatch)
+    current = notice("duplicate", time.time())
+    assert await service.enqueue(current)
+    assert not await service.enqueue(current)
+    assert service._queue.qsize() == 1
+    assert service._pending_per_user["user"] == 1
+
+    completed = notice("completed", time.time())
+    event_id = await repository.claim_event(completed)
+    assert event_id is not None
+    await repository.mark_event(event_id, EventState.DRY_RUN, reply_text="done")
+    assert not await service.enqueue(completed)
+    assert service._queue.qsize() == 1
+
+    retry = notice("retry-due", time.time())
+    retry_id = await repository.claim_event(retry)
+    assert retry_id is not None
+    await repository.defer_event(retry_id, "later", delay_seconds=60)
+    assert not await service.enqueue(retry)
+    await repository.db.execute(
+        "UPDATE incoming_events SET next_retry_at = 0 WHERE id = ?",
+        (retry_id,),
+    )
+    assert await service.enqueue(retry)
+    assert service._queue.qsize() == 2
 
 
 async def test_handle_records_ignored_and_retry_wait(repository) -> None:
@@ -254,6 +286,8 @@ async def test_poll_uses_pages_and_skips_duplicate_claim(repository) -> None:
     service.client = PagedClient()
     await service.poll_once()
     assert len(calls) == 4  # two pages for mentions and two pages for replies
+    assert service._queue.qsize() == 1
+    assert service._pending_per_user["user"] == 1
     while not service._queue.empty():
         _, _, item = service._queue.get_nowait()
         await service._handle(item)
@@ -271,6 +305,8 @@ async def test_worker_drains_one_item_and_stop_is_idempotent(repository) -> None
     assert await service.enqueue(notice("worker", time.time()))
     worker = __import__("asyncio").create_task(service._worker())
     await service._queue.join()
+    assert not service._pending_event_keys
+    assert not service._pending_per_user
     await service.stop()
     worker.cancel()
     with pytest.raises(__import__("asyncio").CancelledError):

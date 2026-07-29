@@ -12,7 +12,7 @@
   → Platform.commit_event()
   → AstrBot 原生会话 / 人格 / 记忆 / Agent / MCP / Skills / Tools
   → XiaoheiheMessageEvent.send()
-  → dry-run / feed candidate / 单条真实评论
+  → 模拟运行 / feed candidate / 单条真实评论
 ```
 
 插件只负责平台输入输出。模型、人格、会话历史、长期记忆、Agent Runner 和工具执行全部由
@@ -65,12 +65,13 @@ claimed → ignored
 ```
 
 `dispatched` 在提交 AstrBot 队列前写入，避免快速完成的 `sent/dry_run` 被较旧状态覆盖。
-最终完成仅包括发送成功、成功 dry-run、明确忽略或人工丢弃。
+最终完成仅包括发送成功、成功模拟运行、明确忽略或人工丢弃。
 
 ## 并发
 
 - 每个 `profile_id` 只有一个轮询器；
 - 有界优先队列限制总积压和单用户积压；
+- 入队前通过 SQLite 状态索引和进程内事件键过滤已完成、处理中及重复通知；
 - 主人事件提高优先级但不突破硬上限；
 - 帖子/楼层上下文网络读取在锁外完成；同一楼层从原生事件提交到最终发送或超时使用串行锁，
   不同楼层受 worker 数量限制；
