@@ -83,6 +83,10 @@ class WebApiController:
             self.runtime.config.profile(profile_id)
             await self.runtime.ensure_started()
             result = await self.runtime.auth.request_qr(profile_id)
+            await self.runtime.notify_profile_changed(
+                profile_id,
+                preserve_anonymous=True,
+            )
             return json_response(result)
         except (SecurityError, ConfigValidationError, ValueError) as exc:
             return error_response(str(exc), status_code=400)
@@ -308,7 +312,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.0.6"},
+            "plugin": {"name": PLUGIN_NAME, "version": "v1.0.7"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),

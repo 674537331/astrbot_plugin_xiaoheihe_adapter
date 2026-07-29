@@ -97,8 +97,20 @@ class AuthService:
     async def request_qr(self, profile_id: str) -> dict[str, Any]:
         profile_id = validate_profile_id(profile_id)
         async with self._lock(profile_id):
+            account = await self.repository.account_state(profile_id)
+            if account.get("status") in {
+                LoginState.CREDENTIAL_INVALID.value,
+                LoginState.FAILED.value,
+            }:
+                self.store.delete(profile_id)
             await self.repository.update_account_state(
-                profile_id, status=LoginState.REQUESTING_QR.value
+                profile_id,
+                status=LoginState.REQUESTING_QR.value,
+                last_error="",
+                consecutive_401=0,
+                consecutive_403=0,
+                consecutive_429=0,
+                circuit_open_until=0,
             )
             client: XiaoheiheApiClient = await self._client_factory(profile_id, anonymous=True)
             try:
@@ -125,9 +137,29 @@ class AuthService:
             return result
 
     async def _poll_login(self, profile_id: str) -> None:
+        consecutive_failures = 0
         while True:
             await asyncio.sleep(3)
-            result = await self.check(profile_id)
+            try:
+                result = await self.check(profile_id)
+                consecutive_failures = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                consecutive_failures += 1
+                session = self._sessions.get(profile_id)
+                if session is None or time.time() >= session.expires_at:
+                    return
+                session.state = LoginState.WAITING_SCAN
+                session.message = str(exc)[:300]
+                await self.repository.update_account_state(
+                    profile_id,
+                    status=LoginState.WAITING_SCAN.value,
+                    last_login_check_at=_iso_now(),
+                    last_error=str(exc),
+                )
+                await asyncio.sleep(min(2**consecutive_failures, 10))
+                continue
             state = str(result.get("state", ""))
             if state == LoginState.SUCCESS.value:
                 if self._on_login is not None:
@@ -152,6 +184,7 @@ class AuthService:
                         "profile_id": profile_id,
                         "state": LoginState.IDLE.value,
                         "has_credentials": False,
+                        "message": "尚未生成二维码，或扫码登录尚未成功",
                     }
                 client: XiaoheiheApiClient = await self._client_factory(profile_id)
                 try:
@@ -166,6 +199,10 @@ class AuthService:
                         **credentials.public_dict(),
                         "state": LoginState.CREDENTIAL_INVALID.value,
                     }
+                refreshed_credentials = getattr(client, "credentials", None)
+                if refreshed_credentials is not None:
+                    credentials = refreshed_credentials
+                    self.store.save(credentials)
                 await self.repository.update_account_state(
                     profile_id,
                     status=LoginState.SUCCESS.value,

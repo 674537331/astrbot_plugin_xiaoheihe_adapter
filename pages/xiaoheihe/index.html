@@ -64,7 +64,7 @@
           <div class="section-heading">
             <div>
               <h2>统一插件配置</h2>
-              <p>这里编辑的是 AstrBot 原生插件配置，不会保存第二份设置。</p>
+              <p>这里直接编辑 AstrBot 原生插件配置，管理页与插件设置共享同一数据源。</p>
             </div>
             <div class="button-row">
               <button id="save-config">校验并保存</button>
@@ -106,7 +106,7 @@
           <div class="section-heading">
             <div>
               <h2>主动回复候选</h2>
-              <p>批准时发送当前编辑文本，不会重新调用模型。</p>
+              <p>批准时直接发送当前已审核文本，生成阶段只执行一次模型调用。</p>
             </div>
             <button id="reject-expired" class="danger secondary">拒绝 72 小时前候选</button>
           </div>
@@ -125,7 +125,7 @@
           <div id="sse-state" class="sse-state">SSE 连接中…</div>
           <pre id="log-output" class="log-output"></pre>
           <div id="diagnostics-fallback" class="diagnostics-fallback" hidden>
-            <p>当前浏览器禁止自动写入剪贴板，请长按或全选下面的脱敏诊断并复制。</p>
+            <p>当前页面的剪贴板权限受限，请长按或全选下面的脱敏诊断并复制。</p>
             <textarea id="diagnostics-output" readonly aria-label="脱敏诊断内容"></textarea>
           </div>
         </div>

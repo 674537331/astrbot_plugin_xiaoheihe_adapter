@@ -14,4 +14,6 @@ python -m coverage report
 
 建议为 GitHub `main` 分支启用保护：禁止直接推送和 force push，PR 必须通过 CI 与 CodeQL，不得存在高危扫描结果，并至少获得一次审查。
 
-提交接口适配变更时，请同时更新 `docs/xiaoheihe-api-contract.md`、fixture 和解析测试。参考无明确许可证的实现时，只能研究外部行为，不得复制源码、特殊常量、注释或目录结构。
+每次版本发布都要同步更新 `README.md` 和 `CHANGELOG.md`。提交接口适配变更时，请同时更新
+`docs/xiaoheihe-api-contract.md`、fixture 和解析测试。参考许可证未明确的实现时，以外部
+行为和协议交互为研究范围；源码实现、特殊常量、注释和目录结构保持独立。

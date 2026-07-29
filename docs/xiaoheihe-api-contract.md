@@ -9,8 +9,8 @@
 注释、目录结构或请求实现。下面只记录观察到的功能端点名称和本项目自己的解析契约。
 
 所有小黑盒网络端点目前都**没有使用真实账号完成验证**。自动测试只使用脱敏 fixture 和
-`httpx.MockTransport`。在真实环境验证前必须保持 `dry_run: true`；本文不会把 fixture
-测试描述成真实可用性证明。
+`httpx.MockTransport`。在真实环境验证前必须保持 `dry_run: true`；fixture 成功仅代表
+本地解析与请求契约测试通过。
 
 ### v1.0.1 扫码兼容修正
 
@@ -34,7 +34,7 @@ Cookie 或响应转储。当前契约兼容：
   `account_detail.userid`；
 - 登录密钥：`pkey`、`user_pkey` 或已设置的会话 Cookie；
 - 状态：`wait` 为等待扫码、`ready` 为已扫码待确认、`ok` 为成功；
-- 成功响应不完整时，用相同 HTTP 会话请求 `restore_login`，合并两次响应后再校验。
+- 成功响应只使用 `/account/qr_state/` 的结果字段和同一 HTTP 会话中的 Cookie。
 
 诊断只记录响应字段名和凭证数量，不记录字段值、Cookie、二维码参数或 Token。上述形状已加入
 脱敏 fixture，仍需用户对 v1.0.2 进行真实账号复测。
@@ -55,8 +55,8 @@ Cookie 或响应转储。当前契约兼容：
   `is_cy/link_id/reply_id/root_id/text`。
 
 该修正由脱敏 fixture 和 MockTransport 覆盖。通知参数和字段仍需用户升级后复测；评论写接口
-的一次性签名尚未通过真实账号验证，因此必须继续保持 dry-run，不能把 Mock 成功等同于真实
-评论发送可用。
+的一次性签名尚未通过真实账号验证，因此必须继续保持 dry-run；真实评论发送状态以真实账号
+验证结果为准。
 
 ### v1.0.5 真实通知可观测性修正
 
@@ -66,8 +66,8 @@ Cookie 或响应转储。当前契约兼容：
 - HTTP 200 但 `status` / `stat` 为非成功值时，按上游拒绝处理，不再当作空通知成功；
 - 分别记录 mention/reply 的原始条数、解析接收条数、消息类型、列表字段及结果容器类型；
 - 诊断不包含消息正文、UID、昵称、帖子 ID、Cookie、Token、设备 ID或签名值；
-- 没有复制参考项目的私有 `hkey` 常量或混淆/签名实现。若接口明确要求该私有签名，仍需
-  通过许可清晰的来源或小黑盒公开契约独立实现，不能伪称已经验证。
+- 私有 `hkey` 常量与混淆实现保持来源隔离。若接口明确要求其他签名，将继续依据许可清晰的
+  来源或小黑盒公开契约独立实现，并按真实验证状态记录结果。
 
 ### v1.0.6 hkey 与 relogin
 
@@ -86,13 +86,31 @@ v1.0.6：
 上述算法有固定向量和 MockTransport 测试，但通知接口仍需用户重新扫码后真实复测。
 Workshop 评论所需 `_rnd` 不在本次范围，继续标记为待真实验证。
 
+### v1.0.7 Web 登录身份修正
+
+用户在 v1.0.6 重新登录后，账号检查仍返回 `status=failed`。重新核对
+`SomeOvO/xhhRobot` 的公开行为以及 MIT 许可的 `HadeonYu/heybox-bot` 后确认：
+
+- 获取二维码和检查二维码状态都携带完整的 Web 客户端查询参数；
+- 两个请求必须复用同一个匿名 HTTP Client 和稳定 `device_id`；
+- 登录成功凭证直接来自 `/account/qr_state/` 的响应 Cookie、`heyboxid` 与 `nickname`；
+- Web 请求还需要持久化的 `x_xhh_tokenid`。本项目按 MIT 参考的公开形状使用当前时间、
+  三段密码学随机输入、MD5 协议摘要和 Base64 独立实现，不复制无许可证项目的特殊常量；
+- 删除未经参考项目或真实响应确认的 `/account/restore_login` 请求；
+- 点击“生成二维码”会清除旧的认证熔断和失败计数。扫码状态临时请求失败时，后台轮询会在
+  二维码有效期内退避重试，不再直接退出。
+
+Web 通用参数现为 `os_type=web`、`app=web`、`client_type=web`、`version=999.0.4`、
+`web_version=2.5`、`x_client_type=web`、`x_app=heybox_website`、
+`x_os_type=Windows`、`device_info=Chrome`，并包含动态签名和稳定 `device_id`。
+这些字段有 MockTransport 测试，但仍需用户真实扫码复测。
+
 ## 端点清单
 
 | 功能 | 方法与路径 | 参考观察 | 本项目状态 |
 | --- | --- | --- | --- |
 | 获取二维码 | `GET /account/get_qrcode_url/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
 | 查询扫码状态 | `GET /account/qr_state/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
-| 恢复完整登录态 | `GET /account/restore_login` | 官网兼容流程观察 | fixture 已测，待真实验证 |
 | 当前账号权限 | `GET /bbs/app/api/user/permission` | MIT 参考项目出现该路径 | Mock 已测，待用户复测 |
 | @/回复通知 | `GET /bbs/app/user/message` | 参考项目出现该路径 | offset 分页、消息类型筛选和多形状解析已测，待用户复测 |
 | 帖子与评论树 | `GET /bbs/app/link/tree` | 参考项目出现该路径 | fixture 已测，字段待真实验证 |
@@ -101,8 +119,8 @@ Workshop 评论所需 `_rnd` 不在本次范围，继续标记为待真实验证
 | 主动帖子流 | `GET /bbs/app/feeds` | 本项目隔离契约 | Mock 已测，来源参数和字段待真实验证 |
 
 所有路径只存在于 `xiaoheihe/endpoints.py`，所有字段兼容处理只存在于
-`xiaoheihe/parsers.py`。真实环境出现结构变化时，应新增脱敏 fixture、修改解析层并回归，
-不能把字段判断散落到适配器或业务服务。
+`xiaoheihe/parsers.py`。真实环境出现结构变化时，应新增脱敏 fixture、修改解析层并回归；
+适配器和业务服务始终使用规范化模型。
 
 ## 本项目解析规范
 
@@ -121,8 +139,8 @@ content / created_at / explicit_wake / image_urls
 ```
 
 缺少 `post_id`、稳定通知/评论标识、发送者 UID 或有效内容时，解析层抛出
-`ResponseShapeError`，API Client 转换为 `ResponseContractError`。不会生成随机 ID 掩盖
-上游契约变化。
+`ResponseShapeError`，API Client 转换为 `ResponseContractError`，让上游契约变化直接
+进入可观测错误记录。
 
 扫码状态映射为：
 

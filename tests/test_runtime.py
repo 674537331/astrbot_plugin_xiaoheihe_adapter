@@ -7,6 +7,7 @@ import pytest
 
 from xiaoheihe.api_client import SendUncertainError
 from xiaoheihe.models import (
+    Credentials,
     EventState,
     Notification,
     NotificationType,
@@ -76,7 +77,7 @@ async def test_runtime_dry_run_can_remain_replayable(tmp_path, fake_config) -> N
 async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
     runtime = RuntimeServices(fake_config, tmp_path)
     status = await runtime.status()
-    assert status["version"] == "v1.0.6"
+    assert status["version"] == "v1.0.7"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     await runtime.close()
@@ -122,6 +123,46 @@ async def test_runtime_auth_circuit_alert(tmp_path, fake_config) -> None:
     assert state["status"] == "credential_invalid"
     assert state["circuit_open_until"] > time.time()
     assert (await runtime.status())["alerts"]
+    await runtime.close()
+
+
+async def test_runtime_persists_missing_web_client_identity(
+    tmp_path,
+    fake_config,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    runtime.credentials.save(
+        Credentials(
+            profile_id="default",
+            uid="10001",
+            nickname="Bot",
+            cookies={"pkey": "fixture"},
+        )
+    )
+
+    await runtime.get_client("default")
+
+    stored = runtime.credentials.load("default")
+    assert stored is not None
+    assert len(stored.device_id) == 32
+    assert stored.cookies["x_xhh_tokenid"]
+    await runtime.close()
+
+
+async def test_profile_recovery_clears_auth_alert_and_preserves_qr_client(
+    tmp_path,
+    fake_config,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    await runtime.ensure_started()
+    await runtime._on_auth_invalid("default", 401)
+    anonymous = await runtime.get_client("default", anonymous=True)
+    await runtime.repository.update_account_state("default", status="waiting_scan")
+
+    await runtime.notify_profile_changed("default", preserve_anonymous=True)
+
+    assert anonymous.closed is False
+    assert all(item["key"] != "default:401" for item in (await runtime.status())["alerts"])
     await runtime.close()
 
 

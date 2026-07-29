@@ -97,14 +97,15 @@ async def test_notification_queries_use_reference_parameters_and_offset_paging()
     assert observed[0]["no_more"] == "false"
     assert observed[0]["heybox_id"] == "10001"
     assert observed[0]["os_type"] == "web"
-    assert observed[0]["app"] == "heybox"
+    assert observed[0]["app"] == "web"
     assert observed[0]["client_type"] == "web"
     assert observed[0]["version"] == "999.0.4"
-    assert observed[0]["web_version"] == "3.0"
+    assert observed[0]["web_version"] == "2.5"
     assert observed[0]["x_client_type"] == "web"
     assert observed[0]["x_app"] == "heybox_website"
     assert observed[0]["x_os_type"] == "Windows"
     assert observed[0]["_notip"] == "true"
+    assert len(observed[0]["device_id"]) == 32
     assert len(observed[0]["hkey"]) == 7
     assert "type" not in observed[0]
     assert "page" not in observed[0]
@@ -229,38 +230,74 @@ async def test_reference_qr_contract_preserves_query_and_reads_cookie_uid() -> N
     assert result_credentials.nickname == "MockUser"
     assert result_credentials.cookies["qr_session"] == "mock-session"
     assert result_credentials.cookies["pkey"] == "redacted-fixture-pkey"
+    assert result_credentials.cookies["x_xhh_tokenid"]
+    assert len(result_credentials.device_id) == 32
+    assert observed_query["app"] == "web"
+    assert observed_query["web_version"] == "2.5"
+    assert observed_query["device_id"] == result_credentials.device_id
     await client.close()
     await http_client.aclose()
 
 
-async def test_qr_success_restores_missing_credentials() -> None:
+async def test_qr_request_and_state_share_complete_web_client_identity() -> None:
+    observed = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(dict(request.url.params))
+        if request.url.path == "/account/get_qrcode_url/":
+            return httpx.Response(200, json=load_fixture("qr_reference_response.json"))
+        return httpx.Response(
+            200,
+            json=load_fixture("qr_direct_credentials_success.json"),
+        )
+
+    client, http_client = client_with_handler(handler, authenticated=False)
+    qr = await client.request_qr()
+    await client.check_qr(qr)
+
+    assert len(observed) == 2
+    assert observed[0]["os_type"] == observed[1]["os_type"] == "web"
+    assert observed[0]["app"] == observed[1]["app"] == "web"
+    assert observed[0]["web_version"] == observed[1]["web_version"] == "2.5"
+    assert observed[0]["device_id"] == observed[1]["device_id"]
+    assert len(observed[0]["device_id"]) == 32
+    assert observed[0]["hkey"] != observed[1]["hkey"]
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_qr_success_uses_state_response_without_unverified_restore_request() -> None:
     paths = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/account/get_qrcode_url/":
             payload = load_fixture("qr_reference_response.json")
-        elif request.url.path == "/account/qr_state/":
-            payload = {
-                "status": "ok",
-                "result": {
-                    "error": "ok",
-                    "heyboxid": "10001",
-                    "nickname": "MockUser",
-                },
-            }
-        else:
-            payload = load_fixture("restore_login_success.json")
-        return httpx.Response(200, json=payload)
+            return httpx.Response(200, json=payload)
+        payload = {
+            "status": "ok",
+            "result": {
+                "error": "ok",
+                "heyboxid": "10001",
+                "nickname": "MockUser",
+            },
+        }
+        return httpx.Response(
+            200,
+            json=payload,
+            headers={"set-cookie": "pkey=redacted-state-pkey; Path=/; Secure"},
+        )
 
     client, http_client = client_with_handler(handler, authenticated=False)
     qr = await client.request_qr()
     state, _, result_credentials = await client.check_qr(qr)
 
     assert state.value == "success"
-    assert paths[-1] == "/account/restore_login"
+    assert paths == ["/account/get_qrcode_url/", "/account/qr_state/"]
     assert result_credentials.uid == "10001"
-    assert result_credentials.cookies["pkey"] == "redacted-restored-pkey"
+    assert result_credentials.cookies["pkey"] == "redacted-state-pkey"
+    assert result_credentials.cookies["x_xhh_tokenid"]
+    assert len(result_credentials.device_id) == 32
     await client.close()
     await http_client.aclose()
 

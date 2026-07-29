@@ -49,7 +49,8 @@ profile_id / post_id / root_comment_id / parent_comment_id / notification_id
 - group ID：`xhh_post_<post_id>`
 - message ID：`xhh_<event_type>_<notification_id>_<external_comment_id>`
 
-`send_by_session()` 只接受上述格式。不能完整恢复帖子或楼层时直接报错，不猜测目标。
+`send_by_session()` 只接受上述格式；完整恢复帖子和楼层后才进入发送，目标信息缺失时直接
+返回明确错误。
 
 ## 事件状态
 

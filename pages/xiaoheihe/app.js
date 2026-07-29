@@ -365,7 +365,7 @@ $("save-config").addEventListener("click", () => busy($("save-config"), async ()
   await loadStatus();
 }));
 $("restore-defaults").addEventListener("click", () => busy($("restore-defaults"), async () => {
-  if (!confirm("确认恢复插件默认配置？登录凭证不会被删除。")) return;
+  if (!confirm("确认恢复插件默认配置？登录凭证将完整保留。")) return;
   const defaults = await bridge.apiGet("config/defaults");
   $("config-editor").value = JSON.stringify(defaults, null, 2);
 }));
@@ -406,7 +406,7 @@ $("copy-diagnostics").addEventListener("click", () => busy($("copy-diagnostics")
     let copied = false;
     try { copied = document.execCommand("copy"); }
     catch { copied = false; }
-    toast(copied ? "脱敏诊断已复制" : "浏览器禁止自动复制，请在下方文本框中手动复制");
+    toast(copied ? "脱敏诊断已复制" : "剪贴板权限受限，请在下方文本框中手动复制");
   }
 }));
 $("preview-cleanup").addEventListener("click", () => busy($("preview-cleanup"), async () => {

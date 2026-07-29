@@ -28,16 +28,16 @@ python -m compileall -q .
 - 主动帖子筛选、候选、批准、拒绝和每日上限；
 - SQLite WAL、迁移、索引、事务幂等、恢复、清理和计数；
 - 配置同步、保存回滚、Plugin Page API、SSE、任务关闭和 HTTP Client 关闭；
-- 主模块不注册聊天命令，也不包含独立模型接口。
+- 主模块只注册平台适配器，模型调用统一进入 AstrBot 原生链路。
 
 Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web API 由专门的契约测试覆盖，
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
-## 2026-07-28 本地结果
+## 2026-07-29 v1.0.7 本地结果
 
-- Pytest：`100 passed`；
-- Coverage：`80%`（启用 branch，达到 `fail_under = 80`）；
+- Pytest：`127 passed`；
+- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
 - Ruff Check：通过；
 - Ruff Format Check：通过；
 - Python compileall：通过；

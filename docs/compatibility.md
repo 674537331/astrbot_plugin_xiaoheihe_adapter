@@ -28,7 +28,7 @@ v1.0.0 面向 AstrBot `>=4.24.2,<5`，重点版本为用户当前使用的 4.26.
 | 元数据 | `PlatformMetadata` | 声明内部名、实例 ID、展示名、默认配置和非流式能力 |
 | 入站消息 | `AstrBotMessage` + `MessageMember` + `Plain/Image` | 设置稳定消息 ID、会话、群组、发送者、自身 UID 和结构化 `raw_message` |
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
-| 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；适配器不调用模型 |
+| 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；模型调用由 AstrBot 核心负责 |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
 | 临时上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` + `TextPart(...).mark_as_temp()` | 背景仅注入本轮用户侧内容，不改 system prompt，不永久污染会话 |
@@ -50,12 +50,12 @@ Plugin Pages 使用当前官方文档描述的新桥接 API；不使用旧教程
 Quart/FastAPI 直接依赖或 Cookie 转发。平台适配器行为以 4.26.2 的实际类型和调用顺序为准。
 
 包级核验确认 AstrBot 4.24.2 尚未包含 `astrbot.api.web`。因此该版本只加载核心平台适配器，
-管理页后端安全降级为不可用；不会回退到 Quart/FastAPI 或读取 Dashboard 内部认证信息。
+管理页后端仅使用公开 Plugin Page API；该 API 缺失时核心适配器仍可加载。
 完整扫码登录和管理页要求 AstrBot 4.26.2。已有凭证的数据目录可让核心适配器在 4.24.2
-加载，但首次登录应在 4.26.2 完成。这个差异来自官方包本身，不能用旧私有接口无风险填平。
+加载，但首次登录应在 4.26.2 完成。这个差异来自官方包本身，项目以公开接口作为兼容边界。
 
-最低版本 4.24.2 未在本机安装启动完整 AstrBot 实例，因此不能声称已完成本机端到端验证；
-仓库通过 CI 的 `astrbot-compat` 矩阵持续检查 4.24.2 和 4.26.2，并由
+最低版本 4.24.2 的本机端到端验证状态为“待验证”；仓库通过 CI 的 `astrbot-compat`
+矩阵持续检查 4.24.2 和 4.26.2，并由
 `astrbot-latest-stable` 任务动态安装 `<5` 的最新稳定包。当前 4.26.7 wheel 的 11 项
 文件/符号契约也已在本机离线检查通过。发布前仍需在 4.24.2、4.26.2 和当前稳定版各完成
 一次插件加载、适配器创建和 dry-run 人工验收。

@@ -20,6 +20,7 @@ from .feed_service import FeedService
 from .logging_service import LoggingService
 from .models import EventState, RoutingTarget
 from .repository import Repository
+from .request_signing import ensure_client_identity
 from .security import redact_text, sanitize_reply_text
 from .task_manager import TaskManager
 
@@ -98,6 +99,8 @@ class RuntimeServices:
         await self.ensure_started()
         key = (profile_id, anonymous)
         credentials = None if anonymous else self.credentials.load(profile_id)
+        if credentials is not None and ensure_client_identity(credentials):
+            self.credentials.save(credentials)
         existing = self._clients.get(key)
         if existing and not existing.closed:
             existing_uid = existing.credentials.uid if existing.credentials else ""
@@ -122,9 +125,14 @@ class RuntimeServices:
         self._clients[key] = client
         return client
 
-    async def invalidate_client(self, profile_id: str) -> None:
+    async def invalidate_client(
+        self,
+        profile_id: str,
+        *,
+        include_anonymous: bool = True,
+    ) -> None:
         for key in tuple(self._clients):
-            if key[0] != profile_id:
+            if key[0] != profile_id or (key[1] and not include_anonymous):
                 continue
             client = self._clients.pop(key)
             await client.close()
@@ -135,8 +143,25 @@ class RuntimeServices:
     def unregister_adapter(self, adapter: Any) -> None:
         self._adapters.discard(adapter)
 
-    async def notify_profile_changed(self, profile_id: str) -> None:
-        await self.invalidate_client(profile_id)
+    async def notify_profile_changed(
+        self,
+        profile_id: str,
+        *,
+        preserve_anonymous: bool = False,
+    ) -> None:
+        await self.invalidate_client(
+            profile_id,
+            include_anonymous=not preserve_anonymous,
+        )
+        state = await self.repository.account_state(profile_id)
+        if state.get("status") in {
+            "requesting_qr",
+            "waiting_scan",
+            "success",
+            "logged_out",
+        }:
+            for suffix in ("401", "403", "429", "credential_invalid"):
+                self._alerts.pop(f"{profile_id}:{suffix}", None)
         for adapter in tuple(self._adapters):
             if str(adapter.config.get("profile_id", "default")) == profile_id:
                 adapter.request_refresh()
@@ -515,7 +540,7 @@ class RuntimeServices:
                 "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
         return {
-            "version": "v1.0.6",
+            "version": "v1.0.7",
             "profiles": profiles,
             "adapters": [
                 {
