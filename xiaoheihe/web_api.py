@@ -24,6 +24,7 @@ class WebApiController:
             ("auth/check", self.auth_check, ["POST"], "检查扫码或凭证"),
             ("auth/logout", self.auth_logout, ["POST"], "安全登出"),
             ("config", self.config_get, ["GET"], "读取插件配置"),
+            ("config/schema", self.config_schema, ["GET"], "读取配置界面定义"),
             ("config/save", self.config_save, ["POST"], "保存插件配置"),
             ("config/defaults", self.config_defaults, ["GET"], "读取默认配置"),
             ("events", self.events, ["GET"], "查询事件记录"),
@@ -141,6 +142,14 @@ class WebApiController:
         if response := self._unauthorized():
             return response
         return json_response(self.runtime.config.defaults())
+
+    async def config_schema(self):
+        if response := self._unauthorized():
+            return response
+        try:
+            return json_response(self.runtime.config.ui_schema())
+        except ConfigValidationError as exc:
+            return error_response(str(exc), status_code=500)
 
     async def config_save(self):
         if response := self._unauthorized():
@@ -312,7 +321,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.0.7"},
+            "plugin": {"name": PLUGIN_NAME, "version": "v1.0.8"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),

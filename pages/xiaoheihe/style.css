@@ -120,7 +120,68 @@ input, select, textarea {
   background: var(--surface-2);
 }
 textarea { min-height: 130px; resize: vertical; }
-#config-editor { min-height: 620px; font: 0.82rem/1.55 ui-monospace, "Cascadia Code", monospace; }
+
+.config-form { display: grid; gap: 0.8rem; }
+.config-section {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-2);
+}
+.config-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  color: var(--text);
+  font-weight: 750;
+  cursor: pointer;
+}
+.config-section > summary small { color: var(--muted); font-weight: 500; }
+.config-section > .config-hint { display: block; padding: 0 1rem 0.8rem; }
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.8rem;
+  padding: 0.2rem 1rem 1rem;
+}
+.config-field, .config-toggle {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.config-label, .config-toggle strong { color: var(--text); font-size: 0.9rem; }
+.config-hint { color: var(--muted); font-size: 0.76rem; line-height: 1.45; }
+.config-list { min-height: 92px; }
+.config-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.config-toggle > span { display: grid; gap: 0.3rem; }
+.config-toggle input {
+  width: 2.8rem;
+  min-width: 2.8rem;
+  height: 1.45rem;
+  accent-color: var(--accent);
+}
+.profile-cards { display: grid; gap: 0.8rem; padding: 0.2rem 1rem 0.8rem; }
+.profile-card { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.profile-card .config-field, .profile-card .config-toggle { background: var(--surface-2); }
+.profile-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.85rem 1rem 0.2rem;
+}
+.profile-heading h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+button.compact { padding: 0.45rem 0.65rem; font-size: 0.8rem; }
+.add-profile { margin: 0 1rem 1rem; }
 
 .button-row, .filters, .section-heading { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
 .section-heading { justify-content: space-between; margin-bottom: 1rem; }

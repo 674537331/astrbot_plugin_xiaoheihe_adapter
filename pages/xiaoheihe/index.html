@@ -64,14 +64,14 @@
           <div class="section-heading">
             <div>
               <h2>统一插件配置</h2>
-              <p>这里直接编辑 AstrBot 原生插件配置，管理页与插件设置共享同一数据源。</p>
+              <p>AstrBot 原生插件设置与本页共享同一个配置对象；保存后按需热重载后台任务。</p>
             </div>
             <div class="button-row">
               <button id="save-config">校验并保存</button>
               <button id="restore-defaults" class="secondary">恢复默认</button>
             </div>
           </div>
-          <textarea id="config-editor" spellcheck="false" aria-label="插件配置 JSON"></textarea>
+          <div id="config-form" class="config-form" aria-label="插件配置表单"></div>
           <p id="config-result" class="result"></p>
         </div>
       </section>

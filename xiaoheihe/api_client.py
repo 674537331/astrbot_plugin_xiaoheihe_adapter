@@ -159,7 +159,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.7",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.8",
                 },
             )
         if self.credentials:
@@ -230,7 +230,7 @@ class XiaoheiheApiClient:
             try:
                 offset = max(0, int(cursor))
             except ValueError:
-                pass
+                offset = (max(1, page) - 1) * normalized_page_size
         params: dict[str, Any] = {
             "offset": offset,
             "limit": normalized_page_size,

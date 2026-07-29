@@ -96,6 +96,36 @@ def test_reference_notification_fields_are_normalized() -> None:
     assert notification.post_author_uid == "40001"
 
 
+def test_comment_mention_type_17_is_accepted_and_routed_to_floor() -> None:
+    page = parse_notifications(
+        "default",
+        load_fixture("notifications_reference_messages.json"),
+        NotificationType.MENTION,
+    )
+    notification = page.items[0]["notification"]
+    assert notification.external_comment_id == "70001"
+    assert notification.root_comment_id == "70000"
+    assert notification.parent_comment_id == "70001"
+    assert notification.route.session_id == "xhh_thread_60001_70000"
+
+
+def test_post_mention_type_16_is_accepted_and_routed_to_post() -> None:
+    page = parse_notifications(
+        "default",
+        load_fixture("notifications_post_mention.json"),
+        NotificationType.MENTION,
+    )
+    notification = page.items[0]["notification"]
+    assert notification.external_event_id == "post-mention-90002"
+    assert notification.external_comment_id == "post_message_post-mention-90002"
+    assert notification.post_id == "60002"
+    assert notification.root_comment_id == ""
+    assert notification.parent_comment_id == ""
+    assert notification.route.session_id == "xhh_post_60002"
+    assert notification.content == "@MockBot 请概括这个帖子"
+    assert notification.image_urls == ["https://cdn.example.com/post-mention.png"]
+
+
 def test_notification_result_array_and_reply_type_filter() -> None:
     result = [
         {

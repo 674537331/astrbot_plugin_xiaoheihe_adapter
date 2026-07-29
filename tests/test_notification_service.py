@@ -7,10 +7,12 @@ from dataclasses import replace
 
 import pytest
 
+from tests.helpers import load_fixture
 from xiaoheihe.config_service import DEFAULT_CONFIG
 from xiaoheihe.context_builder import BuiltContext
 from xiaoheihe.models import ApiPage, EventState, Notification, NotificationType, ThreadContext
 from xiaoheihe.notification_service import NotificationService
+from xiaoheihe.parsers import parse_notifications
 from xiaoheihe.permission_service import PermissionService
 from xiaoheihe.task_manager import TaskManager
 
@@ -105,6 +107,43 @@ async def test_optional_first_backfill_and_worker_dispatch(repository) -> None:
     _, _, notification = await service._queue.get()
     await service._handle(notification)
     assert dispatched
+
+
+async def test_real_type_17_mention_reaches_event_record(repository) -> None:
+    parsed = parse_notifications(
+        "default",
+        load_fixture("notifications_reference_messages.json"),
+        NotificationType.MENTION,
+    )
+
+    class FixtureClient:
+        async def fetch_notifications(self, event_type, **kwargs):
+            if event_type is NotificationType.MENTION:
+                return parsed
+            return ApiPage(items=[])
+
+    async def dispatch(event_id, *args):
+        await repository.mark_event(event_id, EventState.DRY_RUN, reply_text="fixture reply")
+
+    await repository.update_account_state("default", last_poll_at="2026-07-29T00:00:00Z")
+    service = make_service(repository, [], dispatch)
+    service.client = FixtureClient()
+    await service.poll_once()
+    _, _, notification = service._queue.get_nowait()
+    await service._handle(notification)
+    row = await repository.db.fetchone(
+        """
+        SELECT status, event_type, external_comment_id, root_comment_id
+        FROM incoming_events WHERE external_event_id = ?
+        """,
+        ("90001",),
+    )
+    assert dict(row) == {
+        "status": EventState.DRY_RUN.value,
+        "event_type": NotificationType.MENTION.value,
+        "external_comment_id": "70001",
+        "root_comment_id": "70000",
+    }
 
 
 async def test_self_comment_id_is_filtered(repository) -> None:

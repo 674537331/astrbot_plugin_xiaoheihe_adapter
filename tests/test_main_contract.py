@@ -5,8 +5,22 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 from astrbot.api import AstrBotConfig
 from astrbot.api.provider import ProviderRequest
+
+from tests.astrbot_stubs import REGISTERED_ADAPTERS
+
+
+@pytest.fixture
+def isolated_smoke_import():
+    previous = dict(REGISTERED_ADAPTERS)
+    yield
+    REGISTERED_ADAPTERS.clear()
+    REGISTERED_ADAPTERS.update(previous)
+    for module_name in tuple(sys.modules):
+        if module_name == "xhh_plugin_smoke" or module_name.startswith("xhh_plugin_smoke."):
+            sys.modules.pop(module_name, None)
 
 
 def test_main_registers_no_chat_commands() -> None:
@@ -27,7 +41,7 @@ def test_no_independent_model_endpoint_configuration() -> None:
     assert all(item not in source for item in forbidden)
 
 
-async def test_plugin_main_import_and_explicit_vision_fallback() -> None:
+async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_import) -> None:
     root = Path.cwd()
     spec = importlib.util.spec_from_file_location(
         "xhh_plugin_smoke",
@@ -72,4 +86,3 @@ async def test_plugin_main_import_and_explicit_vision_fallback() -> None:
     assert request.extra_user_content_parts[0].temp is True
     assert plugin.runtime._alerts["vision_unsupported"]["level"] == "warning"
     await plugin.terminate()
-    sys.modules.pop(spec.name, None)

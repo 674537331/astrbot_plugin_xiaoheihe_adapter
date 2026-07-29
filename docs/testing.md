@@ -34,16 +34,17 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
-## 2026-07-29 v1.0.7 本地结果
+## 2026-07-29 v1.0.8 本地结果
 
-- Pytest：`127 passed`；
+- Pytest：`132 passed`；
 - Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
 - Ruff Check：通过；
 - Ruff Format Check：通过；
 - Python compileall：通过；
 - `node --check pages/xiaoheihe/app.js`：通过；
 - 仓库 JSON/YAML/静态文件/敏感运行文件检查：通过；
-- AstrBot 4.24.2：10 个核心契约文件检查通过（该包没有 Plugin Page API）；
+- 评论 @ 类型 `17` 已覆盖“解析 → 轮询入队 → SQLite 事件记录 → dry-run 完成”集成路径；
+- AstrBot 4.24.2：10 个核心契约文件检查通过（核心适配器范围）；
 - AstrBot 4.26.2：11 个完整契约文件检查通过；
 - 当前稳定版 AstrBot 4.26.7：11 个完整契约文件检查通过。
 
@@ -60,8 +61,7 @@ v1.0.0 不在普通 CI 中运行真实小黑盒集成测试，也不提交真实
 - 测试后检查并删除脱敏前的临时诊断；
 - 不把真实二维码、Cookie、Token、数据库或日志加入版本控制。
 
-当前仓库没有声称真实账号测试通过；准确边界见
-`docs/xiaoheihe-api-contract.md`。
+真实账号测试状态与准确边界见 `docs/xiaoheihe-api-contract.md`。
 
 ## CI
 

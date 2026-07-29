@@ -16,14 +16,15 @@ Plugin Page。
 
 ## 当前版本
 
-当前发布版本为 **v1.0.7**。本版本统一了二维码请求与状态查询的 Web 客户端身份，并增强了
-扫码轮询的恢复能力。每次版本发布均同步更新本 README 与 [CHANGELOG](CHANGELOG.md)，使
-安装步骤、功能边界和故障排查与实际代码保持一致。
+当前发布版本为 **v1.0.8**。本版本接收小黑盒消息中心实际返回的帖子 @ 类型 `16` 与评论
+@ 类型 `17`，并将设置页升级为分组可视化表单。每次版本发布均同步更新本 README 与
+[CHANGELOG](CHANGELOG.md)，使安装步骤、功能边界和故障排查与实际代码保持一致。
 
 ## 风险提示
 
-小黑盒没有为本项目提供稳定、公开的机器人 API。v1.0.0 的网络契约基于公开参考项目的功能
-行为独立实现，当前只经过脱敏 fixture 和 Mock HTTP 测试，**尚未使用真实小黑盒账号验证**。
+小黑盒相关接口属于非公开、可能变化的客户端接口。v1.0.0 的网络契约基于公开参考项目的
+功能行为独立实现，当前自动化验证范围为脱敏 fixture 和 Mock HTTP 测试，**真实账号验证
+状态以 API 契约文档逐项记录为准**。
 
 - 首次使用必须保持 `dry_run: true`；
 - 主动刷帖默认关闭，且即使启用也默认只生成待审核候选；
@@ -38,6 +39,7 @@ Plugin Page。
 - 原生平台类型 `xiaoheihe`，可在“机器人 → 新增适配器”创建；
 - 登录与账号管理统一在 Plugin Page 完成；
 - @ 与直接回复进入 AstrBot 原生事件队列；
+- 同时规范化帖子 @（`message_type=16`）和评论 @（`message_type=17`）；
 - “帖子 + 根楼层”确定性会话隔离；
 - 帖子、楼层、作者、引用和图片作为本轮不可信临时上下文；
 - SQLite 事务幂等、唯一约束、事件状态机和重启恢复；
@@ -47,7 +49,7 @@ Plugin Page。
 - 401/403 熔断、429 `Retry-After`、安全重试和 `send_unknown` 核对；
 - 一个账号一个长生命周期异步 HTTP Client；
 - 有界队列、单用户上限、同楼层串行和有限并行；
-- 管理页提供状态、登录、设置、事件、审核、日志、SSE 和存储管理；
+- 管理页提供状态、登录、分组可视化设置、事件、审核、日志、SSE 和存储管理；
 - 凭证原子保存、日志/诊断脱敏和安全退出。
 
 ## 环境要求
@@ -59,11 +61,11 @@ Plugin Page。
 - AstrBot 运行环境能够安装 `requirements.txt` 中的依赖；
 - 可以访问小黑盒所需 HTTPS 域名。
 
-适配器运行时必须由 AstrBot 提供 API，但本仓库不复制或修改 AstrBot 源码。版本接口结论见
+适配器运行时 API 由 AstrBot 提供，本仓库保持独立插件边界。版本接口结论见
 [兼容性说明](docs/compatibility.md)。
 
-AstrBot 4.24.2 的官方包没有 `astrbot.api.web`：该版本可加载核心适配器；首次扫码登录和
-完整管理页使用 AstrBot 4.26.2 提供的公开 Plugin Page API。
+AstrBot 4.24.2 可加载核心适配器；扫码登录和完整管理页使用 AstrBot 4.26.2 起提供的公开
+Plugin Page API。
 
 ## 安装
 
@@ -110,7 +112,8 @@ python -m pip install -r requirements.txt
 4. 点击“检查登录”，直到显示 `success`；
 5. 核对昵称、UID、登录时间和最近检查时间。
 
-管理页不返回 Cookie、Token、设备 ID或签名材料。二维码有倒计时；过期后重新生成。
+管理页响应限定为二维码图片、公开登录状态、昵称、UID 和时间。二维码有倒计时；过期后
+重新生成。
 
 登录技术路线与 `SomeOvO/xhhRobot` 观察到的交互顺序保持一致：
 
@@ -165,6 +168,11 @@ python -m pip install -r requirements.txt
 Plugin Page 设置页和 AstrBot 原生插件设置操作同一个 `AstrBotConfig` 对象。保存时后端重新
 校验并调用 `save_config()`；失败会回滚内存配置并显示错误。保存成功后只安全刷新受影响的
 后台服务，不重启整个 AstrBot。
+
+v1.0.8 的设置页按账号档案、通知轮询、上下文与图片、回复策略、身份过滤、网络并发、主动
+帖子、数据保留和日志分组展示。布尔值使用开关，数字使用数值输入，日志等级使用下拉框，
+名单与关键词使用“每行一项”的列表输入。点击“恢复默认”只把默认值载入表单，再点击
+“校验并保存”后生效。
 
 ### 账号档案
 
@@ -263,8 +271,9 @@ AstrBot 实际抓取时仍应再次校验最终 DNS 地址和重定向链，降�
 支持用户 UID、帖子作者 UID、关键词的白/黑名单。身份只按字符串 UID 判断，不使用昵称。
 主人可以绕过普通白名单并获得队列高优先级，但仍受硬上限。
 
-主人 UID 不等于 AstrBot 管理员。`map_owner_to_astrbot_admin` 是独立开关且默认 `false`。
-普通小黑盒用户保持普通权限；高风险工具的最终权限由 AstrBot 和已安装插件决定。
+主人 UID 与 AstrBot 管理员是两套独立身份。`map_owner_to_astrbot_admin` 是独立开关且
+默认 `false`。普通小黑盒用户保持普通权限；高风险工具的最终权限由 AstrBot 和已安装插件
+决定。
 
 ## 防止机器人自我循环
 
@@ -319,8 +328,8 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 └── xiaoheihe.db
 ```
 
-SQLite 不需要 MySQL、PostgreSQL 或其他服务。启用 WAL、外键、busy timeout、NORMAL
-synchronous 和增量回收。
+SQLite 作为独立嵌入式存储运行。数据库启用 WAL、外键、busy timeout、NORMAL synchronous
+和增量回收。
 
 迁移版本：`3`（v3 增加持久化重试计数、下次重试时间和索引）。表包括：
 
@@ -351,8 +360,8 @@ synchronous 和增量回收。
 - 日志总上限：100 MB；
 - 图片缓存软上限：200 MB（当前 URL 直传模式下保持为空）。
 
-正文到期后仍保留轻量去重键。清理只操作插件自身数据库和日志，绝不删除 AstrBot 原生
-会话数据库。管理页支持清理预览和显式确认后的安全清理。
+正文到期后仍保留轻量去重键。清理范围限定为插件自身数据库和日志，AstrBot 原生会话
+数据库保持完整。管理页支持清理预览和显式确认后的安全清理。
 
 超过数据库软上限后，每轮按最多 500 条依次处理已拒绝/过期候选、dry-run 正文、历史终态
 通知正文和成功回复正文。待处理、待重试、未审核候选、自身评论记录、账号状态和必要去重键
@@ -382,7 +391,7 @@ Windows 无 POSIX 权限位，请使用 AstrBot 运行账号的 NTFS ACL 保护�
 
 ## 常见故障
 
-### 新增适配器中没有“小黑盒”
+### 新增适配器列表未显示“小黑盒”
 
 确认插件已启用，`main.py` 能导入 `xiaoheihe.adapter`，然后重载插件并刷新机器人页面。
 检查 AstrBot 版本是否在支持范围内。
@@ -400,7 +409,7 @@ Windows 无 POSIX 权限位，请使用 AstrBot 运行账号的 NTFS ACL 保护�
 
 v1.0.0 未兼容参考登录响应的 `result.error = "ok"` 成功标记；v1.0.1 仍假定 UID 来自
 `Set-Cookie`。v1.0.2 已兼容 JSON 中的 `heyboxid`、`pkey` 和 `account_detail.userid`，
-但其额外 `restore_login` 假设没有真实依据。v1.0.7 已改为只使用扫码状态响应与同一
+但其额外 `restore_login` 假设缺少真实依据。v1.0.7 已改为只使用扫码状态响应与同一
 Cookie 会话，并为二维码请求补齐稳定 Web 客户端身份。请升级，不要继续使用旧二维码。
 
 ### 管理页提示缺少 `plugin_tag`
@@ -417,11 +426,12 @@ v1.0.3 已隔离文件日志并通过 AstrBot 公共 logger 输出控制台日�
 
 ### 小黑盒“@我的”已有通知，但事件记录仍为 0
 
-请升级到 v1.0.5，并保持 dry-run。状态总览会显示“@通知 原始/接收”，运行日志会在响应
-结构或消息类型变化时记录一次只包含字段名、数量和类型的安全摘要。若“原始”为 0，说明
-小黑盒接口没有向当前网页登录态返回通知；若“原始”大于 0 而“接收”为 0，请复制脱敏
-诊断用于补充解析 fixture。Plugin Page 的 Clipboard API 权限受限时，页面会自动显示只读
-文本框，可长按或全选后手动复制。
+请升级到 v1.0.8，并保持 dry-run。状态总览会显示“@通知 原始/接收”，运行日志会在响应
+结构或消息类型变化时记录一次只包含字段名、数量和类型的安全摘要。小黑盒消息中心的
+`message_type=16` 表示帖子中 @，`message_type=17` 表示评论中 @；v1.0.8 两者都会进入
+事件记录和 AstrBot 原生管线。若“原始”为 0，请先确认网页登录态与通知可见性；若升级后
+仍出现“原始”大于 0 而“接收”为 0，请复制脱敏诊断用于补充解析 fixture。Plugin Page 的
+Clipboard API 权限受限时，页面会自动显示只读文本框，可长按或全选后手动复制。
 
 ### 提示 `relogin: 请重新登录`
 
@@ -458,7 +468,7 @@ v1.0.1 起，自动清理遇到临时 SQLite 锁或维护错误会记录脱敏�
 保存脱敏响应形状，不保存真实正文或凭证；新增 fixture，只修改 `endpoints.py` /
 `parsers.py`，运行全部测试。不要在业务层临时散落字段兼容。
 
-### 图片没有被理解
+### 图片理解未生效
 
 确认图片是公开 HTTPS URL、未指向内网，当前模型支持视觉且 AstrBot 媒体流程可访问该域名。
 视觉不可用时插件按文本降级，不应永久卡住事件。
@@ -474,7 +484,7 @@ python -m coverage report
 python -m compileall -q .
 ```
 
-普通测试没有真实网络请求。当前本地执行结果和测试边界见
+普通测试使用 Mock HTTP，不访问真实账号接口。当前本地执行结果和测试边界见
 [测试说明](docs/testing.md)。GitHub 仓库永久配置 CI、CodeQL、Dependency Review、
 Gitleaks 和 Dependabot。
 
@@ -501,13 +511,13 @@ Gitleaks 和 Dependabot。
 - 入站图片使用 URL 直传，DNS 重绑定和重定向链由 AstrBot 核心媒体流程继续防护；
 - Plugin Page 不修改机器人适配器实例的 `profile_id`；
 - 主动帖子来源和审核后真实发送仍建议保持关闭；
-- 本机没有启动完整 AstrBot 4.24.2/4.26.2/4.26.7 服务做端到端登录验收，CI 负责包级契约检查。
+- AstrBot 4.24.2/4.26.2/4.26.7 的包级契约由 CI 检查，完整服务端到端登录验收状态单独记录。
 
 ## 致谢
 
 - [AstrBot](https://github.com/AstrBotDevs/AstrBot)：平台适配器和原生 Agent 管线；
 - [SomeOvO/xhhRobot](https://github.com/SomeOvO/xhhRobot)：用于理解登录、通知、帖子和评论的
-  功能行为。因未确认明确许可，本项目没有复制其实现；
+  功能行为；本项目在其许可证边界下使用 Python 独立实现；
 - [XiaHouSheng/heybox-core](https://github.com/XiaHouSheng/heybox-core)：依据其 MIT 许可
   独立移植小黑盒动态 `hkey` 行为；版权和许可全文见
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；

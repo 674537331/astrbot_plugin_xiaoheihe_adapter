@@ -2,7 +2,7 @@
   "profiles": {
     "type": "template_list",
     "description": "小黑盒账号档案",
-    "hint": "v1.0.0 正式支持单账号运行；结构和存储均按 profile_id 隔离。凭证不会保存在这里。",
+    "hint": "v1.0.0 正式支持单账号运行；结构和存储均按 profile_id 隔离。凭证独立保存在插件数据目录。",
     "templates": {
       "account": {
         "name": "账号档案",

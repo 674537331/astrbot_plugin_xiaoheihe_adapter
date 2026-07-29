@@ -1,0 +1,29 @@
+{
+  "status": "ok",
+  "result": {
+    "messages": [
+      {
+        "message_id": "post-mention-90002",
+        "message_type": 16,
+        "timestamp": "1800000001",
+        "user_a": {
+          "userid": "50002",
+          "username": "PostMentionUser"
+        },
+        "link": {
+          "linkid": "60002",
+          "description": "@MockBot 请概括这个帖子",
+          "title": "帖子中提及机器人",
+          "images": [
+            "https://cdn.example.com/post-mention.png"
+          ],
+          "user": {
+            "userid": "50002",
+            "username": "PostMentionUser"
+          }
+        }
+      }
+    ],
+    "no_more": true
+  }
+}

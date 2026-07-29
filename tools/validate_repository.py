@@ -75,9 +75,17 @@ def main() -> int:
         failures.append("pages/xiaoheihe/index.html: missing title or module script")
 
     app_source = (ROOT / "pages" / "xiaoheihe" / "app.js").read_text(encoding="utf-8")
-    for required in ("window.AstrBotPluginPage", "bridge.ready()", "bridge.subscribeSSE"):
+    for required in (
+        "window.AstrBotPluginPage",
+        "bridge.ready()",
+        "bridge.subscribeSSE",
+        'bridge.apiGet("config/schema")',
+        "renderConfigForm",
+    ):
         if required not in app_source:
             failures.append(f"pages/xiaoheihe/app.js: missing {required}")
+    if 'id="config-form"' not in html_path.read_text(encoding="utf-8"):
+        failures.append("pages/xiaoheihe/index.html: missing structured config form")
     for forbidden in ("document.cookie", "localStorage", "window.parent", "parent.document"):
         if forbidden in app_source:
             failures.append(f"pages/xiaoheihe/app.js: forbidden browser access {forbidden}")

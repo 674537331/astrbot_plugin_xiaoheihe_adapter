@@ -1,6 +1,7 @@
 const bridge = window.AstrBotPluginPage;
 const state = {
   config: null,
+  configSchema: null,
   status: null,
   loginTimer: null,
   loginRefreshTimer: null,
@@ -84,15 +85,244 @@ function selectedProfile() {
 }
 
 async function loadConfig() {
-  state.config = await bridge.apiGet("config");
-  $("config-editor").value = JSON.stringify(state.config, null, 2);
+  const [config, schema] = await Promise.all([
+    bridge.apiGet("config"),
+    bridge.apiGet("config/schema"),
+  ]);
+  state.config = config;
+  state.configSchema = schema;
+  renderConfigForm();
+  populateProfileSelect();
+}
+
+function populateProfileSelect() {
   const select = $("login-profile");
+  const previous = select.value;
   select.replaceChildren();
   (state.config.profiles || []).forEach((profile) => {
     const option = document.createElement("option");
     option.value = profile.profile_id;
     option.textContent = `${profile.display_name || profile.profile_id} · ${profile.profile_id}`;
     select.append(option);
+  });
+  if ([...select.options].some((option) => option.value === previous)) {
+    select.value = previous;
+  }
+}
+
+function schemaDefault(descriptor) {
+  if (Object.hasOwn(descriptor, "default")) {
+    return structuredClone(descriptor.default);
+  }
+  if (descriptor.type === "bool") return false;
+  if (descriptor.type === "int" || descriptor.type === "float") return 0;
+  if (descriptor.type === "list") return [];
+  if (descriptor.type === "object") {
+    return Object.fromEntries(
+      Object.entries(descriptor.items || {}).map(([key, item]) => [key, schemaDefault(item)]),
+    );
+  }
+  return "";
+}
+
+function fieldLabel(descriptor, key) {
+  return descriptor.description || key;
+}
+
+function appendHint(host, descriptor) {
+  if (!descriptor.hint) return;
+  const hint = document.createElement("small");
+  hint.className = "config-hint";
+  hint.textContent = descriptor.hint;
+  host.append(hint);
+}
+
+function createScalarField(key, descriptor, value, update) {
+  if (descriptor.type === "bool") {
+    const row = document.createElement("label");
+    row.className = "config-toggle";
+    const copy = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = fieldLabel(descriptor, key);
+    copy.append(title);
+    appendHint(copy, descriptor);
+    const control = document.createElement("input");
+    control.type = "checkbox";
+    control.checked = Boolean(value);
+    control.addEventListener("change", () => update(control.checked));
+    row.append(copy, control);
+    return row;
+  }
+
+  const field = document.createElement("label");
+  field.className = "config-field";
+  const title = document.createElement("span");
+  title.className = "config-label";
+  title.textContent = fieldLabel(descriptor, key);
+  field.append(title);
+
+  let control;
+  if (descriptor.type === "list") {
+    control = document.createElement("textarea");
+    control.className = "config-list";
+    control.rows = 4;
+    control.value = Array.isArray(value) ? value.map(String).join("\n") : "";
+    control.placeholder = "每行一项";
+    control.addEventListener("input", () => {
+      update(control.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean));
+    });
+  } else if (descriptor.type === "string" && Array.isArray(descriptor.options)) {
+    control = document.createElement("select");
+    descriptor.options.forEach((optionValue) => {
+      const option = document.createElement("option");
+      option.value = String(optionValue);
+      option.textContent = String(optionValue);
+      control.append(option);
+    });
+    control.value = String(value ?? descriptor.default ?? "");
+    control.addEventListener("change", () => update(control.value));
+  } else {
+    control = document.createElement("input");
+    const numeric = descriptor.type === "int" || descriptor.type === "float";
+    control.type = numeric ? "number" : "text";
+    control.value = value ?? descriptor.default ?? "";
+    if (numeric) {
+      const slider = descriptor.slider || {};
+      if (slider.min !== undefined) control.min = String(slider.min);
+      if (slider.max !== undefined) control.max = String(slider.max);
+      control.step = String(slider.step ?? (descriptor.type === "int" ? 1 : 0.1));
+      control.addEventListener("change", () => {
+        const parsed = descriptor.type === "int"
+          ? Number.parseInt(control.value, 10)
+          : Number.parseFloat(control.value);
+        if (Number.isFinite(parsed)) {
+          update(parsed);
+          control.setCustomValidity("");
+        } else {
+          control.setCustomValidity("请输入有效数字");
+          control.reportValidity();
+        }
+      });
+    } else {
+      control.addEventListener("input", () => update(control.value));
+    }
+  }
+  control.dataset.configKey = key;
+  field.append(control);
+  appendHint(field, descriptor);
+  return field;
+}
+
+function profileTemplate(schema) {
+  const entries = Object.entries(schema.templates || {});
+  if (!entries.length) throw new Error("账号档案界面定义缺少模板");
+  const [templateKey, template] = entries[0];
+  const profile = { __template_key: templateKey };
+  Object.entries(template.items || {}).forEach(([key, descriptor]) => {
+    profile[key] = schemaDefault(descriptor);
+  });
+  return { template, profile };
+}
+
+function nextProfileId() {
+  const used = new Set((state.config.profiles || []).map((item) => String(item.profile_id)));
+  let number = 2;
+  while (used.has(`profile_${number}`)) number += 1;
+  return `profile_${number}`;
+}
+
+function renderProfiles(schema) {
+  const wrapper = document.createElement("details");
+  wrapper.className = "config-section";
+  wrapper.open = true;
+  const summary = document.createElement("summary");
+  const heading = document.createElement("span");
+  heading.textContent = schema.description || "账号档案";
+  const count = document.createElement("small");
+  count.textContent = `${(state.config.profiles || []).length} 个档案`;
+  summary.append(heading, count);
+  wrapper.append(summary);
+  appendHint(wrapper, schema);
+
+  const profilesHost = document.createElement("div");
+  profilesHost.className = "profile-cards";
+  const { template } = profileTemplate(schema);
+  (state.config.profiles || []).forEach((profile, index) => {
+    const card = document.createElement("article");
+    card.className = "profile-card";
+    const cardHeading = document.createElement("div");
+    cardHeading.className = "profile-heading";
+    const title = document.createElement("h3");
+    title.textContent = profile.display_name || profile.profile_id || `账号 ${index + 1}`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger secondary compact";
+    remove.textContent = "删除档案";
+    remove.disabled = state.config.profiles.length <= 1;
+    remove.addEventListener("click", () => {
+      const name = profile.profile_id || index + 1;
+      if (!confirm(`即将只删除账号档案 ${name}。如需同时清除登录凭证，请先取消并在扫码登录页执行安全退出。确认继续？`)) return;
+      state.config.profiles.splice(index, 1);
+      renderConfigForm();
+    });
+    cardHeading.append(title, remove);
+    const grid = document.createElement("div");
+    grid.className = "config-grid";
+    Object.entries(template.items || {}).forEach(([key, descriptor]) => {
+      grid.append(createScalarField(key, descriptor, profile[key], (nextValue) => {
+        profile[key] = nextValue;
+      }));
+    });
+    card.append(cardHeading, grid);
+    profilesHost.append(card);
+  });
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "secondary add-profile";
+  add.textContent = "添加账号档案";
+  add.addEventListener("click", () => {
+    const { profile } = profileTemplate(schema);
+    profile.profile_id = nextProfileId();
+    profile.display_name = `账号 ${state.config.profiles.length + 1}`;
+    state.config.profiles.push(profile);
+    renderConfigForm();
+  });
+  wrapper.append(profilesHost, add);
+  return wrapper;
+}
+
+function renderObjectGroup(groupKey, schema) {
+  const wrapper = document.createElement("details");
+  wrapper.className = "config-section";
+  wrapper.open = true;
+  const summary = document.createElement("summary");
+  const heading = document.createElement("span");
+  heading.textContent = schema.description || groupKey;
+  const key = document.createElement("small");
+  key.textContent = groupKey;
+  summary.append(heading, key);
+  const grid = document.createElement("div");
+  grid.className = "config-grid";
+  const group = state.config[groupKey] || (state.config[groupKey] = {});
+  Object.entries(schema.items || {}).forEach(([fieldKey, descriptor]) => {
+    grid.append(createScalarField(fieldKey, descriptor, group[fieldKey], (nextValue) => {
+      group[fieldKey] = nextValue;
+    }));
+  });
+  wrapper.append(summary, grid);
+  return wrapper;
+}
+
+function renderConfigForm() {
+  const host = $("config-form");
+  host.replaceChildren();
+  if (!state.config || !state.configSchema) return;
+  Object.entries(state.configSchema).forEach(([groupKey, schema]) => {
+    if (schema.type === "template_list" && groupKey === "profiles") {
+      host.append(renderProfiles(schema));
+    } else if (schema.type === "object") {
+      host.append(renderObjectGroup(groupKey, schema));
+    }
   });
 }
 
@@ -226,7 +456,7 @@ async function loadCandidates() {
   host.replaceChildren();
   if (!result.items.length) {
     const empty = document.createElement("p");
-    empty.textContent = "当前没有待审核候选。";
+    empty.textContent = "待审核候选为 0 条。";
     host.append(empty);
     return;
   }
@@ -358,8 +588,7 @@ $("logout").addEventListener("click", () => busy($("logout"), async () => {
   await loadStatus();
 }));
 $("save-config").addEventListener("click", () => busy($("save-config"), async () => {
-  const payload = JSON.parse($("config-editor").value);
-  const result = await bridge.apiPost("config/save", payload);
+  const result = await bridge.apiPost("config/save", state.config);
   $("config-result").textContent = `保存成功；已重载：${(result.changed || []).join("、") || "无变化"}`;
   await loadConfig();
   await loadStatus();
@@ -367,7 +596,9 @@ $("save-config").addEventListener("click", () => busy($("save-config"), async ()
 $("restore-defaults").addEventListener("click", () => busy($("restore-defaults"), async () => {
   if (!confirm("确认恢复插件默认配置？登录凭证将完整保留。")) return;
   const defaults = await bridge.apiGet("config/defaults");
-  $("config-editor").value = JSON.stringify(defaults, null, 2);
+  state.config = defaults;
+  renderConfigForm();
+  $("config-result").textContent = "默认值已载入表单；点击“校验并保存”后生效。";
 }));
 $("search-events").addEventListener("click", () => busy($("search-events"), async () => {
   state.eventPage = 1;

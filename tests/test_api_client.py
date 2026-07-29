@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from urllib.parse import parse_qs
 
 import httpx
@@ -114,7 +115,32 @@ async def test_notification_queries_use_reference_parameters_and_offset_paging()
     assert "message_type" not in observed[1]
     assert client.last_notification_polls["mention"]["raw_count"] == 1
     assert client.last_notification_polls["mention"]["accepted_count"] == 1
-    assert client.last_notification_polls["mention"]["message_types"] == ["16"]
+    assert client.last_notification_polls["mention"]["message_types"] == ["17"]
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_real_world_comment_mentions_type_17_are_all_accepted() -> None:
+    base = load_fixture("notifications_reference_messages.json")["result"]["messages"][0]
+    messages = []
+    for index in range(5):
+        item = copy.deepcopy(base)
+        item["message_id"] = f"mention-{index}"
+        item["comment_a_id"] = f"comment-{index}"
+        messages.append(item)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "ok", "result": {"messages": messages, "no_more": True}},
+        )
+
+    client, http_client = client_with_handler(handler)
+    page = await client.fetch_notifications(NotificationType.MENTION)
+    assert len(page.items) == 5
+    assert client.last_notification_polls["mention"]["raw_count"] == 5
+    assert client.last_notification_polls["mention"]["accepted_count"] == 5
+    assert client.last_notification_polls["mention"]["message_types"] == ["17"]
     await client.close()
     await http_client.aclose()
 

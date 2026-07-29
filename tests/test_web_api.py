@@ -43,6 +43,22 @@ async def test_config_api_reads_and_saves_same_object(fake_config) -> None:
     assert fake_config.save_count == 1
 
 
+async def test_config_schema_api_exposes_structured_form_metadata(fake_config) -> None:
+    controller = WebApiController(FakeRuntime(fake_config))
+    REQUEST.username = "admin"
+    response = await controller.config_schema()
+    assert response["status_code"] == 200
+    schema = response["json"]
+    assert schema["profiles"]["type"] == "template_list"
+    assert schema["polling"]["items"]["poll_interval_seconds"]["type"] == "int"
+    assert schema["logging"]["items"]["level"]["options"] == [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+    ]
+
+
 async def test_config_api_rejects_unknown_group(fake_config) -> None:
     controller = WebApiController(FakeRuntime(fake_config))
     REQUEST.username = "admin"

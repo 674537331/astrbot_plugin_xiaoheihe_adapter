@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 from collections.abc import Awaitable, Callable, MutableMapping
+from pathlib import Path
 from typing import Any
 
 from .security import SecurityError, validate_profile_id
@@ -116,6 +118,16 @@ class ConfigService:
 
     def defaults(self) -> dict[str, Any]:
         return copy.deepcopy(DEFAULT_CONFIG)
+
+    def ui_schema(self) -> dict[str, Any]:
+        schema_path = Path(__file__).resolve().parent.parent / "_conf_schema.json"
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigValidationError(f"读取配置界面定义失败: {exc}") from exc
+        if not isinstance(schema, dict):
+            raise ConfigValidationError("配置界面定义根节点必须是对象")
+        return schema
 
     def add_restart_callback(self, callback: RestartCallback) -> None:
         self._callbacks.append(callback)

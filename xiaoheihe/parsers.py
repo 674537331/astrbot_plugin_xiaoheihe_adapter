@@ -315,7 +315,7 @@ def parse_notifications(
             continue
         message_type = str(_first(raw, "message_type", "type")).casefold()
         if event_type is NotificationType.MENTION and message_type:
-            if message_type not in {"16", "at", "mention"}:
+            if message_type not in {"16", "17", "at", "mention"}:
                 continue
         elif event_type is NotificationType.REPLY and message_type:
             if message_type not in {"1", "2", "comment", "reply"}:
@@ -355,23 +355,36 @@ def parse_notifications(
             "userid",
             "id",
         ) or _id(raw, "userid_a", "user_id_a", "sender_uid")
-        if not event_id or not comment_id or not post_id:
-            raise ResponseShapeError("通知项缺少稳定通知 ID、评论 ID 或帖子 ID")
+        # The message center returns both post mentions (16) and comment
+        # mentions (17) for the message_type=16 query. Post mentions have no
+        # comment target: they are routed to the deterministic post session and
+        # use the notification ID as a stable deduplication surrogate.
+        is_post_mention = event_type is NotificationType.MENTION and message_type == "16"
+        if not event_id or not post_id:
+            raise ResponseShapeError("通知项缺少稳定通知 ID 或帖子 ID")
+        if not is_post_mention and not comment_id:
+            raise ResponseShapeError("评论通知项缺少稳定评论 ID")
         if not sender_uid:
             raise ResponseShapeError("通知项缺少发送者 UID")
-        root_id = _id(raw, "root_comment_id", "root_id", "rootCommentId") or _id(
-            comment_obj,
-            "root_comment_id",
-            "root_id",
-            "rootCommentId",
-        )
-        root_id = root_id or comment_id
-        # The incoming comment becomes the parent of the bot's reply. Fields
-        # such as comment_b_id describe what that incoming comment replied to,
-        # not the target for the new bot comment.
-        parent_id = comment_id
+        external_comment_id = comment_id
+        root_id = ""
+        parent_id = ""
+        content_obj = post_obj if is_post_mention else comment_obj
+        if is_post_mention:
+            external_comment_id = f"post_message_{event_id}"
+        else:
+            root_id = _id(raw, "root_comment_id", "root_id", "rootCommentId") or _id(
+                comment_obj,
+                "root_comment_id",
+                "root_id",
+                "rootCommentId",
+            )
+            root_id = root_id or comment_id
+            # The incoming comment becomes the parent of the bot's reply.
+            # comment_b_id describes the earlier quoted comment instead.
+            parent_id = comment_id
         image_values = _first(
-            comment_obj,
+            content_obj,
             "images",
             "image_urls",
             "comment_a_images",
@@ -389,7 +402,7 @@ def parse_notifications(
         notification = Notification(
             profile_id=profile_id,
             external_event_id=event_id,
-            external_comment_id=comment_id,
+            external_comment_id=external_comment_id,
             notification_id=event_id,
             event_type=event_type,
             sender_uid=sender_uid,
@@ -399,12 +412,13 @@ def parse_notifications(
             parent_comment_id=parent_id,
             content=str(
                 _first(
-                    comment_obj,
+                    content_obj,
                     "comment_a_text",
                     "comment_text",
                     "content",
                     "text",
                     "message",
+                    "description",
                 )
             ),
             created_at=_timestamp(
