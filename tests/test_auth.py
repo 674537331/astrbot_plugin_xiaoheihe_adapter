@@ -75,6 +75,37 @@ async def test_auth_qr_success_persists_credentials(tmp_path, repository) -> Non
     assert state["circuit_open_until"] == 0
 
 
+async def test_manual_reauth_clears_circuit_and_discards_rejected_credentials(
+    tmp_path,
+    repository,
+) -> None:
+    store = CredentialStore(tmp_path)
+    store.save(mock_credentials())
+    client = FakeLoginClient(LoginState.WAITING_SCAN)
+
+    async def factory(profile_id, anonymous=False):
+        return client
+
+    auth = AuthService(store, repository, factory)
+    await repository.update_account_state(
+        "default",
+        status=LoginState.CREDENTIAL_INVALID.value,
+        last_error="relogin",
+        consecutive_401=2,
+        circuit_open_until=time.time() + 300,
+    )
+
+    result = await auth.request_qr("default")
+
+    assert result["state"] == LoginState.WAITING_SCAN.value
+    assert store.load("default") is None
+    state = await repository.account_state("default")
+    assert state["status"] == LoginState.WAITING_SCAN.value
+    assert state["last_error"] == ""
+    assert state["consecutive_401"] == 0
+    assert state["circuit_open_until"] == 0
+
+
 async def test_auth_qr_expired(tmp_path, repository) -> None:
     store = CredentialStore(tmp_path)
 
@@ -141,6 +172,19 @@ async def test_saved_credentials_are_checked_and_invalidated(tmp_path, repositor
     assert result["state"] == LoginState.CREDENTIAL_INVALID.value
 
 
+async def test_idle_check_explains_that_no_qr_or_credentials_exist(
+    tmp_path,
+    repository,
+) -> None:
+    async def factory(profile_id, anonymous=False):
+        return FakeLoginClient()
+
+    auth = AuthService(CredentialStore(tmp_path), repository, factory)
+    result = await auth.check("default")
+    assert result["state"] == LoginState.IDLE.value
+    assert "???????" in result["message"]
+
+
 async def test_background_login_poll_notifies_runtime(tmp_path, repository, monkeypatch) -> None:
     store = CredentialStore(tmp_path)
     client = FakeLoginClient()
@@ -161,4 +205,42 @@ async def test_background_login_poll_notifies_runtime(tmp_path, repository, monk
     status = await auth.status("default")
     assert status["qr_image"].startswith("data:image/png;base64,")
     await auth._poll_login("default")
+    assert notified == ["default"]
+
+
+async def test_background_login_poll_recovers_from_transient_check_error(
+    tmp_path,
+    repository,
+    monkeypatch,
+) -> None:
+    store = CredentialStore(tmp_path)
+    client = FakeLoginClient()
+    attempts = 0
+    notified = []
+
+    async def factory(profile_id, anonymous=False):
+        return client
+
+    async def on_login(profile_id):
+        notified.append(profile_id)
+
+    async def no_sleep(seconds):
+        return None
+
+    auth = AuthService(store, repository, factory, on_login=on_login)
+    auth._sessions["default"] = await client.request_qr()
+
+    async def flaky_check(profile_id):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary QR state failure")
+        return {"state": LoginState.SUCCESS.value}
+
+    monkeypatch.setattr("xiaoheihe.auth.asyncio.sleep", no_sleep)
+    monkeypatch.setattr(auth, "check", flaky_check)
+
+    await auth._poll_login("default")
+
+    assert attempts == 2
     assert notified == ["default"]

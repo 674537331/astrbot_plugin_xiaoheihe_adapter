@@ -3,36 +3,36 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>小黑盒管理</title>
+    <title>?????</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
     <header class="hero">
       <div>
         <p class="eyebrow">ASTRBOT PLATFORM ADAPTER</p>
-        <h1>小黑盒管理</h1>
-        <p id="hero-summary">安全登录、原生事件、dry-run 与人工审核。</p>
+        <h1>?????</h1>
+        <p id="hero-summary">??????????dry-run ??????</p>
       </div>
-      <button id="refresh-all" class="secondary">刷新总览</button>
+      <button id="refresh-all" class="secondary">????</button>
     </header>
 
     <div id="alerts" class="alerts" aria-live="polite"></div>
 
-    <nav class="tabs" aria-label="管理模块">
-      <button data-tab="overview" class="active">状态总览</button>
-      <button data-tab="login">扫码登录</button>
-      <button data-tab="settings">设置</button>
-      <button data-tab="events">事件记录</button>
-      <button data-tab="feed">主动审核</button>
-      <button data-tab="logs">运行日志</button>
-      <button data-tab="storage">存储管理</button>
+    <nav class="tabs" aria-label="????">
+      <button data-tab="overview" class="active">????</button>
+      <button data-tab="login">????</button>
+      <button data-tab="settings">??</button>
+      <button data-tab="events">????</button>
+      <button data-tab="feed">????</button>
+      <button data-tab="logs">????</button>
+      <button data-tab="storage">????</button>
     </nav>
 
     <main>
       <section id="overview" class="panel active">
         <div id="status-cards" class="card-grid"></div>
         <div class="surface">
-          <h2>适配器实例</h2>
+          <h2>?????</h2>
           <div id="adapter-list" class="table-wrap"></div>
         </div>
       </section>
@@ -40,20 +40,20 @@
       <section id="login" class="panel">
         <div class="two-column">
           <div class="surface">
-            <h2>账号档案</h2>
+            <h2>????</h2>
             <label>profile_id
               <select id="login-profile"></select>
             </label>
             <div class="button-row">
-              <button id="request-qr">生成二维码</button>
-              <button id="check-login" class="secondary">检查登录</button>
-              <button id="logout" class="danger">安全退出</button>
+              <button id="request-qr">?????</button>
+              <button id="check-login" class="secondary">????</button>
+              <button id="logout" class="danger">????</button>
             </div>
             <dl id="login-facts" class="facts"></dl>
           </div>
           <div class="surface qr-surface">
-            <div id="qr-placeholder">尚未生成二维码</div>
-            <img id="qr-image" alt="小黑盒扫码登录二维码" hidden />
+            <div id="qr-placeholder">???????</div>
+            <img id="qr-image" alt="??????????" hidden />
             <p id="qr-countdown"></p>
           </div>
         </div>
@@ -63,15 +63,15 @@
         <div class="surface">
           <div class="section-heading">
             <div>
-              <h2>统一插件配置</h2>
-              <p>这里编辑的是 AstrBot 原生插件配置，不会保存第二份设置。</p>
+              <h2>??????</h2>
+              <p>?????? AstrBot ???????????????????????</p>
             </div>
             <div class="button-row">
-              <button id="save-config">校验并保存</button>
-              <button id="restore-defaults" class="secondary">恢复默认</button>
+              <button id="save-config">?????</button>
+              <button id="restore-defaults" class="secondary">????</button>
             </div>
           </div>
-          <textarea id="config-editor" spellcheck="false" aria-label="插件配置 JSON"></textarea>
+          <textarea id="config-editor" spellcheck="false" aria-label="???? JSON"></textarea>
           <p id="config-result" class="result"></p>
         </div>
       </section>
@@ -80,23 +80,23 @@
         <div class="surface">
           <div class="filters">
             <select id="event-status">
-              <option value="">全部状态</option>
+              <option value="">????</option>
               <option>sent</option><option>dry_run</option><option>ignored</option>
               <option>retry_wait</option><option>send_unknown</option>
               <option>dead_letter</option><option>dispatched</option>
             </select>
-            <input id="event-uid" placeholder="用户 UID" />
-            <input id="event-post" placeholder="帖子 ID" />
-            <input id="event-keyword" placeholder="关键词" />
-            <input id="event-start" type="datetime-local" aria-label="开始时间" />
-            <input id="event-end" type="datetime-local" aria-label="结束时间" />
-            <button id="search-events">查询</button>
+            <input id="event-uid" placeholder="?? UID" />
+            <input id="event-post" placeholder="?? ID" />
+            <input id="event-keyword" placeholder="???" />
+            <input id="event-start" type="datetime-local" aria-label="????" />
+            <input id="event-end" type="datetime-local" aria-label="????" />
+            <button id="search-events">??</button>
           </div>
           <div id="event-table" class="table-wrap"></div>
           <div class="button-row pagination">
-            <button id="event-prev" class="secondary">上一页</button>
-            <span id="event-page">第 1 页</span>
-            <button id="event-next" class="secondary">下一页</button>
+            <button id="event-prev" class="secondary">???</button>
+            <span id="event-page">? 1 ?</span>
+            <button id="event-next" class="secondary">???</button>
           </div>
         </div>
       </section>
@@ -105,10 +105,10 @@
         <div class="surface">
           <div class="section-heading">
             <div>
-              <h2>主动回复候选</h2>
-              <p>批准时发送当前编辑文本，不会重新调用模型。</p>
+              <h2>??????</h2>
+              <p>?????????????????????????????</p>
             </div>
-            <button id="reject-expired" class="danger secondary">拒绝 72 小时前候选</button>
+            <button id="reject-expired" class="danger secondary">?? 72 ?????</button>
           </div>
           <div id="candidate-list" class="candidate-list"></div>
         </div>
@@ -117,16 +117,16 @@
       <section id="logs" class="panel">
         <div class="surface">
           <div class="filters">
-            <select id="log-level"><option value="">全部级别</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select>
-            <input id="log-keyword" placeholder="日志关键词" />
-            <button id="search-logs">筛选</button>
-            <button id="copy-diagnostics" class="secondary">复制脱敏诊断</button>
+            <select id="log-level"><option value="">????</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select>
+            <input id="log-keyword" placeholder="?????" />
+            <button id="search-logs">??</button>
+            <button id="copy-diagnostics" class="secondary">??????</button>
           </div>
-          <div id="sse-state" class="sse-state">SSE 连接中…</div>
+          <div id="sse-state" class="sse-state">SSE ????</div>
           <pre id="log-output" class="log-output"></pre>
           <div id="diagnostics-fallback" class="diagnostics-fallback" hidden>
-            <p>当前浏览器禁止自动写入剪贴板，请长按或全选下面的脱敏诊断并复制。</p>
-            <textarea id="diagnostics-output" readonly aria-label="脱敏诊断内容"></textarea>
+            <p>??????????????????????????????</p>
+            <textarea id="diagnostics-output" readonly aria-label="??????"></textarea>
           </div>
         </div>
       </section>
@@ -135,10 +135,10 @@
         <div id="storage-cards" class="card-grid"></div>
         <div class="surface">
           <div class="section-heading">
-            <h2>安全清理</h2>
+            <h2>????</h2>
             <div class="button-row">
-              <button id="preview-cleanup" class="secondary">清理预览</button>
-              <button id="run-cleanup" class="danger">执行清理</button>
+              <button id="preview-cleanup" class="secondary">????</button>
+              <button id="run-cleanup" class="danger">????</button>
             </div>
           </div>
           <pre id="cleanup-output"></pre>

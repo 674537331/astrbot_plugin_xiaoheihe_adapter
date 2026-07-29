@@ -34,18 +34,22 @@ from .parsers import (
     parse_thread_context,
 )
 from .rate_limiter import AsyncRateLimiter
-from .request_signing import RequestSigner
+from .request_signing import (
+    RequestSigner,
+    ensure_client_identity,
+    generate_device_id,
+)
 from .security import redact_data
 
 AuthInvalidCallback = Callable[[str, int], Awaitable[None]]
 
-AUTHENTICATED_WEB_PARAMS = {
-    "app": "heybox",
+WEB_CLIENT_PARAMS = {
+    "os_type": "web",
+    "app": "web",
     "client_type": "web",
     "version": "999.0.4",
-    "web_version": "3.0",
+    "web_version": "2.5",
     "x_client_type": "web",
-    "x_client_version": "",
     "x_app": "heybox_website",
     "x_os_type": "Windows",
     "device_info": "Chrome",
@@ -123,6 +127,10 @@ class XiaoheiheApiClient:
         self._signer = signer or RequestSigner()
         self._client = client
         self._owns_client = client is None
+        self._device_id = credentials.device_id if credentials else generate_device_id()
+        if credentials is not None:
+            ensure_client_identity(credentials, device_id=self._device_id)
+            self._device_id = credentials.device_id
         self._limiter = AsyncRateLimiter(min_request_interval_seconds)
         self._on_auth_invalid = on_auth_invalid
         self._closed = False
@@ -137,7 +145,7 @@ class XiaoheiheApiClient:
 
     async def start(self) -> None:
         if self._closed:
-            raise RuntimeError("HTTP Client 已关闭")
+            raise RuntimeError("HTTP Client ???")
         if self._client is None:
             limits = httpx.Limits(
                 max_connections=10,
@@ -151,7 +159,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.6",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.7",
                 },
             )
         if self.credentials:
@@ -187,27 +195,17 @@ class XiaoheiheApiClient:
                     response.cookies,
                     logged_in_at=logged_in_at,
                 )
-            except ResponseShapeError:
-                restored = await self._request(EndpointName.RESTORE_LOGIN)
-                merged_cookies = {**response.cookies, **restored.cookies}
-                try:
-                    credentials = parse_credentials(
-                        self.profile_id,
-                        restored.payload,
-                        merged_cookies,
-                        logged_in_at=logged_in_at,
-                        fallback_payloads=(response.payload,),
-                    )
-                except ResponseShapeError as exc:
-                    raise ResponseContractError(
-                        str(exc),
-                        category="response_shape",
-                        details={
-                            "qr_result_fields": _result_field_names(response.payload),
-                            "restore_result_fields": _result_field_names(restored.payload),
-                            "session_credential_count": len(merged_cookies),
-                        },
-                    ) from exc
+            except ResponseShapeError as exc:
+                raise ResponseContractError(
+                    str(exc),
+                    category="response_shape",
+                    details={
+                        "qr_result_fields": _result_field_names(response.payload),
+                        "session_cookie_names": sorted(response.cookies)[:30],
+                        "session_credential_count": len(response.cookies),
+                    },
+                ) from exc
+            ensure_client_identity(credentials, device_id=self._device_id)
             self.credentials = credentials
         return state, message, credentials
 
@@ -215,7 +213,7 @@ class XiaoheiheApiClient:
         response = await self._request(EndpointName.CURRENT_USER)
         body = response.payload.get("result", response.payload.get("data", response.payload))
         if not isinstance(body, Mapping):
-            raise ResponseContractError("账号检查响应不是对象", category="response_shape")
+            raise ResponseContractError("??????????", category="response_shape")
         return dict(body)
 
     async def fetch_notifications(
@@ -316,10 +314,10 @@ class XiaoheiheApiClient:
         )
         body = response.payload.get("result", response.payload.get("data", response.payload))
         if not isinstance(body, Mapping):
-            raise ResponseContractError("近期评论响应不是对象", category="response_shape")
+            raise ResponseContractError("??????????", category="response_shape")
         items = body.get("items", body.get("comments", body.get("list", [])))
         if not isinstance(items, list):
-            raise ResponseContractError("近期评论列表字段不是数组", category="response_shape")
+            raise ResponseContractError("????????????", category="response_shape")
         return [dict(item) for item in items if isinstance(item, Mapping)]
 
     async def fetch_feed(
@@ -334,10 +332,10 @@ class XiaoheiheApiClient:
         response = await self._request(EndpointName.FEED, params=params)
         body = response.payload.get("result", response.payload.get("data", response.payload))
         if not isinstance(body, Mapping):
-            raise ResponseContractError("帖子流响应不是对象", category="response_shape")
+            raise ResponseContractError("?????????", category="response_shape")
         items = body.get("items", body.get("links", body.get("list", [])))
         if not isinstance(items, list):
-            raise ResponseContractError("帖子流列表字段不是数组", category="response_shape")
+            raise ResponseContractError("???????????", category="response_shape")
         return ApiPage(
             items=[dict(item) for item in items if isinstance(item, Mapping)],
             next_cursor=str(body.get("next_cursor", body.get("cursor", ""))),
@@ -354,26 +352,24 @@ class XiaoheiheApiClient:
     ) -> ApiResponse:
         await self.start()
         if self._client is None:
-            raise RuntimeError("HTTP Client 未初始化")
+            raise RuntimeError("HTTP Client ????")
         contract = endpoint(name)
         if contract.authenticated and self.credentials is None:
             raise CredentialInvalidError(
-                "账号未登录", status_code=401, category="credential_invalid"
+                "?????", status_code=401, category="credential_invalid"
             )
         request_params = dict(params or {})
-        request_params.setdefault("os_type", "web")
+        for key, value in WEB_CLIENT_PARAMS.items():
+            request_params.setdefault(key, value)
         if self.credentials and self.credentials.uid:
             request_params.setdefault("heybox_id", self.credentials.uid)
-        if contract.authenticated:
-            for key, value in AUTHENTICATED_WEB_PARAMS.items():
-                request_params.setdefault(key, value)
         signed = self._signer.sign(
             contract.method,
             contract.path,
             params=request_params,
             json_body=json_body or form_body,
             signing_key=self.credentials.signing_key if self.credentials else "",
-            device_id=self.credentials.device_id if self.credentials else "",
+            device_id=self._device_id,
         )
         headers = dict(signed.headers)
         headers["Referer"] = "https://www.xiaoheihe.cn/"
@@ -408,13 +404,13 @@ class XiaoheiheApiClient:
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 if not contract.retry_safe:
                     error = SendUncertainError(
-                        "评论请求超时或连接中断，服务端可能已接收",
+                        "????????????????????",
                         category="send_unknown",
                     )
                     self._remember_error(error)
                     raise error from exc
                 if retry_count >= self._max_retries:
-                    error = XiaoheiheApiError("网络请求在重试后仍失败", category="network")
+                    error = XiaoheiheApiError("???????????", category="network")
                     self._remember_error(error)
                     raise error from exc
                 await asyncio.sleep(_backoff(retry_count))
@@ -427,7 +423,7 @@ class XiaoheiheApiClient:
                     CredentialInvalidError if response.status_code == 401 else XiaoheiheApiError
                 )
                 error = error_type(
-                    f"小黑盒返回 HTTP {response.status_code}",
+                    f"????? HTTP {response.status_code}",
                     status_code=response.status_code,
                     category=("credential_invalid" if response.status_code == 401 else "forbidden"),
                     details=_safe_response_payload(response),
@@ -445,7 +441,7 @@ class XiaoheiheApiClient:
                     retry_count += 1
                     continue
                 error = RateLimitedError(
-                    "小黑盒请求频率受限",
+                    "?????????",
                     status_code=429,
                     category="rate_limited",
                     retry_after=retry_after,
@@ -459,7 +455,7 @@ class XiaoheiheApiClient:
                     retry_count += 1
                     continue
                 error = XiaoheiheApiError(
-                    f"小黑盒服务暂时不可用: HTTP {response.status_code}",
+                    f"??????????: HTTP {response.status_code}",
                     status_code=response.status_code,
                     category="server",
                     details=_safe_response_payload(response),
@@ -469,7 +465,7 @@ class XiaoheiheApiClient:
 
             if response.status_code < 200 or response.status_code >= 300:
                 error = XiaoheiheApiError(
-                    f"小黑盒请求失败: HTTP {response.status_code}",
+                    f"???????: HTTP {response.status_code}",
                     status_code=response.status_code,
                     category="http",
                     details=_safe_response_payload(response),
@@ -481,7 +477,7 @@ class XiaoheiheApiClient:
                 payload = response.json()
             except json.JSONDecodeError as exc:
                 error = ResponseContractError(
-                    "小黑盒响应不是有效 JSON",
+                    "????????? JSON",
                     status_code=response.status_code,
                     category="response_shape",
                 )
@@ -489,7 +485,7 @@ class XiaoheiheApiClient:
                 raise error from exc
             if not isinstance(payload, Mapping):
                 error = ResponseContractError(
-                    "小黑盒 JSON 顶层不是对象",
+                    "??? JSON ??????",
                     status_code=response.status_code,
                     category="response_shape",
                 )
@@ -603,7 +599,7 @@ def _upstream_error(payload: Mapping[str, Any]) -> str:
     raw_message = payload.get("msg", payload.get("message", payload.get("error", "")))
     message = redact_data(str(raw_message)) if raw_message else ""
     suffix = f": {str(message)[:300]}" if message else ""
-    return f"小黑盒 API 返回非成功状态 {str(marker)[:80]}{suffix}"
+    return f"??? API ??????? {str(marker)[:80]}{suffix}"
 
 
 def _is_relogin_response(payload: Mapping[str, Any]) -> bool:
@@ -617,10 +613,10 @@ def _is_relogin_response(payload: Mapping[str, Any]) -> bool:
             "login required",
             "not login",
             "unauthorized",
-            "重新登录",
-            "请登录",
-            "未登录",
-            "登录失效",
+            "????",
+            "???",
+            "???",
+            "????",
         )
     )
 

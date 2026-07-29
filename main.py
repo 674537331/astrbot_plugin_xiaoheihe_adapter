@@ -20,8 +20,8 @@ except ModuleNotFoundError as exc:
 @register(
     PLUGIN_NAME,
     "RyanVaderAn",
-    "AstrBot 的小黑盒原生平台适配器",
-    "1.0.6",
+    "AstrBot ???????????",
+    "1.0.7",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:

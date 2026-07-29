@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
+
+from .models import Credentials
 
 # The hkey algorithm is independently ported to Python from the MIT-licensed
 # heybox-core implementation by XiaHouSheng. See THIRD_PARTY_NOTICES.md.
@@ -58,6 +61,49 @@ class RequestSigner:
         # verified Workshop signing. They are not part of the GET hkey.
         del method, json_body, signing_key
         return SignedRequest(params=normalized, headers={})
+
+
+def generate_device_id() -> str:
+    """Return the stable 32-character web client identifier expected upstream."""
+
+    return secrets.token_hex(16)
+
+
+def generate_xhh_token_id(
+    *,
+    now: int | None = None,
+    random_parts: tuple[str, str, str] | None = None,
+) -> str:
+    """Build the non-secret web client cookie used by Xiaoheihe requests.
+
+    The shape is independently implemented from the MIT-licensed heybox-bot
+    client. Random input is used instead of copying constants from unlicensed
+    reference projects.
+    """
+
+    timestamp = str(now if now is not None else int(time.time()))
+    parts = random_parts or tuple(secrets.token_hex(16) for _ in range(3))
+    raw = b"".join(
+        hashlib.md5(part.encode(), usedforsecurity=False).digest() for part in (timestamp, *parts)
+    )
+    return base64.b64encode(raw + b"\x00").decode("ascii")
+
+
+def ensure_client_identity(
+    credentials: Credentials,
+    *,
+    device_id: str = "",
+) -> bool:
+    """Fill missing web-client metadata and report whether credentials changed."""
+
+    changed = False
+    if not credentials.device_id:
+        credentials.device_id = device_id or generate_device_id()
+        changed = True
+    if not credentials.cookies.get("x_xhh_tokenid"):
+        credentials.cookies["x_xhh_tokenid"] = generate_xhh_token_id()
+        changed = True
+    return changed
 
 
 def generate_hkey(path: str, timestamp: int, nonce: str) -> str:
