@@ -6,14 +6,16 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.0**
+当前版本：**v1.2.1**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.0 重点：
+v1.2.1 重点：
 
+- 主动审核改用页面内确认框，修复移动端点击“批准”无响应；
+- 批准后明确提示“模拟运行候选已批准”或“候选已发送”；
 - 主动浏览使用小黑盒推荐流；
 - 分区设置提供 `All（全部）` 和常用中文分区下拉框；
 - 候选可按推荐顺序、随机、最新或热门挑选；
@@ -199,7 +201,7 @@ message_id        xhh_<event_type>_<notification_id>_<comment_id>
 最多 6 张图片。插件会检查协议、认证信息、主机和 DNS 结果，过滤本地地址、内网地址与保留
 地址。当前提供商声明为纯文本能力时，本轮按纯文本继续处理，并在管理页显示提示。
 
-v1.2.0 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
+v1.2.1 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
 
 ## 身份与回复规则
 
@@ -253,7 +255,7 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.2.0 数据库迁移版本仍为 **v4**；
+- v1.2.1 数据库迁移版本仍为 **v4**；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
 

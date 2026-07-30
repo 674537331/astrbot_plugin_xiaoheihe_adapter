@@ -81,12 +81,17 @@ def main() -> int:
         "bridge.subscribeSSE",
         'bridge.apiGet("config/schema")',
         "renderConfigForm",
+        "confirmAction",
         'toast(changed === "无变化"',
     ):
         if required not in app_source:
             failures.append(f"pages/xiaoheihe/app.js: missing {required}")
     if 'id="config-form"' not in html_path.read_text(encoding="utf-8"):
         failures.append("pages/xiaoheihe/index.html: missing structured config form")
+    if 'id="confirm-overlay"' not in html_path.read_text(encoding="utf-8"):
+        failures.append("pages/xiaoheihe/index.html: missing embedded confirmation dialog")
+    if "if (!confirm(" in app_source or "window.confirm(" in app_source:
+        failures.append("pages/xiaoheihe/app.js: native confirm is unreliable in plugin iframe")
     for forbidden in ("document.cookie", "localStorage", "window.parent", "parent.document"):
         if forbidden in app_source:
             failures.append(f"pages/xiaoheihe/app.js: forbidden browser access {forbidden}")

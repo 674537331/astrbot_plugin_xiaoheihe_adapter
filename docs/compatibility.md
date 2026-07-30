@@ -1,10 +1,11 @@
-# AstrBot 兼容性说明（v1.2.0）
+# AstrBot 兼容性说明（v1.2.1）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.2.0 保持覆盖更新后的平台实例协调、评论与原帖上下文合并，并将主动浏览切换为小黑盒推荐流。
-2026-07-30 发布 v1.2.0 前再次核对：
+AstrBot 4.26.8。v1.2.1 保持覆盖更新后的平台实例协调、评论与原帖上下文合并、推荐流主动浏览，
+并使用 Plugin Page 页面内确认框完成移动端人工审核。
+2026-07-30 发布 v1.2.1 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -45,8 +46,8 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 生命周期 | `Star.initialize()`、`Star.terminate()`、`Platform.terminate()` | 热重载时协调平台实例；停止时取消任务并关闭 HTTP Client/SQLite/SSE |
 
 AstrBot 4.24.2、4.26.2 和 4.26.8 均在插件加载完成后调用可选的 `Star.initialize()`，并由
-`Context.platform_manager` 暴露当前平台实例。AstrBot 覆盖更新会重新加载插件模块，但不会
-替插件重建已经终止的平台实例。v1.1.1 在 `initialize()` 中识别已经处于运行阶段的平台
+`Context.platform_manager` 暴露当前平台实例。AstrBot 覆盖更新会重新加载插件模块，已经
+终止的平台实例则由插件负责重建。v1.1.1 在 `initialize()` 中识别已经处于运行阶段的平台
 管理器，并调用当前源码提供的 `PlatformManager.reload(config)` 重建所有已启用的
 `xiaoheihe` 实例；冷启动时实例列表为空，平台仍由 AstrBot 的正常初始化流程创建。
 
@@ -100,7 +101,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.0 的最新迁移版本为 v4，已有
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.1 的最新迁移版本为 v4，已有
 记录原位保留。卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据
 边界；更新前备份插件数据目录可用于回滚。
 

@@ -11,6 +11,8 @@ const state = {
   eventPage: 1,
   eventPages: 1,
   toastTimer: null,
+  confirmResolve: null,
+  confirmPreviousFocus: null,
   unloaded: false,
 };
 
@@ -34,6 +36,31 @@ function toast(message, tone = "info") {
     node.classList.remove("show");
     state.toastTimer = null;
   }, 3200);
+}
+
+function closeConfirmation(accepted) {
+  const resolve = state.confirmResolve;
+  state.confirmResolve = null;
+  $("confirm-overlay").hidden = true;
+  $("confirm-accept").classList.remove("danger");
+  const previousFocus = state.confirmPreviousFocus;
+  state.confirmPreviousFocus = null;
+  previousFocus?.focus?.();
+  resolve?.(accepted);
+}
+
+function confirmAction(message, { confirmText = "确认", danger = false } = {}) {
+  if (state.confirmResolve) closeConfirmation(false);
+  state.confirmPreviousFocus = document.activeElement;
+  $("confirm-message").textContent = message;
+  const accept = $("confirm-accept");
+  accept.textContent = confirmText;
+  accept.classList.toggle("danger", danger);
+  $("confirm-overlay").hidden = false;
+  return new Promise((resolve) => {
+    state.confirmResolve = resolve;
+    queueMicrotask(() => accept.focus());
+  });
 }
 
 async function busy(button, work) {
@@ -266,9 +293,13 @@ function renderProfiles(schema) {
     remove.className = "danger secondary compact";
     remove.textContent = "删除档案";
     remove.disabled = state.config.profiles.length <= 1;
-    remove.addEventListener("click", () => {
+    remove.addEventListener("click", async () => {
       const name = profile.profile_id || index + 1;
-      if (!confirm(`即将只删除账号档案 ${name}。如需同时清除登录凭证，请先取消并在扫码登录页执行安全退出。确认继续？`)) return;
+      const confirmed = await confirmAction(
+        `即将只删除账号档案 ${name}。如需同时清除登录凭证，请先取消并在扫码登录页执行安全退出。确认继续？`,
+        { confirmText: "删除档案", danger: true },
+      );
+      if (!confirmed) return;
       state.config.profiles.splice(index, 1);
       renderConfigForm();
     });
@@ -486,12 +517,17 @@ async function loadCandidates() {
     row.className = "button-row";
     if (candidate.status === "send_unknown") {
       const discard = document.createElement("button");
+      discard.type = "button";
       discard.className = "danger secondary";
       discard.textContent = "人工丢弃";
       discard.addEventListener("click", () => busy(discard, async () => {
-        if (!confirm("请先在目标帖子核对评论。确认将这条发送状态未知候选标记为已丢弃？")) return;
+        const confirmed = await confirmAction(
+          "请先在目标帖子核对评论。确认将这条发送状态未知候选标记为已丢弃？",
+          { confirmText: "人工丢弃", danger: true },
+        );
+        if (!confirmed) return;
         await bridge.apiPost(`feed/candidates/${candidate.id}/reject`, {});
-        toast("候选已人工丢弃");
+        toast("候选已人工丢弃", "success");
         await loadCandidates();
       }));
       row.append(discard);
@@ -500,14 +536,26 @@ async function loadCandidates() {
       return;
     }
     const approve = document.createElement("button");
+    approve.type = "button";
     approve.textContent = "批准";
     approve.addEventListener("click", () => busy(approve, async () => {
-      if (!confirm("确认发送当前编辑后的文本？")) return;
-      await bridge.apiPost(`feed/candidates/${candidate.id}/approve`, { edited_text: editor.value });
-      toast("候选已批准");
+      const simulated = Boolean(state.config?.proactive_feed?.dry_run);
+      const confirmed = await confirmAction(
+        simulated
+          ? "当前为主动浏览模拟运行。确认保存这条批准结果？"
+          : "确认将当前编辑后的文本发送到目标帖子？",
+        { confirmText: "批准" },
+      );
+      if (!confirmed) return;
+      const result = await bridge.apiPost(
+        `feed/candidates/${candidate.id}/approve`,
+        { edited_text: editor.value },
+      );
+      toast(result.result === "dry_run" ? "模拟运行候选已批准" : "候选已发送", "success");
       await loadCandidates();
     }));
     const reject = document.createElement("button");
+    reject.type = "button";
     reject.className = "danger secondary";
     reject.textContent = "拒绝";
     reject.addEventListener("click", () => busy(reject, async () => {
@@ -609,7 +657,11 @@ $("check-login").addEventListener("click", () => busy($("check-login"), async ()
   await loadStatus();
 }));
 $("logout").addEventListener("click", () => busy($("logout"), async () => {
-  if (!confirm("确认删除该 profile 的本地凭证并退出？")) return;
+  const confirmed = await confirmAction(
+    "确认删除该 profile 的本地凭证并退出？",
+    { confirmText: "安全退出", danger: true },
+  );
+  if (!confirmed) return;
   renderLogin(await bridge.apiPost("auth/logout", { profile_id: selectedProfile() }));
   $("qr-image").hidden = true;
   $("qr-placeholder").hidden = false;
@@ -624,7 +676,11 @@ $("save-config").addEventListener("click", () => busy($("save-config"), async ()
   await loadStatus();
 }));
 $("restore-defaults").addEventListener("click", () => busy($("restore-defaults"), async () => {
-  if (!confirm("确认恢复插件默认配置？登录凭证将完整保留。")) return;
+  const confirmed = await confirmAction(
+    "确认恢复插件默认配置？登录凭证将完整保留。",
+    { confirmText: "载入默认值" },
+  );
+  if (!confirmed) return;
   const defaults = await bridge.apiGet("config/defaults");
   state.config = defaults;
   renderConfigForm();
@@ -644,7 +700,11 @@ $("event-next").addEventListener("click", () => busy($("event-next"), async () =
 }));
 $("search-logs").addEventListener("click", () => busy($("search-logs"), loadLogs));
 $("reject-expired").addEventListener("click", () => busy($("reject-expired"), async () => {
-  if (!confirm("确认拒绝 72 小时前全部待审核候选？")) return;
+  const confirmed = await confirmAction(
+    "确认拒绝 72 小时前全部待审核候选？",
+    { confirmText: "批量拒绝", danger: true },
+  );
+  if (!confirmed) return;
   const result = await bridge.apiPost("feed/candidates/reject-expired", { older_than_hours: 72 });
   toast(`已拒绝 ${result.rejected} 条`);
   await loadCandidates();
@@ -674,13 +734,27 @@ $("preview-cleanup").addEventListener("click", () => busy($("preview-cleanup"), 
   $("cleanup-output").textContent = JSON.stringify(await bridge.apiGet("storage/cleanup-preview"), null, 2);
 }));
 $("run-cleanup").addEventListener("click", () => busy($("run-cleanup"), async () => {
-  if (!confirm("仅清理插件自身的到期数据。确认执行？")) return;
+  const confirmed = await confirmAction(
+    "仅清理插件自身的到期数据。确认执行？",
+    { confirmText: "执行清理", danger: true },
+  );
+  if (!confirmed) return;
   $("cleanup-output").textContent = JSON.stringify(await bridge.apiPost("storage/cleanup", { confirm: true }), null, 2);
   await loadStorage();
 }));
 
+$("confirm-cancel").addEventListener("click", () => closeConfirmation(false));
+$("confirm-accept").addEventListener("click", () => closeConfirmation(true));
+$("confirm-overlay").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeConfirmation(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.confirmResolve) closeConfirmation(false);
+});
+
 window.addEventListener("beforeunload", () => {
   state.unloaded = true;
+  if (state.confirmResolve) closeConfirmation(false);
   clearInterval(state.loginTimer);
   clearTimeout(state.loginRefreshTimer);
   clearTimeout(state.reconnectTimer);

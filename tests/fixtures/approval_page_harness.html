@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>主动审核交互测试</title>
+  </head>
+  <body>
+    <script>
+      window.__approvalCalls = [];
+      window.AstrBotPluginPage = {
+        ready: async () => {},
+        apiGet: async (path, query = {}) => {
+          if (path === "config") {
+            return {
+              profiles: [{ profile_id: "default", display_name: "默认账号" }],
+              proactive_feed: { dry_run: true },
+            };
+          }
+          if (path === "config/schema") return {};
+          if (path === "status") {
+            return {
+              version: "v1.2.1",
+              profiles: [],
+              adapters: [],
+              queue_size: 0,
+              today_replies: 0,
+              today_proactive: 0,
+              dry_run: true,
+              database_size: 0,
+              log_size: 0,
+              task_count: 0,
+              circuit_breakers: [],
+            };
+          }
+          if (path === "logs") return { items: [] };
+          if (path === "storage") return { database_size: 0, log_size: 0, counts: {} };
+          if (path === "auth/status") {
+            return { status: "success", profile_id: "default", nickname: "测试账号", uid: "1" };
+          }
+          if (path === "events") return { page: 1, pages: 1, total: 0, items: [] };
+          if (path === "feed/candidates") {
+            return query.status === "pending"
+              ? {
+                  items: [{
+                    id: 7,
+                    profile_id: "default",
+                    post_id: "123",
+                    post_title: "移动端批准测试",
+                    post_author_uid: "42",
+                    status: "pending",
+                    reason: "推荐流",
+                    generated_text: "这是一条待审核回复",
+                  }],
+                }
+              : { items: [] };
+          }
+          return {};
+        },
+        apiPost: async (path, payload) => {
+          window.__approvalCalls.push({ path, payload });
+          if (path.endsWith("/approve")) return { approved: true, result: "dry_run" };
+          return {};
+        },
+        subscribeSSE: async () => "mock-sse",
+        unsubscribeSSE: async () => {},
+      };
+
+      fetch("/pages/xiaoheihe/index.html")
+        .then((response) => response.text())
+        .then((html) => {
+          document.open();
+          document.write(html.replace("<head>", '<head><base href="/pages/xiaoheihe/">'));
+          document.close();
+        });
+    </script>
+  </body>
+</html>

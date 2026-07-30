@@ -224,11 +224,34 @@ td.wrap { min-width: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 .result { min-height: 1.2rem; }
 
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1.2rem;
+  background: rgb(5 13 12 / 72%);
+  backdrop-filter: blur(3px);
+}
+.confirm-overlay[hidden] { display: none; }
+.confirm-card {
+  width: min(440px, 100%);
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.confirm-card h2 { margin: 0 0 0.65rem; font-size: 1.15rem; }
+.confirm-card p { margin: 0; color: var(--muted); white-space: pre-wrap; }
+.confirm-actions { justify-content: flex-end; margin-top: 1.1rem; }
+
 .toast {
   position: fixed;
   right: 1.2rem;
   bottom: 1.2rem;
-  z-index: 10;
+  z-index: 30;
   max-width: min(420px, calc(100vw - 2.4rem));
   padding: 0.8rem 1rem;
   border-radius: 10px;
@@ -249,4 +272,5 @@ td.wrap { min-width: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .alerts, .tabs, main { padding-inline: 1rem; }
   .two-column { grid-template-columns: 1fr; }
   .section-heading { align-items: start; flex-direction: column; }
+  .confirm-actions button { flex: 1; }
 }
