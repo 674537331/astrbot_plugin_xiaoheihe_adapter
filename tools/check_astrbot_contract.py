@@ -19,7 +19,12 @@ CONTRACT: dict[str, tuple[str, ...]] = {
     "core/message/components.py": ("class Plain", "class Image"),
     "api/provider/__init__.py": ("ProviderRequest",),
     "api/star/__init__.py": ("Context", "Star", "StarTools", "register"),
-    "core/star/context.py": ("get_using_provider",),
+    "core/star/context.py": (
+        "get_using_provider",
+        "self.platform_manager = platform_manager",
+    ),
+    "core/star/star_manager.py": ("await metadata.star_cls.initialize()",),
+    "core/platform/manager.py": ("async def reload(", "def get_insts("),
     "core/platform/astr_message_event.py": ("MessageSession", "AstrMessageEvent"),
     "core/agent/message.py": ("TextPart", "mark_as_temp"),
 }

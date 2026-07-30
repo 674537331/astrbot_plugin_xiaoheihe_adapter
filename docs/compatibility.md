@@ -1,10 +1,10 @@
-# AstrBot 兼容性说明（v1.1.0）
+# AstrBot 兼容性说明（v1.1.1）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.1.0 调整插件内部持久化重试和主动审核并发，不引入新的 AstrBot API。
-2026-07-30 发布 v1.1.0 前再次核对：
+AstrBot 4.26.8。v1.1.1 增加覆盖更新后的平台实例协调，并保持原有持久化重试与审核并发
+边界。2026-07-30 发布 v1.1.1 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -26,7 +26,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 
 | 能力 | 采用方式 | 兼容性结论 |
 | --- | --- | --- |
-| 适配器注册 | `register_platform_adapter(..., default_config_tmpl=..., adapter_display_name=..., support_streaming_message=False)` | 让“机器人 → 新增适配器”显示“小黑盒”；平台配置只含 `id/enable/profile_id` |
+| 适配器注册 | `register_platform_adapter(..., default_config_tmpl=..., adapter_display_name=..., logo_path="../logo.png", support_streaming_message=False)` | 让“机器人 → 新增适配器”显示“小黑盒”及仓库根目录图标；平台配置只含 `id/enable/profile_id` |
 | 适配器构造 | `Platform(platform_config, event_queue)`；适配器构造函数接收 `platform_config/platform_settings/event_queue` | 与 4.26.2 的平台管理器调用方式一致 |
 | 元数据 | `PlatformMetadata` | 声明内部名、实例 ID、展示名、默认配置和非流式能力 |
 | 入站消息 | `AstrBotMessage` + `MessageMember` + `Plain/Image` | 设置稳定消息 ID、会话、群组、发送者、自身 UID 和结构化 `raw_message` |
@@ -41,7 +41,13 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 数据目录 | `StarTools.get_data_dir(plugin_name)` | 凭证与 SQLite 位于插件专属数据目录，覆盖更新后继续读取 |
 | Plugin Page | `window.AstrBotPluginPage` + `context.register_web_api()` + `astrbot.api.web` | 4.26.2 完整可用；页面只通过受限 bridge 通信 |
 | 配置表单 | `_conf_schema.json` + Plugin Page `config/schema` | 表单元数据与 AstrBot 原生插件设置共用同一 schema；配置值始终来自同一个 `AstrBotConfig` |
-| 生命周期 | `Star.terminate()`、`Platform.terminate()` | 取消任务、关闭 HTTP Client/SQLite/SSE，重复调用安全 |
+| 生命周期 | `Star.initialize()`、`Star.terminate()`、`Platform.terminate()` | 热重载时协调平台实例；停止时取消任务并关闭 HTTP Client/SQLite/SSE |
+
+AstrBot 4.24.2、4.26.2 和 4.26.8 均在插件加载完成后调用可选的 `Star.initialize()`，并由
+`Context.platform_manager` 暴露当前平台实例。AstrBot 覆盖更新会重新加载插件模块，但不会
+替插件重建已经终止的平台实例。v1.1.1 在 `initialize()` 中识别已经处于运行阶段的平台
+管理器，并调用当前源码提供的 `PlatformManager.reload(config)` 重建所有已启用的
+`xiaoheihe` 实例；冷启动时实例列表为空，平台仍由 AstrBot 的正常初始化流程创建。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -57,8 +63,12 @@ Plugin Pages 使用当前官方文档描述的新桥接 API。平台适配器行
 `super().__init__(event_queue)`；4.26.2 和 4.26.8 的 `Platform.__init__` 实际签名均为
 `(config, event_queue)`，平台管理器以
 `cls_type(platform_config, platform_settings, event_queue)` 创建实例。项目因此采用
-`super().__init__(platform_config, event_queue)`。这是本次复核中唯一需要明确标记的
-文档/源码差异。
+`super().__init__(platform_config, event_queue)`。这是本次复核确认的文档/源码差异之一。
+
+平台注册器注释将 `logo_path` 描述为相对插件目录；4.26.8 Dashboard
+`register_platform_logo()` 实际以适配器类模块文件所在目录进行拼接。适配器类位于
+`xiaoheihe/adapter.py`，因此项目使用静态路径 `../logo.png`，解析结果为仓库根目录
+`logo.png`。
 
 包级核验确认 AstrBot 4.24.2 尚未包含 `astrbot.api.web`。因此该版本只加载核心平台适配器，
 管理页后端仅使用公开 Plugin Page API；该 API 缺失时核心适配器仍可加载。
@@ -67,7 +77,7 @@ Plugin Pages 使用当前官方文档描述的新桥接 API。平台适配器行
 
 最低版本 4.24.2 的本机端到端验证状态为“待验证”；仓库通过 CI 的 `astrbot-compat`
 矩阵持续检查 4.24.2 和 4.26.2，并由
-`astrbot-latest-stable` 任务动态安装 `<5` 的最新稳定包。当前 4.26.8 wheel 的 11 项
+`astrbot-latest-stable` 任务动态安装 `<5` 的最新稳定包。当前 4.26.8 wheel 的 13 项
 文件/符号契约也已在本机离线检查通过。发布前仍需在 4.24.2、4.26.2 和当前稳定版各完成
 一次插件加载、适配器创建和模拟运行人工验收。
 
@@ -82,7 +92,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.1.0 的最新迁移版本为 v4，已有
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.1.1 的最新迁移版本为 v4，已有
 记录原位保留。卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据
 边界；更新前备份插件数据目录可用于回滚。
 

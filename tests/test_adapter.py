@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from tests.astrbot_stubs import (
     REGISTERED_ADAPTERS,
@@ -32,6 +33,9 @@ def test_adapter_is_registered_and_nonstreaming() -> None:
     registration = XiaoheihePlatformAdapter._test_registration
     assert registration["support_streaming_message"] is False
     assert registration["default_config_tmpl"]["profile_id"] == "default"
+    assert registration["logo_path"] == "../logo.png"
+    assert (Path("xiaoheihe") / registration["logo_path"]).resolve() == Path("logo.png").resolve()
+    assert (Path("xiaoheihe") / registration["logo_path"]).is_file()
 
 
 async def test_send_by_session_recovers_exact_route() -> None:
@@ -63,4 +67,5 @@ def test_adapter_meta_uses_instance_id() -> None:
     )
     assert adapter.meta().name == "xiaoheihe"
     assert adapter.meta().id == "instance-a"
+    assert adapter.meta().logo_path == "../logo.png"
     assert adapter.meta().support_streaming_message is False

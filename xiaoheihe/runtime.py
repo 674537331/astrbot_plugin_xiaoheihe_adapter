@@ -80,6 +80,7 @@ class RuntimeServices:
         self._floor_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self._feed_approval_locks: dict[str, asyncio.Lock] = {}
         self._alerts: dict[str, dict[str, Any]] = {}
+        self._configured_adapters: dict[str, dict[str, Any]] = {}
         self.last_cleanup_at: str | None = None
         self.config.add_restart_callback(self._on_config_changed)
 
@@ -151,6 +152,37 @@ class RuntimeServices:
 
     def unregister_adapter(self, adapter: Any) -> None:
         self._adapters.discard(adapter)
+
+    def set_configured_adapters(self, configs: list[dict]) -> None:
+        self._configured_adapters = {
+            str(config.get("id", "xiaoheihe")): {
+                "id": str(config.get("id", "xiaoheihe")),
+                "profile_id": str(config.get("profile_id", "default")),
+                "enabled": bool(config.get("enable", False)),
+            }
+            for config in configs
+        }
+
+    def report_adapter_reconcile_failure(
+        self,
+        adapter_id: str,
+        error: BaseException,
+    ) -> None:
+        safe_error = redact_text(str(error))[:500] or type(error).__name__
+        key = f"adapter_reconcile:{adapter_id}"
+        self._alerts[key] = {
+            "key": key,
+            "level": "error",
+            "message": f"适配器实例 {adapter_id} 在插件更新后恢复失败：{safe_error}",
+        }
+        self.logging.emit(
+            "ERROR",
+            f"插件更新后恢复适配器实例失败：{safe_error}",
+            details={"adapter_id": adapter_id, "exception_type": type(error).__name__},
+        )
+
+    def clear_adapter_reconcile_failure(self, adapter_id: str) -> None:
+        self._alerts.pop(f"adapter_reconcile:{adapter_id}", None)
 
     async def notify_profile_changed(
         self,
@@ -690,17 +722,28 @@ class RuntimeServices:
                 "level": "error",
                 "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
+        adapters = [
+            {
+                "id": str(adapter.config.get("id", "xiaoheihe")),
+                "profile_id": str(adapter.config.get("profile_id", "default")),
+                "running": bool(adapter.running),
+                "enabled": True,
+            }
+            for adapter in tuple(self._adapters)
+        ]
+        active_ids = {adapter["id"] for adapter in adapters}
+        adapters.extend(
+            {
+                **configured,
+                "running": False,
+            }
+            for adapter_id, configured in self._configured_adapters.items()
+            if adapter_id not in active_ids
+        )
         return {
-            "version": "v1.1.0",
+            "version": "v1.1.1",
             "profiles": profiles,
-            "adapters": [
-                {
-                    "id": adapter.config.get("id", "xiaoheihe"),
-                    "profile_id": adapter.config.get("profile_id", "default"),
-                    "running": adapter.running,
-                }
-                for adapter in tuple(self._adapters)
-            ],
+            "adapters": adapters,
             "tasks": self.tasks.task_names(),
             "task_failures": task_failures,
             "queue_length": sum(
@@ -889,6 +932,7 @@ class RuntimeServices:
         self.logging.close()
         self._floor_locks.clear()
         self._feed_approval_locks.clear()
+        self._configured_adapters.clear()
         self._started = False
         unbind_runtime(self)
 

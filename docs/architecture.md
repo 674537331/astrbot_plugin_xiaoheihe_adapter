@@ -32,6 +32,11 @@ AstrBot 原生管线负责。
 - `feed_service.py`：高风险主动刷帖筛选、候选与人工审核。
 - `database.py` / `repository.py`：迁移、事务、索引、幂等、保留和诊断。
 - `config_service.py`：同一个 `AstrBotConfig` 的校验、保存和热重载通知。
+
+插件覆盖更新时，AstrBot 会先结束旧插件运行时。新插件实例在 `Star.initialize()` 阶段
+检查平台管理器：冷启动保持 AstrBot 原生创建顺序；热重载阶段则重建已启用的
+`xiaoheihe` 实例，使通知轮询、回复 worker 和主动帖子任务绑定到新的运行时。管理页状态
+同时保留已配置实例清单，恢复失败时显示停止状态和脱敏错误提醒。
 - `task_manager.py` / `runtime.py`：任务、客户端、数据库、锁、SSE 和析构。
 - `web_api.py`：认证后的 Plugin Page 后端。
 
@@ -94,7 +99,7 @@ claimed → ignored
 - UI 只用 `textContent` 创建外部内容，避免 XSS；
 - SQL 全部参数化；动态排序/表名只来自后端固定白名单；
 - 图片仅接受无用户信息的公开 HTTPS URL，并在提交组件前校验 DNS 解析结果；
-- v1.1.0 使用图片 URL 直传，本地图片缓存保持为空；
+- v1.1.1 使用图片 URL 直传，本地图片缓存保持为空；
 - 外部内容置于 `<xiaoheihe_context trust="untrusted">` 用户侧临时片段中；
 - POST 评论超时进入 `send_unknown`，核对结果不明确时保持人工检查状态；
 - 评论接口明确返回 `status=failed` 时进入失败终态，事件级发送闸门拦截第二次 POST；

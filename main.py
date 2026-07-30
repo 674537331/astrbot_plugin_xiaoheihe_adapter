@@ -21,7 +21,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.1.0",
+    "1.1.1",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -33,6 +33,58 @@ class XiaoheiheAdapterPlugin(Star):
         self.web = WebApiController(self.runtime) if WebApiController is not None else None
         if self.web is not None:
             self.web.register(context)
+        self.runtime.set_configured_adapters(self._platform_configs())
+
+    def _platform_configs(self) -> list[dict]:
+        manager = getattr(self.context, "platform_manager", None)
+        configs = getattr(manager, "platforms_config", ())
+        if not isinstance(configs, (list, tuple)):
+            return []
+        return [
+            config
+            for config in configs
+            if isinstance(config, dict) and config.get("type") == "xiaoheihe"
+        ]
+
+    async def initialize(self) -> None:
+        """Restore enabled adapter instances after AstrBot hot-reloads the plugin."""
+        configs = self._platform_configs()
+        self.runtime.set_configured_adapters(configs)
+        if not any(bool(config.get("enable", False)) for config in configs):
+            return
+
+        manager = getattr(self.context, "platform_manager", None)
+        get_insts = getattr(manager, "get_insts", None)
+        reload_platform = getattr(manager, "reload", None)
+        if not callable(get_insts) or not callable(reload_platform):
+            self.runtime.report_adapter_reconcile_failure(
+                "xiaoheihe",
+                RuntimeError("当前 AstrBot 平台管理器缺少热重载接口"),
+            )
+            return
+
+        # During a cold start AstrBot loads plugins before initializing platforms.
+        # A non-empty instance list means the platform manager is already active,
+        # which is the update/reload case that requires explicit reconciliation.
+        if not list(get_insts()):
+            return
+
+        for config in configs:
+            if not bool(config.get("enable", False)):
+                continue
+            adapter_id = str(config.get("id", "xiaoheihe"))
+            try:
+                await reload_platform(config)
+            except Exception as exc:
+                self.runtime.report_adapter_reconcile_failure(adapter_id, exc)
+                continue
+            self.runtime.clear_adapter_reconcile_failure(adapter_id)
+            self.runtime.logging.emit(
+                "INFO",
+                "插件更新后已重新加载小黑盒适配器实例",
+                profile_id=str(config.get("profile_id", "default")),
+                details={"adapter_id": adapter_id},
+            )
 
     @filter.on_llm_request()
     async def inject_xiaoheihe_context(

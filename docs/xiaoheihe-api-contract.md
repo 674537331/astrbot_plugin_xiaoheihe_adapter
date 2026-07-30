@@ -154,6 +154,13 @@ v1.0.10 采用独立 Python 实现：`notification_cursors` 按账号和通知�
 
 主动审核批准增加 `sending` 中间状态、SQLite 条件更新和账号级并发锁。同一候选只允许一个
 审核请求进入真实发送；更新或重启发现遗留 `sending` 时转为 `send_unknown`，交由人工核对。
+
+### v1.1.1 AstrBot 覆盖更新恢复
+
+AstrBot 覆盖更新会重新导入插件并注销、重新注册平台类型，已存在的平台实例由插件在
+`Star.initialize()` 阶段交给 `PlatformManager.reload()` 重建。新实例继续读取原
+`profile_id`、凭证、通知游标和 SQLite 状态，再恢复通知轮询；冷启动仍由 AstrBot 的平台
+初始化阶段创建实例。平台注册和实例元数据均引用仓库根目录 `logo.png`。
 该修正只改变本地调度和幂等逻辑，Workshop 请求路径与表单字段保持不变。
 
 重新核对 `SomeOvO/xhhRobot` 的公开轮询行为与 MIT 许可的

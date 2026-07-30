@@ -35,6 +35,7 @@ DEFAULT_PLATFORM_CONFIG = {
     "enable": False,
     "profile_id": "default",
 }
+ADAPTER_LOGO_PATH = "../logo.png"
 
 
 @register_platform_adapter(
@@ -42,6 +43,7 @@ DEFAULT_PLATFORM_CONFIG = {
     "小黑盒平台适配器",
     default_config_tmpl=DEFAULT_PLATFORM_CONFIG,
     adapter_display_name="小黑盒",
+    logo_path=ADAPTER_LOGO_PATH,
     support_streaming_message=False,
 )
 class XiaoheihePlatformAdapter(Platform):
@@ -74,6 +76,7 @@ class XiaoheihePlatformAdapter(Platform):
             id=str(self.config.get("id", "xiaoheihe")),
             default_config_tmpl={**DEFAULT_PLATFORM_CONFIG, **self.config},
             adapter_display_name="小黑盒",
+            logo_path=ADAPTER_LOGO_PATH,
             support_streaming_message=False,
         )
 
