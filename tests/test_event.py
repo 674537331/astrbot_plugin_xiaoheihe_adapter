@@ -133,6 +133,7 @@ async def test_reply_after_deadline_is_suppressed() -> None:
     await event.send(MessageChain([Plain("late")]))
     assert not runtime.deliveries
     assert runtime.expired[0]["event_id"] == 1
+    assert runtime.expired[0]["reply_timeout_seconds"] == 5
 
 
 async def test_empty_final_reply_is_retryable_without_platform_send() -> None:

@@ -86,6 +86,7 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
                         event_id=self.event_id,
                         route=self.route,
                         generated_ms=generated_ms,
+                        reply_timeout_seconds=self.reply_timeout_seconds,
                     )
                     return
                 if self.capture_candidate:
@@ -154,6 +155,7 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
                 event_id=self.event_id,
                 route=self.route,
                 generated_ms=generated_ms,
+                reply_timeout_seconds=self.reply_timeout_seconds,
             )
             self._final_send_done = True
             self._completion.set()

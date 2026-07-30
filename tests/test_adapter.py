@@ -10,7 +10,10 @@ from tests.astrbot_stubs import (
     MessageType,
     Plain,
 )
-from xiaoheihe.adapter import XiaoheihePlatformAdapter
+from xiaoheihe.adapter import (
+    XiaoheihePlatformAdapter,
+    effective_reply_timeout_seconds,
+)
 from xiaoheihe.runtime import bind_runtime, unbind_runtime
 
 
@@ -36,6 +39,33 @@ def test_adapter_is_registered_and_nonstreaming() -> None:
     assert registration["logo_path"] == "../logo.png"
     assert (Path("xiaoheihe") / registration["logo_path"]).resolve() == Path("logo.png").resolve()
     assert (Path("xiaoheihe") / registration["logo_path"]).is_file()
+
+
+def test_image_events_receive_bounded_vision_processing_grace() -> None:
+    assert (
+        effective_reply_timeout_seconds(
+            base_timeout_seconds=120,
+            image_count=0,
+            image_timeout_seconds=15,
+        )
+        == 120
+    )
+    assert (
+        effective_reply_timeout_seconds(
+            base_timeout_seconds=120,
+            image_count=6,
+            image_timeout_seconds=15,
+        )
+        == 300
+    )
+    assert (
+        effective_reply_timeout_seconds(
+            base_timeout_seconds=600,
+            image_count=6,
+            image_timeout_seconds=120,
+        )
+        == 900
+    )
 
 
 async def test_send_by_session_recovers_exact_route() -> None:

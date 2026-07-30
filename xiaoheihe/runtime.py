@@ -501,9 +501,11 @@ class RuntimeServices:
         event_id: int | None,
         route: RoutingTarget,
         generated_ms: int,
+        reply_timeout_seconds: int,
     ) -> None:
         error = (
-            f"AstrBot 原生推理耗时 {generated_ms}ms，超过回复截止时间；已抑制迟到评论以避免重复发送"
+            f"AstrBot 原生推理耗时 {generated_ms}ms，超过本事件 "
+            f"{reply_timeout_seconds}s 回复截止时间；已抑制迟到评论以避免重复发送"
         )
         if event_id is not None:
             await self.repository.mark_event(
@@ -741,7 +743,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.1.2",
+            "version": "v1.1.3",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),
