@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from astrbot.api import AstrBotConfig
-from astrbot.api.provider import ProviderRequest
+from astrbot.api.provider import LLMResponse, ProviderRequest
 
 from tests.astrbot_stubs import REGISTERED_ADAPTERS
 
@@ -65,6 +65,7 @@ async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_im
         "Event",
         (),
         {
+            "captured": {},
             "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_1",
             "message_obj": type(
                 "Message",
@@ -77,6 +78,7 @@ async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_im
                 if key == "xiaoheihe_dynamic_context"
                 else default
             ),
+            "set_extra": lambda self, key, value: self.captured.__setitem__(key, value),
         },
     )()
     request = ProviderRequest()
@@ -85,6 +87,11 @@ async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_im
     assert request.image_urls == []
     assert request.extra_user_content_parts[0].temp is True
     assert plugin.runtime._alerts["vision_unsupported"]["level"] == "warning"
+    await plugin.capture_xiaoheihe_complete_reply(
+        event,
+        LLMResponse(completion_text="完整回复，保留标点。\n\n第二段。"),
+    )
+    assert event.captured["xiaoheihe_complete_reply_text"] == ("完整回复，保留标点。\n\n第二段。")
     await plugin.terminate()
 
 

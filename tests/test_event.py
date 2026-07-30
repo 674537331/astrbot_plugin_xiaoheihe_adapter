@@ -26,6 +26,7 @@ class FakeRuntime:
         self.candidates = []
         self.expired = []
         self.failures = []
+        self.segmented_profiles = []
         self.logging = FakeLogging()
 
     async def deliver(self, **kwargs):
@@ -39,6 +40,9 @@ class FakeRuntime:
 
     async def fail_reply(self, **kwargs):
         self.failures.append(kwargs)
+
+    def report_segmented_reply_aggregated(self, profile_id):
+        self.segmented_profiles.append(profile_id)
 
 
 def make_event(runtime, *, candidate=False):
@@ -82,6 +86,35 @@ async def test_streaming_is_aggregated_to_one_comment() -> None:
     assert len(runtime.deliveries) == 1
     assert event.parent_send_count == 1
     assert event.parent_stream_count == 0
+
+
+async def test_astrbot_segmented_reply_uses_complete_text_for_any_segment_count() -> None:
+    runtime = FakeRuntime()
+    event = make_event(runtime)
+    complete_text = "第一段，保留逗号。\n\n第二段！第三段？最后一段。"
+    event.set_extra("xiaoheihe_complete_reply_text", complete_text)
+    event.get_result = lambda: type(
+        "Result",
+        (),
+        {
+            "chain": [
+                Plain("第一段"),
+                Plain("保留逗号"),
+                Plain("第二段"),
+                Plain("第三段"),
+                Plain("最后一段"),
+            ]
+        },
+    )()
+
+    for segment in ("第一段", "保留逗号", "第二段", "第三段", "最后一段"):
+        await event.send(MessageChain([Plain(segment)]))
+
+    assert runtime.deliveries[0]["content"] == complete_text
+    assert len(runtime.deliveries) == 1
+    assert event.parent_send_count == 1
+    assert runtime.segmented_profiles == ["default"]
+    assert "完整结果覆盖" in runtime.logging.entries[0][0][1]
 
 
 async def test_proactive_event_captures_candidate() -> None:

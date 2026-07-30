@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.provider import ProviderRequest
+from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.message import TextPart
 
@@ -21,7 +21,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.1.1",
+    "1.1.2",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -116,6 +116,20 @@ class XiaoheiheAdapterPlugin(Star):
             )
         else:
             self.runtime.clear_vision_alert()
+
+    @filter.on_llm_response(priority=-1000)
+    async def capture_xiaoheihe_complete_reply(
+        self,
+        event: AstrMessageEvent,
+        response: LLMResponse,
+    ) -> None:
+        if event.get_platform_name() != "xiaoheihe":
+            return
+        if response.role != "assistant" or response.is_chunk:
+            return
+        text = str(response.completion_text or "").strip()
+        if text:
+            event.set_extra("xiaoheihe_complete_reply_text", text)
 
     async def terminate(self) -> None:
         await self.runtime.close()

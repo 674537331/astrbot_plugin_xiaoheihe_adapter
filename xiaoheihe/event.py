@@ -14,8 +14,12 @@ from .runtime import RuntimeServices
 
 
 def aggregate_text(message: MessageChain) -> str:
+    return _aggregate_components(message.chain)
+
+
+def _aggregate_components(components: list[Any]) -> str:
     parts: list[str] = []
-    for component in message.chain:
+    for component in components:
         if isinstance(component, Plain):
             parts.append(str(component.text))
     return "".join(parts).strip()
@@ -51,15 +55,22 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
         self._started_at = time.perf_counter()
 
     async def send(self, message: MessageChain) -> None:
-        text = aggregate_text(message)
+        received_text = aggregate_text(message)
+        text = self._complete_segmented_text(received_text)
+        final_message = message
+        segmented_reply = bool(text and text != received_text)
+        if segmented_reply:
+            final_message = MessageChain([Plain(text)])
         async with self._send_lock:
             if self._final_send_done:
                 self.runtime.logging.emit(
                     "DEBUG",
-                    "检测到同一入站事件的额外消息段，已按单评论策略忽略",
+                    "AstrBot 分段回复的后续片段已由完整结果覆盖",
                     profile_id=self.route.profile_id,
                 )
                 return
+            if segmented_reply:
+                self.runtime.report_segmented_reply_aggregated(self.route.profile_id)
             generated_ms = max(0, int((time.perf_counter() - self._started_at) * 1000))
             try:
                 if not text:
@@ -95,7 +106,7 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
                         dry_run=self.dry_run,
                         generated_ms=generated_ms,
                     )
-                await super().send(message)
+                await super().send(final_message)
             except asyncio.CancelledError as exc:
                 await self.runtime.fail_reply(
                     event_id=self.event_id,
@@ -146,3 +157,26 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
             )
             self._final_send_done = True
             self._completion.set()
+
+    def _complete_segmented_text(self, received_text: str) -> str:
+        if not received_text:
+            return received_text
+        get_extra = getattr(self, "get_extra", None)
+        if callable(get_extra):
+            captured_text = str(get_extra("xiaoheihe_complete_reply_text", "") or "").strip()
+            if len(captured_text) > len(received_text) and received_text in captured_text:
+                return captured_text
+        get_result = getattr(self, "get_result", None)
+        if not callable(get_result):
+            return received_text
+        try:
+            result = get_result()
+        except (AttributeError, RuntimeError):
+            return received_text
+        chain = getattr(result, "chain", None)
+        if not isinstance(chain, list):
+            return received_text
+        complete_text = _aggregate_components(chain)
+        if len(complete_text) > len(received_text) and received_text in complete_text:
+            return complete_text
+        return received_text

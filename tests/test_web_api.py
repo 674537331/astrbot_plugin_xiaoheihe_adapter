@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from tests.astrbot_stubs import REQUEST, Query
 from xiaoheihe.config_service import ConfigService
 from xiaoheihe.web_api import WebApiController
@@ -16,6 +18,17 @@ class FakeContext:
 class FakeRuntime:
     def __init__(self, config) -> None:
         self.config = ConfigService(config)
+
+
+def test_config_save_shows_success_toast() -> None:
+    source = (Path(__file__).resolve().parents[1] / "pages" / "xiaoheihe" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    save_handler = source.split('"save-config"', maxsplit=1)[1].split(
+        '"restore-defaults"', maxsplit=1
+    )[0]
+    assert 'toast(changed === "无变化"' in save_handler
+    assert '"success"' in save_handler
 
 
 def test_registers_only_plugin_prefixed_routes(fake_config) -> None:

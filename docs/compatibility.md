@@ -1,10 +1,10 @@
-# AstrBot 兼容性说明（v1.1.1）
+# AstrBot 兼容性说明（v1.1.2）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.1.1 增加覆盖更新后的平台实例协调，并保持原有持久化重试与审核并发
-边界。2026-07-30 发布 v1.1.1 前再次核对：
+AstrBot 4.26.8。v1.1.2 保持覆盖更新后的平台实例协调，并补充评论与原帖上下文合并。
+2026-07-30 发布 v1.1.2 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -31,6 +31,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 元数据 | `PlatformMetadata` | 声明内部名、实例 ID、展示名、默认配置和非流式能力 |
 | 入站消息 | `AstrBotMessage` + `MessageMember` + `Plain/Image` | 设置稳定消息 ID、会话、群组、发送者、自身 UID 和结构化 `raw_message` |
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
+| 分段回复 | `on_llm_response()` + `AstrMessageEvent.get_result()` + 非流式平台 `send()` | 分段清理前保存完整文本，任意数量的分段只提交一条小黑盒评论 |
 | 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；模型调用由 AstrBot 核心负责 |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
@@ -48,6 +49,13 @@ AstrBot 4.24.2、4.26.2 和 4.26.8 均在插件加载完成后调用可选的 `S
 替插件重建已经终止的平台实例。v1.1.1 在 `initialize()` 中识别已经处于运行阶段的平台
 管理器，并调用当前源码提供的 `PlatformManager.reload(config)` 重建所有已启用的
 `xiaoheihe` 实例；冷启动时实例列表为空，平台仍由 AstrBot 的正常初始化流程创建。
+
+AstrBot 4.26.2/4.26.8 的 `RespondStage` 在全局“分段回复”开启时，会按组件多次调用平台
+事件的 `send()`，即使平台元数据声明 `support_streaming_message=False`。v1.1.2 在首次
+`on_llm_response(priority=-1000)` 保存最终模型文本，再在首次 `send()` 时优先恢复该文本；
+若插件链未提供最终文本，则回退到同一事件的完整 `MessageEventResult.chain`。三段、五段
+或更多分段均只产生一条评论，分段词清理前的标点和换行也得到保留。管理页会显示兼容提醒，
+关闭 AstrBot 分段回复可减少等待，插件配置和数据目录保持原样。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -92,7 +100,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.1.1 的最新迁移版本为 v4，已有
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.1.2 的最新迁移版本为 v4，已有
 记录原位保留。卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据
 边界；更新前备份插件数据目录可用于回滚。
 

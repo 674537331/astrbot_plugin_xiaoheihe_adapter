@@ -8,6 +8,7 @@ from xiaoheihe.parsers import (
     ResponseShapeError,
     parse_credentials,
     parse_login_state,
+    parse_notification_post_context,
     parse_notifications,
     parse_qr_response,
     parse_send_result,
@@ -181,6 +182,30 @@ def test_reference_rich_post_content_extracts_text_and_images() -> None:
     )
     assert thread.body == "第一段\n<b>第二段</b>"
     assert thread.image_urls == ["https://cdn.example.com/post.png"]
+
+
+def test_notification_post_snapshot_extracts_original_post_text_and_images() -> None:
+    snapshot = parse_notification_post_context(
+        {
+            "message_type": 17,
+            "link": {
+                "linkid": "post",
+                "title": "通知内原帖",
+                "text": (
+                    '[{"type":"text","text":"原帖快照正文"},'
+                    '{"type":"image","url":"https://cdn.example.com/snapshot.png"}]'
+                ),
+                "user": {"userid": "author", "username": "作者"},
+            },
+        },
+        "post",
+    )
+
+    assert snapshot is not None
+    assert snapshot.title == "通知内原帖"
+    assert snapshot.body == "原帖快照正文"
+    assert snapshot.image_urls == ["https://cdn.example.com/snapshot.png"]
+    assert parse_notification_post_context({"message_type": 17}, "post") is None
 
 
 def test_send_result_accepts_reference_top_level_comment_id() -> None:

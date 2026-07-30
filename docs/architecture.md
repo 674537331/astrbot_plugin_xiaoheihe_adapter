@@ -22,7 +22,7 @@ AstrBot 原生管线负责。
 ## 模块职责
 
 - `adapter.py`：平台注册、生命周期、原生消息转换、事件提交、主动会话发送。
-- `event.py`：结构化路由、一次发送保护、流式文本聚合。
+- `event.py`：结构化路由、一次发送保护、任意数量的流式与 AstrBot 分段文本聚合。
 - `api_client.py`：单账号长生命周期异步客户端和结构化错误。
 - `endpoints.py` / `parsers.py` / `request_signing.py`：隔离不稳定的外部契约。
 - `auth.py`：二维码状态机与原子凭证存储。
@@ -99,7 +99,8 @@ claimed → ignored
 - UI 只用 `textContent` 创建外部内容，避免 XSS；
 - SQL 全部参数化；动态排序/表名只来自后端固定白名单；
 - 图片仅接受无用户信息的公开 HTTPS URL，并在提交组件前校验 DNS 解析结果；
-- v1.1.1 使用图片 URL 直传，本地图片缓存保持为空；
+- v1.1.2 使用图片 URL 直传，本地图片缓存保持为空；
+- 评论区 @ 分别读取原帖详情与指定楼层，合并通知内原帖快照；评论图和原帖图交替进入图片上限；
 - 外部内容置于 `<xiaoheihe_context trust="untrusted">` 用户侧临时片段中；
 - POST 评论超时进入 `send_unknown`，核对结果不明确时保持人工检查状态；
 - 评论接口明确返回 `status=failed` 时进入失败终态，事件级发送闸门拦截第二次 POST；

@@ -163,6 +163,13 @@ AstrBot 覆盖更新会重新导入插件并注销、重新注册平台类型，
 初始化阶段创建实例。平台注册和实例元数据均引用仓库根目录 `logo.png`。
 该修正只改变本地调度和幂等逻辑，Workshop 请求路径与表单字段保持不变。
 
+### v1.1.2 评论与原帖上下文合并
+
+评论区 @ 先按参考项目的行为，仅使用 `link_id` 请求 `/bbs/app/link/tree`，读取原帖标题、
+JSON 富文本和图片；存在根评论 ID 时，再请求指定楼层并合并评论树。通知项内嵌的 `link`
+或 `post` 快照用于补全缺失字段。最终原帖背景通过临时用户内容注入，当前评论文本保留为
+原生用户消息；评论图片和原帖图片交替加入 AstrBot `Image` 组件。
+
 重新核对 `SomeOvO/xhhRobot` 的公开轮询行为与 MIT 许可的
 `HadeonYu/heybox-bot@c2b5797` 后，v1.0.8 独立实现以下规则：
 
@@ -207,7 +214,7 @@ AI 客户端不进入本项目技术边界。其特殊常量、注释、目录�
 | 查询扫码状态 | `GET /account/qr_state/` | 参考项目出现该路径 | fixture 已测，待真实验证 |
 | 当前账号权限 | `GET /bbs/app/api/user/permission` | MIT 参考项目出现该路径 | Mock 已测，待用户复测 |
 | @/回复通知 | `GET /bbs/app/user/message` | 用户日志确认 17；参考实现确认 16/17 | offset 分页、16/17 与 1/2 筛选、多形状解析已测 |
-| 帖子与评论树 | `GET /bbs/app/link/tree` | 参考项目出现该路径 | fixture 已测，字段待真实验证 |
+| 帖子与评论树 | `GET /bbs/app/link/tree` | 参考项目按 `link_id` 读取标题、富文本和图片 | 原帖与指定楼层双源合并 Mock 已测，字段待真实验证 |
 | 创建评论 | `POST https://workshopapi.xiaoheihe.cn/bbs/app/comment/create` | 参考项目出现该主机与路径 | 表单和响应 Mock 已测，动态签名与真实限制待验证 |
 | 近期评论核对 | `GET /bbs/app/comment/user` | 本项目隔离契约 | Mock 已测，路径、排序和一致性待真实验证 |
 | 主动帖子流 | `GET /bbs/app/feeds` | 本项目隔离契约 | Mock 已测，来源参数和字段待真实验证 |

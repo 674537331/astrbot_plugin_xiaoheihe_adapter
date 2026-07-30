@@ -741,7 +741,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.1.1",
+            "version": "v1.1.2",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),
@@ -815,6 +815,23 @@ class RuntimeServices:
 
     def clear_vision_alert(self) -> None:
         self._alerts.pop("vision_unsupported", None)
+
+    def report_segmented_reply_aggregated(self, profile_id: str) -> None:
+        key = "astrbot_segmented_reply"
+        if key not in self._alerts:
+            self.logging.emit(
+                "WARNING",
+                "检测到 AstrBot 分段回复，小黑盒已自动合并为一条评论",
+                profile_id=profile_id,
+            )
+        self._alerts[key] = {
+            "key": key,
+            "level": "warning",
+            "message": (
+                "AstrBot 当前启用了分段回复；小黑盒已自动合并为一条评论。"
+                "可在 AstrBot 平台设置中关闭分段回复以减少等待。"
+            ),
+        }
 
     def report_proactive_circuit(self, profile_id: str, error: BaseException) -> None:
         self.logging.emit(

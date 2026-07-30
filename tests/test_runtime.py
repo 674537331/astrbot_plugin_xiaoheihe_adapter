@@ -86,7 +86,7 @@ async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
         ]
     )
     status = await runtime.status()
-    assert status["version"] == "v1.1.1"
+    assert status["version"] == "v1.1.2"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     assert status["adapters"] == [
@@ -192,6 +192,21 @@ async def test_runtime_auth_circuit_alert(tmp_path, fake_config) -> None:
     assert state["status"] == "credential_invalid"
     assert state["circuit_open_until"] > time.time()
     assert (await runtime.status())["alerts"]
+    await runtime.close()
+
+
+async def test_runtime_reports_astrbot_segmented_reply(tmp_path, fake_config) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    runtime.report_segmented_reply_aggregated("default")
+    runtime.report_segmented_reply_aggregated("default")
+
+    alerts = {item["key"]: item for item in (await runtime.status())["alerts"]}
+    assert "astrbot_segmented_reply" in alerts
+    assert "自动合并为一条评论" in alerts["astrbot_segmented_reply"]["message"]
+    matching_logs = [
+        entry for entry in runtime.logging.list() if "检测到 AstrBot 分段回复" in entry["message"]
+    ]
+    assert len(matching_logs) == 1
     await runtime.close()
 
 

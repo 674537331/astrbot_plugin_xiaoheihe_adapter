@@ -81,6 +81,7 @@ def main() -> int:
         "bridge.subscribeSSE",
         'bridge.apiGet("config/schema")',
         "renderConfigForm",
+        'toast(changed === "无变化"',
     ):
         if required not in app_source:
             failures.append(f"pages/xiaoheihe/app.js: missing {required}")

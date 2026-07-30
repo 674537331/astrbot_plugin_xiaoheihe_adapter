@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .api_client import XiaoheiheApiClient
 from .models import Notification, ThreadContext
+from .parsers import parse_notification_post_context
 from .security import (
     SecurityError,
     clean_untrusted_text,
@@ -57,6 +58,12 @@ class ContextBuilder:
         bot_name: str = "",
     ) -> BuiltContext:
         thread = await self._get_thread(notification, client)
+        post_snapshot = parse_notification_post_context(
+            notification.raw,
+            notification.post_id,
+        )
+        if post_snapshot is not None:
+            thread = _merge_thread_with_post_snapshot(thread, post_snapshot)
         bot_names = (bot_name,) if bot_name else ()
         user_text = clean_untrusted_text(notification.content, bot_names=bot_names, max_chars=4000)
         if not user_text and notification.image_urls:
@@ -78,6 +85,8 @@ class ContextBuilder:
                 f"标题: {title}",
                 "帖子正文:",
                 body,
+                f"当前评论图片: {len(notification.image_urls)} 张",
+                f"原帖图片: {len(thread.image_urls)} 张",
                 "当前楼层（按时间顺序）:",
                 comments,
                 f"当前发言人: {notification.sender_nickname} (UID {notification.sender_uid})",
@@ -86,7 +95,7 @@ class ContextBuilder:
             ]
         )
         image_urls, warnings = await self._collect_images(
-            notification.image_urls + thread.image_urls
+            _interleave_unique(notification.image_urls, thread.image_urls)
         )
         return BuiltContext(
             user_text=user_text,
@@ -182,3 +191,33 @@ def _is_ip_literal(hostname: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _merge_thread_with_post_snapshot(
+    thread: ThreadContext,
+    snapshot: ThreadContext,
+) -> ThreadContext:
+    return ThreadContext(
+        post_id=thread.post_id or snapshot.post_id,
+        title=thread.title or snapshot.title,
+        body=thread.body or snapshot.body,
+        author_uid=thread.author_uid or snapshot.author_uid,
+        author_name=thread.author_name or snapshot.author_name,
+        comments=thread.comments,
+        image_urls=list(dict.fromkeys(thread.image_urls + snapshot.image_urls)),
+    )
+
+
+def _interleave_unique(*sources: list[str]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    max_length = max((len(source) for source in sources), default=0)
+    for index in range(max_length):
+        for source in sources:
+            if index >= len(source):
+                continue
+            value = source[index]
+            if value and value not in seen:
+                seen.add(value)
+                values.append(value)
+    return values

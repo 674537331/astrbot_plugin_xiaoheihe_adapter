@@ -241,6 +241,8 @@ td.wrap { min-width: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
   transition: 160ms ease;
 }
 .toast.show { opacity: 1; transform: none; }
+.toast[data-tone="success"] { background: #146044; }
+.toast[data-tone="error"] { background: #7d2832; }
 
 @media (max-width: 760px) {
   .hero { align-items: start; flex-direction: column; padding-inline: 1rem; }

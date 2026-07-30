@@ -10,6 +10,7 @@ const state = {
   logs: [],
   eventPage: 1,
   eventPages: 1,
+  toastTimer: null,
   unloaded: false,
 };
 
@@ -23,17 +24,22 @@ const bytes = (value) => {
   return `${(number / 1024 ** 2).toFixed(1)} MB`;
 };
 
-function toast(message) {
+function toast(message, tone = "info") {
   const node = $("toast");
+  if (state.toastTimer) clearTimeout(state.toastTimer);
   node.textContent = message;
+  node.dataset.tone = tone;
   node.classList.add("show");
-  setTimeout(() => node.classList.remove("show"), 2800);
+  state.toastTimer = setTimeout(() => {
+    node.classList.remove("show");
+    state.toastTimer = null;
+  }, 3200);
 }
 
 async function busy(button, work) {
   button.disabled = true;
   try { return await work(); }
-  catch (error) { toast(error.message); throw error; }
+  catch (error) { toast(error.message, "error"); throw error; }
   finally { button.disabled = false; }
 }
 
@@ -611,7 +617,9 @@ $("logout").addEventListener("click", () => busy($("logout"), async () => {
 }));
 $("save-config").addEventListener("click", () => busy($("save-config"), async () => {
   const result = await bridge.apiPost("config/save", state.config);
-  $("config-result").textContent = `保存成功；已重载：${(result.changed || []).join("、") || "无变化"}`;
+  const changed = (result.changed || []).join("、") || "无变化";
+  $("config-result").textContent = `保存成功；已重载：${changed}`;
+  toast(changed === "无变化" ? "设置已保存，配置内容无变化" : "设置已保存并生效", "success");
   await loadConfig();
   await loadStatus();
 }));

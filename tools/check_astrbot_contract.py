@@ -14,10 +14,10 @@ CONTRACT: dict[str, tuple[str, ...]] = {
         "register_platform_adapter",
     ),
     "api/event/__init__.py": ("AstrMessageEvent", "MessageChain"),
-    "api/event/filter/__init__.py": ("on_llm_request",),
+    "api/event/filter/__init__.py": ("on_llm_request", "on_llm_response"),
     "api/message_components.py": ("astrbot.core.message.components",),
     "core/message/components.py": ("class Plain", "class Image"),
-    "api/provider/__init__.py": ("ProviderRequest",),
+    "api/provider/__init__.py": ("LLMResponse", "ProviderRequest"),
     "api/star/__init__.py": ("Context", "Star", "StarTools", "register"),
     "core/star/context.py": (
         "get_using_provider",
@@ -25,7 +25,11 @@ CONTRACT: dict[str, tuple[str, ...]] = {
     ),
     "core/star/star_manager.py": ("await metadata.star_cls.initialize()",),
     "core/platform/manager.py": ("async def reload(", "def get_insts("),
-    "core/platform/astr_message_event.py": ("MessageSession", "AstrMessageEvent"),
+    "core/platform/astr_message_event.py": (
+        "MessageSession",
+        "AstrMessageEvent",
+        "def get_result(",
+    ),
     "core/agent/message.py": ("TextPart", "mark_as_temp"),
 }
 WEB_CONTRACT = {

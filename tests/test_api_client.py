@@ -45,6 +45,61 @@ def client_with_handler(handler, *, authenticated=True, callback=None):
     return client, http_client
 
 
+async def test_comment_context_merges_original_post_and_root_comment_tree() -> None:
+    observed: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = dict(request.url.params)
+        observed.append(query)
+        if "root_comment_id" not in query:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "result": {
+                        "link": {
+                            "linkid": "30003",
+                            "title": "原帖标题",
+                            "text": (
+                                '[{"type":"text","text":"原帖正文"},'
+                                '{"type":"image","url":"https://cdn.example.com/post.png"}]'
+                            ),
+                            "user": {"userid": "author", "username": "作者"},
+                        }
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "result": {
+                    "link": {"linkid": "30003"},
+                    "comments": [
+                        {
+                            "id": "root-1",
+                            "content": "楼层内容",
+                            "user": {"userid": "user", "username": "用户"},
+                        }
+                    ],
+                },
+            },
+        )
+
+    client, http_client = client_with_handler(handler)
+    context = await client.fetch_thread_context("30003", root_comment_id="root-1")
+
+    assert len(observed) == 2
+    assert "root_comment_id" not in observed[0]
+    assert observed[1]["root_comment_id"] == "root-1"
+    assert context.title == "原帖标题"
+    assert context.body == "原帖正文"
+    assert context.image_urls == ["https://cdn.example.com/post.png"]
+    assert context.comments[0]["content"] == "楼层内容"
+    await client.close()
+    await http_client.aclose()
+
+
 async def test_qr_wait_scan_success_and_notification_parse() -> None:
     responses = {
         "/account/get_qrcode_url/": load_fixture("qr_response.json"),

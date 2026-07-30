@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from tests.helpers import load_fixture
 from xiaoheihe.context_builder import ContextBuilder
-from xiaoheihe.models import NotificationType
+from xiaoheihe.models import NotificationType, ThreadContext
 from xiaoheihe.parsers import parse_notifications
 from xiaoheihe.security import clean_untrusted_text
 
@@ -37,6 +37,72 @@ async def test_context_is_clean_bounded_and_cached() -> None:
     assert len(result.image_urls) == 2
     assert client.calls == 1
     assert result_again.dynamic_context == result.dynamic_context
+
+
+async def test_comment_mention_includes_comment_and_original_post_media() -> None:
+    page = parse_notifications(
+        "default",
+        {
+            "status": "ok",
+            "result": {
+                "messages": [
+                    {
+                        "message_id": "mention-with-post",
+                        "message_type": 17,
+                        "comment_a_id": "comment-1",
+                        "comment_a_text": "@Robot 看看评论和原帖",
+                        "comment_a_images": [
+                            "https://cdn.example.com/comment-1.png",
+                            "https://cdn.example.com/comment-2.png",
+                        ],
+                        "root_comment_id": "root-1",
+                        "linkid": "post-1",
+                        "userid_a": "user-1",
+                        "user_a": {"userid": "user-1", "username": "用户"},
+                        "link": {
+                            "linkid": "post-1",
+                            "title": "通知内原帖标题",
+                            "text": (
+                                '[{"type":"text","text":"通知内原帖正文"},'
+                                '{"type":"image","url":"https://cdn.example.com/post-1.png"},'
+                                '{"type":"image","url":"https://cdn.example.com/post-2.png"}]'
+                            ),
+                            "user": {"userid": "author-1", "username": "作者"},
+                        },
+                    }
+                ]
+            },
+        },
+        NotificationType.MENTION,
+    )
+
+    class CommentTreeOnlyClient:
+        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+            return ThreadContext(
+                post_id=post_id,
+                title="",
+                body="",
+                author_uid="",
+                author_name="",
+                comments=[{"content": "楼层文本", "user": {"userid": "user-1"}}],
+                image_urls=[],
+            )
+
+    result = await ContextBuilder(max_images=2, host_resolver=public_resolver).build(
+        page.items[0]["notification"],
+        CommentTreeOnlyClient(),
+        bot_name="Robot",
+    )
+
+    assert result.user_text == "看看评论和原帖"
+    assert "通知内原帖标题" in result.dynamic_context
+    assert "通知内原帖正文" in result.dynamic_context
+    assert "当前评论图片: 2 张" in result.dynamic_context
+    assert "原帖图片: 2 张" in result.dynamic_context
+    assert result.image_urls == [
+        "https://cdn.example.com/comment-1.png",
+        "https://cdn.example.com/post-1.png",
+    ]
 
 
 def test_html_emoji_duplicate_and_tracking_cleanup() -> None:

@@ -504,6 +504,16 @@ def parse_thread_context(payload: Mapping[str, Any], post_id: str) -> ThreadCont
     )
 
 
+def parse_notification_post_context(
+    raw_notification: Mapping[str, Any], post_id: str
+) -> ThreadContext | None:
+    """Extract the original-post snapshot embedded in a notification item."""
+    post = raw_notification.get("post", raw_notification.get("link"))
+    if not isinstance(post, Mapping) or not post:
+        return None
+    return parse_thread_context({"result": {"post": dict(post)}}, post_id)
+
+
 def parse_send_result(payload: Mapping[str, Any]) -> SendResult:
     status = str(_first(payload, "status", "stat")).casefold()
     if status and status not in {"ok", "success"}:
