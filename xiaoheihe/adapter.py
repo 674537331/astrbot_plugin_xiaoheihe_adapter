@@ -94,7 +94,9 @@ class XiaoheihePlatformAdapter(Platform):
                     break
                 try:
                     await self._start_profile_services()
-                except BaseException as exc:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
                     runtime.logging.emit(
                         "ERROR",
                         f"适配器后台服务启动失败: {exc}",
@@ -190,7 +192,7 @@ class XiaoheihePlatformAdapter(Platform):
                 get_runtime().clear_proactive_circuit(str(self.config.get("profile_id", "default")))
             except asyncio.CancelledError:
                 raise
-            except BaseException as exc:
+            except Exception as exc:
                 get_runtime().report_proactive_circuit(
                     str(self.config.get("profile_id", "default")),
                     exc,

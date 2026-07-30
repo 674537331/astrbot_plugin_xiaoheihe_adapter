@@ -26,7 +26,7 @@ AstrBot 原生管线负责。
 - `api_client.py`：单账号长生命周期异步客户端和结构化错误。
 - `endpoints.py` / `parsers.py` / `request_signing.py`：隔离不稳定的外部契约。
 - `auth.py`：二维码状态机与原子凭证存储。
-- `notification_service.py`：`message_id` 分页边界、有界优先队列、首次基线和状态推进。
+- `notification_service.py`：`message_id` 分页边界、有界优先队列、首次基线和到期重试恢复。
 - `context_builder.py`：帖子/楼层缓存、内容清洗、图片 URL 校验、临时上下文。
 - `permission_service.py`：自身、黑名单、主人、白名单、普通触发的固定优先级。
 - `feed_service.py`：高风险主动刷帖筛选、候选与人工审核。
@@ -78,6 +78,7 @@ claimed → ignored
 - 有界优先队列限制总积压和单用户积压；
 - 首次轮询把当前最新 `message_id` 写入 `notification_cursors`，默认从此后的新通知开始；
 - 新通知先原子写入 SQLite 再进入队列，持久化成功且扫描到旧边界后才推进游标；
+- 队列或单用户上限触发时写入 `retry_wait`，每轮从 SQLite 主动恢复到期事件；
 - SQLite 唯一约束、发送记录和进程内事件键共同过滤重复通知；
 - 主人事件提高优先级但不突破硬上限；
 - 帖子/楼层上下文网络读取在锁外完成；同一楼层从原生事件提交到最终发送或超时使用串行锁，
@@ -93,8 +94,10 @@ claimed → ignored
 - UI 只用 `textContent` 创建外部内容，避免 XSS；
 - SQL 全部参数化；动态排序/表名只来自后端固定白名单；
 - 图片仅接受无用户信息的公开 HTTPS URL，并在提交组件前校验 DNS 解析结果；
-- v1.0.0 使用图片 URL 直传，本地图片缓存保持为空；
+- v1.1.0 使用图片 URL 直传，本地图片缓存保持为空；
 - 外部内容置于 `<xiaoheihe_context trust="untrusted">` 用户侧临时片段中；
 - POST 评论超时进入 `send_unknown`，核对结果不明确时保持人工检查状态；
 - 评论接口明确返回 `status=failed` 时进入失败终态，事件级发送闸门拦截第二次 POST；
-- 主动候选批准复用与普通回复相同的楼层锁、发送记录、自身评论记录和超时核对链路。
+- 主动候选批准先原子转换为 `sending`，账号级审核锁限制并发；更新或重启遗留的
+  `sending` 转为 `send_unknown`；
+- 主动候选真实发送复用与普通回复相同的楼层锁、发送记录、自身评论记录和超时核对链路。

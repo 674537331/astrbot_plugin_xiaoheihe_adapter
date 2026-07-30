@@ -183,6 +183,11 @@ async def test_enqueue_enforces_per_user_and_queue_limits(repository) -> None:
     service._max_per_user = 1
     assert await service.enqueue(notice("one", time.time()))
     assert not await service.enqueue(notice("two", time.time()))
+    deferred = await repository.db.fetchone(
+        "SELECT status FROM incoming_events WHERE external_event_id = ?",
+        ("event-two",),
+    )
+    assert deferred["status"] == EventState.RETRY_WAIT.value
 
     service._max_per_user = 10
     service._queue = service._queue.__class__(maxsize=1)
@@ -190,6 +195,31 @@ async def test_enqueue_enforces_per_user_and_queue_limits(repository) -> None:
     service._pending_event_keys.clear()
     assert await service.enqueue(notice("three", time.time()))
     assert not await service.enqueue(replace(notice("four", time.time()), sender_uid="other"))
+    deferred = await repository.db.fetchone(
+        "SELECT status FROM incoming_events WHERE external_event_id = ?",
+        ("event-four",),
+    )
+    assert deferred["status"] == EventState.RETRY_WAIT.value
+
+
+async def test_due_retry_is_recovered_without_notification_refetch(repository) -> None:
+    async def dispatch(*args):
+        return None
+
+    current = notice("durable-retry", time.time())
+    event_id = await repository.claim_event(current)
+    assert event_id is not None
+    await repository.defer_event(event_id, "capacity", delay_seconds=60)
+    await repository.db.execute(
+        "UPDATE incoming_events SET next_retry_at = 0 WHERE id = ?",
+        (event_id,),
+    )
+    service = make_service(repository, [], dispatch)
+
+    assert await service.recover_retries() == 1
+    _, _, queued = service._queue.get_nowait()
+    assert queued.external_event_id == current.external_event_id
+    assert service._recovery_ids[current.external_event_id] == event_id
 
 
 async def test_enqueue_skips_in_memory_and_completed_duplicates(repository) -> None:

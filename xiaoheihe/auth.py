@@ -115,7 +115,9 @@ class AuthService:
             client: XiaoheiheApiClient = await self._client_factory(profile_id, anonymous=True)
             try:
                 session = await client.request_qr()
-            except BaseException as exc:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
                 await self.repository.update_account_state(
                     profile_id,
                     status=LoginState.FAILED.value,

@@ -16,7 +16,7 @@ body:
     id: plugin_version
     attributes:
       label: 插件版本
-      value: v1.0.0
+      value: v1.1.0
     validations:
       required: true
   - type: dropdown
@@ -39,4 +39,3 @@ body:
     attributes:
       label: 脱敏诊断
       description: 不要粘贴凭证文件、数据库、二维码或完整 Cookie。
-

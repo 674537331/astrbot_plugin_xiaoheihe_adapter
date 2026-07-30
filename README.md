@@ -6,18 +6,19 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.0.10**
+当前版本：**v1.1.0**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.0.10 重点修复：
+v1.1.0 重点：
 
 - 首次轮询按小黑盒 `message_id` 建立持久化历史基线；
-- 新通知先写入 SQLite，再进入有界处理队列；
+- 新通知先写入 SQLite，再进入有界处理队列，拥塞事件按到期时间恢复；
 - 同一入站事件使用数据库发送记录和事件级闸门限制为一次评论提交；
-- 明确失败、发送状态未知和热重载恢复采用保守终态，避免重复评论。
+- 主动审核使用原子发送状态和账号级并发闸门；
+- 覆盖更新保留账号凭证、SQLite、配置和通知游标。
 
 ## 核心特性
 
@@ -125,7 +126,7 @@ mention 通知历史基线已建立
 reply 通知历史基线已建立
 ```
 
-然后使用另一个账号发布一条全新的 @。升级 v1.0.10 后也建议先等待该日志，再开始验证。
+然后使用另一个账号发布一条全新的 @。升级 v1.1.0 后也建议先等待该日志，再开始验证。
 
 ### 4. 模拟运行验证
 
@@ -195,7 +196,7 @@ message_id        xhh_<event_type>_<notification_id>_<comment_id>
 最多 6 张图片。插件会检查协议、认证信息、主机和 DNS 结果，过滤本地地址、内网地址与保留
 地址。当前提供商声明为纯文本能力时，本轮按纯文本继续处理，并在管理页显示提示。
 
-v1.0.10 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
+v1.1.0 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
 
 ## 身份与回复规则
 
@@ -244,9 +245,18 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.0.10 数据库迁移版本为 **v4**，新增 `notification_cursors`；
+- v1.1.0 数据库迁移版本为 **v4**；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
+
+### 更新与数据继承
+
+AstrBot 的插件更新替换 `data/plugins` 下的代码。小黑盒运行数据使用独立目录
+`data/plugin_data/astrbot_plugin_xiaoheihe_adapter/`，普通覆盖更新会继续读取原有凭证、
+SQLite、去重记录、通知游标、审核候选和日志；插件配置继续由原有 `AstrBotConfig` 提供。
+
+更新前建议备份整个插件数据目录。卸载时选择删除插件数据、手动删除该目录或更改插件内部
+名称会改变继承结果。
 
 主要表：`account_state`、`incoming_events`、`processed_event_keys`、`outgoing_replies`、
 `self_comment_ids`、`session_mappings`、`feed_candidates`、`runtime_errors`、
@@ -261,8 +271,8 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 | 提示 `relogin` / 401 | 在管理页安全退出并重新扫码，确认状态恢复为 `success` |
 | 连续 403 | 保持模拟运行，等待熔断结束，并核对脱敏诊断与接口契约 |
 | 持续 429 | 增大轮询和请求间隔，减少分页与并发，按 `Retry-After` 等待 |
-| 历史 @ 进入事件记录 | 升级 v1.0.10，等待“通知历史基线已建立”后再发送新 @ |
-| 同一消息出现多条回复 | 升级 v1.0.10，检查事件状态和 `outgoing_replies`；`send_unknown` 交由人工核对 |
+| 历史 @ 进入事件记录 | 升级 v1.1.0，等待“通知历史基线已建立”后再发送新 @ |
+| 同一消息出现多条回复 | 升级 v1.1.0，检查事件状态和 `outgoing_replies`；`send_unknown` 交由人工核对 |
 | @ 数量增加但事件为空 | 检查 `message_type`、接收条数、权限过滤和基线日志 |
 | `status=failed / code 1000` | 该发送尝试记录为失败终态；结合 API 契约核对评论请求字段 |
 | 图片按纯文本处理 | 检查模型视觉能力、图片 HTTPS 地址和 SSRF 校验提示 |

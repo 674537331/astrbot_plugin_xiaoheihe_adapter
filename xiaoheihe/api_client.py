@@ -159,7 +159,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.10",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.1.0",
                 },
             )
         if self.credentials:

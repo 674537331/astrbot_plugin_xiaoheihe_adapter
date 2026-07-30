@@ -63,7 +63,7 @@ class WebApiController:
             )
 
     def _unauthorized(self):
-        if request.username is None:
+        if not request.username:
             return error_response("需要已认证的 AstrBot Dashboard 会话", status_code=401)
         return None
 
@@ -72,13 +72,15 @@ class WebApiController:
             return response
         try:
             return json_response(await self.runtime.status())
-        except BaseException as exc:
+        except Exception as exc:
             return error_response(f"读取状态失败: {_safe_error(exc)}", status_code=500)
 
     async def auth_qr(self):
         if response := self._unauthorized():
             return response
         payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("登录请求体必须是对象", status_code=400)
         try:
             profile_id = validate_profile_id(str(payload.get("profile_id", "default")))
             self.runtime.config.profile(profile_id)
@@ -91,7 +93,7 @@ class WebApiController:
             return json_response(result)
         except (SecurityError, ConfigValidationError, ValueError) as exc:
             return error_response(str(exc), status_code=400)
-        except BaseException as exc:
+        except Exception as exc:
             return error_response(f"获取二维码失败: {_safe_error(exc)}", status_code=502)
 
     async def auth_status(self):
@@ -108,6 +110,8 @@ class WebApiController:
         if response := self._unauthorized():
             return response
         payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("登录请求体必须是对象", status_code=400)
         try:
             profile_id = validate_profile_id(str(payload.get("profile_id", "default")))
             await self.runtime.ensure_started()
@@ -117,13 +121,15 @@ class WebApiController:
             return json_response(result)
         except (SecurityError, ValueError) as exc:
             return error_response(str(exc), status_code=400)
-        except BaseException as exc:
+        except Exception as exc:
             return error_response(f"登录检查失败: {_safe_error(exc)}", status_code=502)
 
     async def auth_logout(self):
         if response := self._unauthorized():
             return response
         payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("登出请求体必须是对象", status_code=400)
         try:
             profile_id = validate_profile_id(str(payload.get("profile_id", "default")))
             await self.runtime.ensure_started()
@@ -168,7 +174,7 @@ class WebApiController:
             return json_response({"saved": True, "changed": sorted(changed)})
         except (ConfigValidationError, SecurityError, ValueError) as exc:
             return error_response(f"配置校验失败: {exc}", status_code=400)
-        except BaseException as exc:
+        except Exception as exc:
             return error_response(f"配置保存失败: {_safe_error(exc)}", status_code=500)
 
     async def events(self):
@@ -205,6 +211,8 @@ class WebApiController:
         if response := self._unauthorized():
             return response
         payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("审核请求体必须是对象", status_code=400)
         try:
             numeric_id = _positive_int(candidate_id, "candidate_id")
             candidate = await self.runtime.repository.feed_candidate(numeric_id)
@@ -220,7 +228,7 @@ class WebApiController:
             return json_response({"approved": True, "result": result})
         except (SecurityError, ValueError) as exc:
             return error_response(str(exc), status_code=400)
-        except BaseException as exc:
+        except Exception as exc:
             return error_response(f"批准候选失败: {_safe_error(exc)}", status_code=502)
 
     async def feed_reject(self, candidate_id: str):
@@ -228,7 +236,7 @@ class WebApiController:
             return response
         try:
             numeric_id = _positive_int(candidate_id, "candidate_id")
-            changed = await self.runtime.repository.review_feed_candidate(numeric_id, "rejected")
+            changed = await self.runtime.repository.reject_feed_candidate(numeric_id)
             if not changed:
                 return error_response("候选不存在或已处理", status_code=409)
             return json_response({"rejected": True})
@@ -239,7 +247,12 @@ class WebApiController:
         if response := self._unauthorized():
             return response
         payload = await request.json(default={})
-        hours = int(payload.get("older_than_hours", 72))
+        if not isinstance(payload, dict):
+            return error_response("批量审核请求体必须是对象", status_code=400)
+        try:
+            hours = int(payload.get("older_than_hours", 72))
+        except (TypeError, ValueError):
+            return error_response("older_than_hours 必须是整数", status_code=400)
         if not 1 <= hours <= 24 * 365:
             return error_response("older_than_hours 超出范围", status_code=400)
         count = 0
@@ -299,6 +312,8 @@ class WebApiController:
         if response := self._unauthorized():
             return response
         payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("清理请求体必须是对象", status_code=400)
         if payload.get("confirm") is not True:
             return error_response("必须明确传入 confirm=true", status_code=400)
         await self.runtime.ensure_started()
@@ -321,7 +336,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.0.10"},
+            "plugin": {"name": PLUGIN_NAME, "version": "v1.1.0"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),

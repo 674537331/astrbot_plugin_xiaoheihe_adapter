@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import time
 
@@ -103,7 +104,94 @@ async def test_approved_real_send_uses_edited_text(repository) -> None:
     service = FeedService("default", config, client, repository, dispatch, deliver)
     assert await service.approve(candidate_id, "reviewed") == "comment-sent"
     assert client.sent[0][1] == "reviewed"
-    assert (await repository.feed_candidate(candidate_id))["status"] == "sent"
+    stored = await repository.feed_candidate(candidate_id)
+    assert stored["status"] == "sent"
+    assert stored["sent_comment_id"] == "comment-sent"
+
+
+async def test_concurrent_candidate_approval_sends_once(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"]["dry_run"] = False
+    client = FakeFeedClient()
+    release = asyncio.Event()
+    started = asyncio.Event()
+
+    async def dispatch(*args):
+        return None
+
+    async def deliver(route, text):
+        started.set()
+        await release.wait()
+        result = await client.send_comment(route, text)
+        return {"external_comment_id": result.external_comment_id}
+
+    candidate_id = await repository.create_feed_candidate(
+        "default",
+        "post-concurrent",
+        "Title",
+        "author",
+        "generated",
+        "reason",
+    )
+    shared_lock = asyncio.Lock()
+    first = FeedService(
+        "default",
+        config,
+        client,
+        repository,
+        dispatch,
+        deliver,
+        approval_lock=shared_lock,
+    )
+    second = FeedService(
+        "default",
+        config,
+        client,
+        repository,
+        dispatch,
+        deliver,
+        approval_lock=shared_lock,
+    )
+    first_task = asyncio.create_task(first.approve(candidate_id, "reviewed"))
+    await started.wait()
+    second_task = asyncio.create_task(second.approve(candidate_id, "reviewed"))
+    release.set()
+
+    assert await first_task == "comment-sent"
+    with pytest.raises(ValueError, match="已处理"):
+        await second_task
+    assert len(client.sent) == 1
+
+
+async def test_interrupted_candidate_send_recovers_as_unknown(repository) -> None:
+    candidate_id = await repository.create_feed_candidate(
+        "default",
+        "post-interrupted",
+        "Title",
+        "author",
+        "generated",
+        "reason",
+    )
+    claimed = await repository.claim_feed_candidate_for_send(candidate_id, "reviewed")
+    assert claimed["status"] == "sending"
+
+    assert await repository.recover_interrupted_feed_sends() == 1
+    assert (await repository.feed_candidate(candidate_id))["status"] == "send_unknown"
+    config = copy.deepcopy(DEFAULT_CONFIG)
+
+    async def dispatch(*args):
+        return None
+
+    service = FeedService(
+        "default",
+        config,
+        FakeFeedClient(),
+        repository,
+        dispatch,
+        unused_delivery,
+    )
+    assert await service.reject(candidate_id) is True
+    assert (await repository.feed_candidate(candidate_id))["status"] == "rejected"
 
 
 async def test_approved_uncertain_send_is_not_approvable_twice(repository) -> None:

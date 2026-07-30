@@ -148,6 +148,22 @@ async def test_notification_cursor_initializes_and_advances_atomically(repositor
     assert await repository.notification_cursor("default", "mention") == "101"
 
 
+async def test_due_retry_query_only_returns_due_rows(repository) -> None:
+    due = make_notification("due")
+    later = make_notification("later")
+    due_id = await repository.claim_event(due)
+    later_id = await repository.claim_event(later)
+    await repository.defer_event(due_id, "due", delay_seconds=60)
+    await repository.defer_event(later_id, "later", delay_seconds=60)
+    await repository.db.execute(
+        "UPDATE incoming_events SET next_retry_at = 0 WHERE id = ?",
+        (due_id,),
+    )
+
+    rows = await repository.due_retry_events(profile_id="default")
+    assert [row["id"] for row in rows] == [due_id]
+
+
 async def test_account_error_feed_and_diagnostics(repository) -> None:
     await repository.update_account_state("default", status="success", uid="1", nickname="Bot")
     assert (await repository.account_state("default"))["uid"] == "1"

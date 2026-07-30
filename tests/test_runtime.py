@@ -77,10 +77,62 @@ async def test_runtime_dry_run_can_remain_replayable(tmp_path, fake_config) -> N
 async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
     runtime = RuntimeServices(fake_config, tmp_path)
     status = await runtime.status()
-    assert status["version"] == "v1.0.10"
+    assert status["version"] == "v1.1.0"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     await runtime.close()
+
+
+async def test_runtime_update_reopens_persistent_credentials_database_and_cursor(
+    tmp_path,
+    fake_config,
+) -> None:
+    first = RuntimeServices(fake_config, tmp_path)
+    await first.ensure_started()
+    first.credentials.save(
+        Credentials(
+            profile_id="default",
+            uid="10001",
+            nickname="Persisted",
+            cookies={"pkey": "fixture"},
+            device_id="a" * 32,
+        )
+    )
+    event_id = await first.repository.claim_event(notification())
+    await first.repository.mark_event(
+        event_id,
+        EventState.DRY_RUN,
+        reply_text="persisted result",
+    )
+    await first.repository.initialize_notification_cursor(
+        "default",
+        NotificationType.MENTION.value,
+        "90001",
+    )
+    await first.close()
+
+    second = RuntimeServices(fake_config, tmp_path)
+    await second.ensure_started()
+    stored = second.credentials.load("default")
+    row = await second.repository.db.fetchone(
+        "SELECT status, reply_text FROM incoming_events WHERE id = ?",
+        (event_id,),
+    )
+
+    assert stored is not None
+    assert stored.uid == "10001"
+    assert dict(row) == {
+        "status": EventState.DRY_RUN.value,
+        "reply_text": "persisted result",
+    }
+    assert (
+        await second.repository.notification_cursor(
+            "default",
+            NotificationType.MENTION.value,
+        )
+        == "90001"
+    )
+    await second.close()
 
 
 async def test_cleanup_loop_recovers_after_transient_failure(

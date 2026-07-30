@@ -452,26 +452,47 @@ async function loadEvents() {
 }
 
 async function loadCandidates() {
-  const result = await bridge.apiGet("feed/candidates", { status: "pending", limit: 100 });
+  const [pending, unknown] = await Promise.all([
+    bridge.apiGet("feed/candidates", { status: "pending", limit: 100 }),
+    bridge.apiGet("feed/candidates", { status: "send_unknown", limit: 100 }),
+  ]);
+  const items = [...(unknown.items || []), ...(pending.items || [])];
   const host = $("candidate-list");
   host.replaceChildren();
-  if (!result.items.length) {
+  if (!items.length) {
     const empty = document.createElement("p");
     empty.textContent = "待审核候选为 0 条。";
     host.append(empty);
     return;
   }
-  result.items.forEach((candidate) => {
+  items.forEach((candidate) => {
     const card = document.createElement("article");
     card.className = "candidate";
     const title = document.createElement("h3");
     title.textContent = candidate.post_title || `帖子 ${candidate.post_id}`;
     const meta = document.createElement("p");
-    meta.textContent = `作者 UID ${candidate.post_author_uid || "未知"} · ${candidate.reason || "AI 候选"}`;
+    const statusText = candidate.status === "send_unknown" ? "发送状态未知，请人工核对" : "待审核";
+    meta.textContent = `作者 UID ${candidate.post_author_uid || "未知"} · ${statusText} · ${candidate.reason || "AI 候选"}`;
     const editor = document.createElement("textarea");
     editor.value = candidate.edited_text || candidate.generated_text;
+    editor.readOnly = candidate.status === "send_unknown";
     const row = document.createElement("div");
     row.className = "button-row";
+    if (candidate.status === "send_unknown") {
+      const discard = document.createElement("button");
+      discard.className = "danger secondary";
+      discard.textContent = "人工丢弃";
+      discard.addEventListener("click", () => busy(discard, async () => {
+        if (!confirm("请先在目标帖子核对评论。确认将这条发送状态未知候选标记为已丢弃？")) return;
+        await bridge.apiPost(`feed/candidates/${candidate.id}/reject`, {});
+        toast("候选已人工丢弃");
+        await loadCandidates();
+      }));
+      row.append(discard);
+      card.append(title, meta, editor, row);
+      host.append(card);
+      return;
+    }
     const approve = document.createElement("button");
     approve.textContent = "批准";
     approve.addEventListener("click", () => busy(approve, async () => {

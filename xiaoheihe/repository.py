@@ -308,6 +308,27 @@ class Repository:
         )
         return [dict(row) for row in rows]
 
+    async def due_retry_events(
+        self, limit: int = 50, *, profile_id: str = ""
+    ) -> list[dict[str, Any]]:
+        rows = await self.db.fetchall(
+            """
+            SELECT * FROM incoming_events
+            WHERE (? = '' OR profile_id = ?)
+              AND status = 'retry_wait'
+              AND COALESCE(next_retry_at, 0) <= ?
+            ORDER BY next_retry_at ASC, updated_at ASC
+            LIMIT ?
+            """,
+            (
+                profile_id,
+                profile_id,
+                time.time(),
+                max(1, min(limit, 500)),
+            ),
+        )
+        return [dict(row) for row in rows]
+
     async def is_self_comment(self, profile_id: str, external_comment_id: str) -> bool:
         row = await self.db.fetchone(
             """
@@ -674,6 +695,7 @@ class Repository:
         allowed = {
             "pending",
             "approved",
+            "sending",
             "rejected",
             "sent",
             "expired",
@@ -717,6 +739,79 @@ class Repository:
             (status, edited_text, time.time(), candidate_id),
         )
         return cursor.rowcount == 1
+
+    async def reject_feed_candidate(self, candidate_id: int) -> bool:
+        cursor = await self.db.execute(
+            """
+            UPDATE feed_candidates
+            SET status = 'rejected', reviewed_at = ?
+            WHERE id = ? AND status IN ('pending', 'approved', 'send_unknown')
+            """,
+            (time.time(), candidate_id),
+        )
+        return cursor.rowcount == 1
+
+    async def claim_feed_candidate_for_send(
+        self,
+        candidate_id: int,
+        edited_text: str,
+    ) -> dict[str, Any] | None:
+        async with self.db.transaction() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE feed_candidates
+                SET status = 'sending', edited_text = ?, reviewed_at = ?
+                WHERE id = ? AND status IN ('pending', 'approved')
+                """,
+                (edited_text, time.time(), candidate_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            result = await connection.execute(
+                "SELECT * FROM feed_candidates WHERE id = ?",
+                (candidate_id,),
+            )
+            row = await result.fetchone()
+            return dict(row) if row is not None else None
+
+    async def finish_feed_candidate_send(
+        self,
+        candidate_id: int,
+        status: str,
+        edited_text: str,
+        *,
+        sent_comment_id: str = "",
+    ) -> bool:
+        if status not in {"sent", "failed", "send_unknown"}:
+            raise ValueError("无效候选发送终态")
+        cursor = await self.db.execute(
+            """
+            UPDATE feed_candidates
+            SET status = ?, edited_text = ?, reviewed_at = ?,
+                sent_comment_id = CASE WHEN ? != '' THEN ? ELSE sent_comment_id END
+            WHERE id = ? AND status = 'sending'
+            """,
+            (
+                status,
+                edited_text,
+                time.time(),
+                sent_comment_id,
+                sent_comment_id,
+                candidate_id,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    async def recover_interrupted_feed_sends(self) -> int:
+        cursor = await self.db.execute(
+            """
+            UPDATE feed_candidates
+            SET status = 'send_unknown', reviewed_at = ?
+            WHERE status = 'sending'
+            """,
+            (time.time(),),
+        )
+        return max(0, cursor.rowcount)
 
     async def cleanup_preview(
         self, retention: dict[str, Any], *, now: float | None = None

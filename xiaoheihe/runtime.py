@@ -78,6 +78,7 @@ class RuntimeServices:
         self._start_lock = asyncio.Lock()
         self._adapters: weakref.WeakSet[Any] = weakref.WeakSet()
         self._floor_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+        self._feed_approval_locks: dict[str, asyncio.Lock] = {}
         self._alerts: dict[str, dict[str, Any]] = {}
         self.last_cleanup_at: str | None = None
         self.config.add_restart_callback(self._on_config_changed)
@@ -91,10 +92,17 @@ class RuntimeServices:
             if self._closed:
                 raise RuntimeError("插件运行时已关闭")
             await self.database.open()
+            interrupted_candidates = await self.repository.recover_interrupted_feed_sends()
             self._started = True
             await self.tasks.start("xhh-cleanup", self._cleanup_loop())
             await self.tasks.start("xhh-health", self._health_loop())
             self.logging.emit("INFO", "小黑盒插件运行时已启动")
+            if interrupted_candidates:
+                self.logging.emit(
+                    "WARNING",
+                    "发现更新或重启时中断的主动审核发送，已转入发送状态未知",
+                    details={"candidate_count": interrupted_candidates},
+                )
 
     async def get_client(self, profile_id: str, anonymous: bool = False) -> XiaoheiheApiClient:
         await self.ensure_started()
@@ -534,6 +542,10 @@ class RuntimeServices:
                 dry_run=False,
                 proactive=True,
             ),
+            approval_lock=self._feed_approval_locks.setdefault(
+                profile_id,
+                asyncio.Lock(),
+            ),
         )
 
     def _floor_lock(self, route: RoutingTarget) -> asyncio.Lock:
@@ -564,7 +576,9 @@ class RuntimeServices:
 
         try:
             comments = await client.recent_comments(route, limit=30)
-        except BaseException as exc:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             self.logging.emit(
                 "ERROR",
                 f"发送状态未知且核对失败: {exc}",
@@ -677,7 +691,7 @@ class RuntimeServices:
                 "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
         return {
-            "version": "v1.0.10",
+            "version": "v1.1.0",
             "profiles": profiles,
             "adapters": [
                 {
@@ -848,7 +862,9 @@ class RuntimeServices:
                     }
                 else:
                     self._alerts.pop("database_soft_limit", None)
-            except BaseException as exc:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
                 self._alerts["database"] = {
                     "key": "database",
                     "level": "error",
@@ -872,6 +888,7 @@ class RuntimeServices:
             await self.database.close()
         self.logging.close()
         self._floor_locks.clear()
+        self._feed_approval_locks.clear()
         self._started = False
         unbind_runtime(self)
 

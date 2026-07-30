@@ -67,6 +67,14 @@ async def test_config_api_rejects_unknown_group(fake_config) -> None:
     assert response["status_code"] == 400
 
 
+async def test_config_api_rejects_non_object_body(fake_config) -> None:
+    controller = WebApiController(FakeRuntime(fake_config))
+    REQUEST.username = "admin"
+    REQUEST._json = []
+    response = await controller.config_save()
+    assert response["status_code"] == 400
+
+
 async def test_web_api_requires_dashboard_identity(fake_config) -> None:
     controller = WebApiController(FakeRuntime(fake_config))
     REQUEST.username = None

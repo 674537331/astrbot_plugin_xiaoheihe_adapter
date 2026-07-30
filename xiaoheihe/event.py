@@ -96,7 +96,15 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
                         generated_ms=generated_ms,
                     )
                 await super().send(message)
-            except BaseException as exc:
+            except asyncio.CancelledError as exc:
+                await self.runtime.fail_reply(
+                    event_id=self.event_id,
+                    route=self.route,
+                    error=str(exc) or "事件发送任务被取消",
+                    generated_ms=generated_ms,
+                )
+                raise
+            except Exception as exc:
                 await self.runtime.fail_reply(
                     event_id=self.event_id,
                     route=self.route,
