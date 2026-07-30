@@ -6,24 +6,19 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.1.3**
+当前版本：**v1.2.0**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.1.3 重点：
+v1.2.0 重点：
 
-- 多图事件按实际图片数量自动增加视觉处理时间，默认 6 图事件由 120 秒扩展为 300 秒；
-- 设置保存后显示成功提示，并注明配置是否产生变化；
-- 评论区 @ 会同时读取当前评论与原帖的文本、图片，再合并指定楼层；
-- AstrBot 分段回复会在清理前保存完整文本，任意段数均一次性提交小黑盒评论；
-- 覆盖更新或插件热重载后自动重建已启用的小黑盒适配器实例；
-- 平台适配器使用仓库 `logo.png` 展示图标；
-- 首次轮询按小黑盒 `message_id` 建立持久化历史基线；
-- 新通知先写入 SQLite，再进入有界处理队列，拥塞事件按到期时间恢复；
-- 同一入站事件使用数据库发送记录和事件级闸门限制为一次评论提交；
-- 主动审核使用原子发送状态和账号级并发闸门；
+- 主动浏览使用小黑盒推荐流；
+- 分区设置提供 `All（全部）` 和常用中文分区下拉框；
+- 候选可按推荐顺序、随机、最新或热门挑选；
+- 评论区 @ 同时读取当前评论、原帖文本、图片与指定楼层；
+- 一次入站事件聚合为一条小黑盒评论；
 - 覆盖更新保留账号凭证、SQLite、配置和通知游标。
 
 ## 核心特性
@@ -170,6 +165,8 @@ reply 通知历史基线已建立
 | `network.max_pending_per_user` | `5` | 单用户待处理上限 |
 | `proactive_feed.enabled` | `false` | 主动刷帖 |
 | `proactive_feed.review_required` | `true` | 主动回复人工审核 |
+| `proactive_feed.section` | `All（全部）` | 推荐流分区 |
+| `proactive_feed.selection_strategy` | `推荐顺序` | 推荐、随机、最新或热门 |
 
 完整字段和边界见管理页及 [_conf_schema.json](_conf_schema.json)。
 
@@ -202,7 +199,7 @@ message_id        xhh_<event_type>_<notification_id>_<comment_id>
 最多 6 张图片。插件会检查协议、认证信息、主机和 DNS 结果，过滤本地地址、内网地址与保留
 地址。当前提供商声明为纯文本能力时，本轮按纯文本继续处理，并在管理页显示提示。
 
-v1.1.3 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
+v1.2.0 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
 
 ## 身份与回复规则
 
@@ -231,10 +228,15 @@ review_required: true
 interval_seconds: 900
 max_per_run: 1
 max_per_day: 10
+section: All（全部）
+selection_strategy: 推荐顺序
 ```
 
-启用后，候选内容通过 AstrBot 原生事件链路生成并保存到“主动审核”。审核页支持编辑、批准和
-拒绝；批准后发送已审核文本，无需再次调用模型。
+启用后从小黑盒推荐流读取帖子。`All（全部）` 不限制分区；其他选项根据帖子返回的主题和
+标签筛选。选择“随机”可从每轮最多三页的安全候选中随机抽取。候选内容通过 AstrBot 原生
+事件链路生成并保存到“主动审核”，审核页支持编辑、批准和拒绝。
+
+旧版 `source: follow` 在加载时迁移为推荐流默认设置，不需要手动重建配置文件。
 
 ## 数据与安全
 
@@ -251,7 +253,7 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.1.3 数据库迁移版本为 **v4**；
+- v1.2.0 数据库迁移版本仍为 **v4**；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
 

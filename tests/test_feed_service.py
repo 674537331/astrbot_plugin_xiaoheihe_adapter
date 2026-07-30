@@ -272,3 +272,122 @@ async def test_feed_skips_self_blacklisted_and_already_replied(repository) -> No
     service = FeedService("default", config, client, repository, dispatch, unused_delivery)
     assert await service.run_once() == 0
     assert not dispatched
+
+
+async def test_feed_section_filters_verified_topics_and_keeps_images(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"].update(
+        {
+            "enabled": True,
+            "section": "PC 游戏",
+            "selection_strategy": "推荐顺序",
+        }
+    )
+    client = FakeFeedClient()
+
+    async def fetch_feed(**kwargs):
+        assert kwargs["offset"] == 0
+        return ApiPage(
+            items=[
+                {
+                    "post_id": "mobile-post",
+                    "title": "手游讨论",
+                    "content": "聊聊新版本的玩法。",
+                    "author": {"uid": "mobile-author"},
+                    "section_names": ["手机游戏"],
+                },
+                {
+                    "post_id": "pc-post",
+                    "title": "PC 游戏讨论",
+                    "content": "聊聊这套机制设计。",
+                    "created_at": 100,
+                    "author": {"uid": "pc-author", "nickname": "PCAuthor"},
+                    "section_names": ["Steam", "PC游戏"],
+                    "image_urls": ["https://cdn.example.com/post.jpg"],
+                },
+            ]
+        )
+
+    client.fetch_feed = fetch_feed
+    dispatched = []
+
+    async def dispatch(notification, metadata):
+        dispatched.append((notification, metadata))
+
+    service = FeedService("default", config, client, repository, dispatch, unused_delivery)
+    assert await service.run_once() == 1
+    notification, metadata = dispatched[0]
+    assert notification.post_id == "pc-post"
+    assert notification.image_urls == ["https://cdn.example.com/post.jpg"]
+    assert notification.sender_uid == "pc-author"
+    assert metadata["candidate_reason"] == "推荐流 · PC 游戏 · 推荐顺序"
+    assert metadata["post_author_uid"] == "pc-author"
+
+
+async def test_feed_section_searches_at_most_three_recommendation_pages(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"].update({"enabled": True, "section": "独立游戏"})
+    client = FakeFeedClient()
+    observed_offsets = []
+
+    async def fetch_feed(**kwargs):
+        offset = kwargs["offset"]
+        observed_offsets.append(offset)
+        sections = {0: "手机游戏", 1: "盒友杂谈", 2: "独立游戏"}
+        return ApiPage(
+            items=[
+                {
+                    "post_id": f"post-{offset}",
+                    "title": "推荐候选",
+                    "content": "正文内容足够用于生成候选。",
+                    "author": {"uid": f"author-{offset}"},
+                    "section_names": [sections[offset]],
+                }
+            ],
+            next_cursor=str(offset + 1),
+            has_more=True,
+        )
+
+    client.fetch_feed = fetch_feed
+    dispatched = []
+
+    async def dispatch(notification, metadata):
+        dispatched.append((notification, metadata))
+
+    service = FeedService("default", config, client, repository, dispatch, unused_delivery)
+    assert await service.run_once() == 1
+    assert observed_offsets == [0, 1, 2]
+    assert dispatched[0][0].post_id == "post-2"
+
+
+def test_feed_selection_strategies(monkeypatch) -> None:
+    posts = [
+        {"post_id": "one", "created_at": 10, "popularity_score": 2},
+        {"post_id": "two", "created_at": 30, "popularity_score": 1},
+        {"post_id": "three", "created_at": 20, "popularity_score": 8},
+    ]
+    assert [item["post_id"] for item in FeedService._order_posts(posts, "推荐顺序")] == [
+        "one",
+        "two",
+        "three",
+    ]
+    assert [item["post_id"] for item in FeedService._order_posts(posts, "最新")] == [
+        "two",
+        "three",
+        "one",
+    ]
+    assert [item["post_id"] for item in FeedService._order_posts(posts, "热门")] == [
+        "three",
+        "one",
+        "two",
+    ]
+
+    monkeypatch.setattr(
+        "xiaoheihe.feed_service.random.shuffle",
+        lambda values: values.reverse(),
+    )
+    assert [item["post_id"] for item in FeedService._order_posts(posts, "随机")] == [
+        "three",
+        "two",
+        "one",
+    ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -14,6 +15,22 @@ SyntheticDispatch = Callable[[Notification, dict[str, Any]], Awaitable[None]]
 ReviewedDelivery = Callable[[RoutingTarget, str], Awaitable[dict[str, Any]]]
 
 SKIP_PATTERN = re.compile(r"(广告|推广|抽奖|开奖|出售|收购|交易|代购|引战|骂战|互喷)", re.I)
+MAX_FEED_PAGES_PER_RUN = 3
+SECTION_ALIASES: dict[str, tuple[str, ...]] = {
+    "All（全部）": (),
+    "PC 游戏": ("pc游戏", "pc 游戏", "steam游戏", "steam", "单机游戏"),
+    "手机游戏": ("手机游戏", "手游"),
+    "主机游戏": ("主机游戏", "switch", "xbox", "playstation", "ps5", "ps4", "任天堂"),
+    "盒友杂谈": ("盒友杂谈", "杂谈"),
+    "盒友日常": ("盒友日常", "日常", "生活"),
+    "数码科技": ("数码科技", "数码", "硬件", "外设", "科技"),
+    "动漫二次元": ("动漫", "二次元", "漫画", "番剧", "同人"),
+    "影视娱乐": ("影视", "电影", "电视剧", "综艺"),
+    "电竞赛事": ("电竞", "赛事"),
+    "游戏攻略": ("攻略", "心得", "教程"),
+    "优惠资讯": ("特惠资讯", "优惠", "折扣", "史低"),
+    "独立游戏": ("独立游戏", "indie"),
+}
 
 
 class FeedService:
@@ -39,27 +56,22 @@ class FeedService:
         feed_config = self.config["proactive_feed"]
         if not feed_config.get("enabled", False):
             return 0
-        page = await self.client.fetch_feed(
-            source=str(feed_config.get("source", "follow")),
-            limit=int(feed_config["max_per_run"]) * 5,
+        posts = await self._recommendation_posts()
+        posts = self._order_posts(
+            posts,
+            str(feed_config.get("selection_strategy", "推荐顺序")),
         )
         generated = 0
-        for post in page.items:
-            if generated >= int(feed_config["max_per_run"]):
-                break
-            post_id = str(post.get("link_id", post.get("post_id", post.get("id", ""))))
-            author = post.get("author", post.get("user", {}))
-            author = author if isinstance(author, dict) else {}
-            author_uid = str(
-                author.get(
-                    "uid",
-                    author.get("heybox_id", author.get("user_id", author.get("id", ""))),
+        for post in posts[: int(feed_config["max_per_run"])]:
+            post_id = str(
+                post.get(
+                    "post_id",
+                    post.get("linkid", post.get("link_id", post.get("id", ""))),
                 )
             )
-            if not self._eligible(post, author_uid):
-                continue
-            if await self.repository.has_replied_to_post(self.profile_id, post_id):
-                continue
+            author = post.get("author", post.get("user", {}))
+            author = author if isinstance(author, dict) else {}
+            author_uid = str(author.get("uid", ""))
             notification = Notification(
                 profile_id=self.profile_id,
                 external_event_id=f"feed:{post_id}",
@@ -72,33 +84,96 @@ class FeedService:
                 root_comment_id="",
                 parent_comment_id="",
                 content=clean_untrusted_text(
-                    str(post.get("content", post.get("text", ""))), max_chars=4000
+                    str(post.get("content", post.get("description", post.get("text", "")))),
+                    max_chars=4000,
                 ),
-                created_at=float(post.get("created_at", post.get("time", 0)) or 0),
+                created_at=float(
+                    post.get("created_at", post.get("create_at", post.get("time", 0))) or 0
+                ),
                 post_author_uid=author_uid,
                 explicit_wake=True,
-                image_urls=[],
+                image_urls=[
+                    str(url) for url in post.get("image_urls", []) if isinstance(url, str) and url
+                ],
                 raw={"event_type": "proactive_feed", "post": post},
             )
             await self.synthetic_dispatch(
                 notification,
                 {
-                    "candidate_reason": "通过主动刷帖安全过滤器",
+                    "candidate_reason": (
+                        f"推荐流 · {feed_config.get('section', 'All（全部）')} · "
+                        f"{feed_config.get('selection_strategy', '推荐顺序')}"
+                    ),
                     "post_title": str(post.get("title", "")),
+                    "post_author_uid": author_uid,
                 },
             )
             generated += 1
         return generated
 
+    async def _recommendation_posts(self) -> list[dict[str, Any]]:
+        posts: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        offset = 0
+        for _ in range(MAX_FEED_PAGES_PER_RUN):
+            page = await self.client.fetch_feed(offset=offset)
+            for post in page.items:
+                post_id = str(
+                    post.get(
+                        "post_id",
+                        post.get("linkid", post.get("link_id", post.get("id", ""))),
+                    )
+                )
+                if not post_id or post_id in seen:
+                    continue
+                author = post.get("author", {})
+                author = author if isinstance(author, dict) else {}
+                author_uid = str(author.get("uid", ""))
+                if not author_uid:
+                    continue
+                seen.add(post_id)
+                if not self._eligible(post, author_uid):
+                    continue
+                if await self.repository.has_replied_to_post(self.profile_id, post_id):
+                    continue
+                posts.append(post)
+            if not page.has_more or not page.next_cursor:
+                break
+            try:
+                next_offset = int(page.next_cursor)
+            except (TypeError, ValueError):
+                break
+            if next_offset <= offset:
+                break
+            offset = next_offset
+        return posts
+
+    @staticmethod
+    def _order_posts(
+        posts: list[dict[str, Any]],
+        strategy: str,
+    ) -> list[dict[str, Any]]:
+        ordered = list(posts)
+        if strategy == "随机":
+            random.shuffle(ordered)
+        elif strategy == "最新":
+            ordered.sort(key=lambda item: float(item.get("created_at", 0) or 0), reverse=True)
+        elif strategy == "热门":
+            ordered.sort(
+                key=lambda item: int(item.get("popularity_score", 0) or 0),
+                reverse=True,
+            )
+        return ordered
+
     def _eligible(self, post: dict[str, Any], author_uid: str) -> bool:
         title = str(post.get("title", ""))
-        body = str(post.get("content", post.get("text", "")))
+        body = str(post.get("content", post.get("description", post.get("text", ""))))
         text = f"{title}\n{body}".strip()
         if not text or len(clean_untrusted_text(text)) < 4:
             return False
         if SKIP_PATTERN.search(text):
             return False
-        post_type = str(post.get("type", "")).lower()
+        post_type = str(post.get("content_type", post.get("type", ""))).lower()
         if post_type in {"ad", "advertisement", "lottery", "trade"}:
             return False
         credentials = getattr(self.client, "credentials", None)
@@ -117,6 +192,16 @@ class FeedService:
         }
         if allowed_types and post_type not in allowed_types:
             return False
+        section = str(self.config["proactive_feed"].get("section", "All（全部）"))
+        aliases = SECTION_ALIASES.get(section, ())
+        if aliases:
+            section_names = {
+                str(value).strip().casefold()
+                for value in post.get("section_names", [])
+                if str(value).strip()
+            }
+            if not any(alias.casefold() in name for alias in aliases for name in section_names):
+                return False
         keywords = [
             str(item).casefold()
             for item in self.config["proactive_feed"].get("keywords", [])

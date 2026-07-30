@@ -9,6 +9,23 @@ from typing import Any
 
 from .security import SecurityError, validate_profile_id
 
+FEED_SECTIONS = (
+    "All（全部）",
+    "PC 游戏",
+    "手机游戏",
+    "主机游戏",
+    "盒友杂谈",
+    "盒友日常",
+    "数码科技",
+    "动漫二次元",
+    "影视娱乐",
+    "电竞赛事",
+    "游戏攻略",
+    "优惠资讯",
+    "独立游戏",
+)
+FEED_SELECTION_STRATEGIES = ("推荐顺序", "随机", "最新", "热门")
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "profiles": [
         {
@@ -74,7 +91,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "jitter_seconds": 60,
         "max_per_run": 1,
         "max_per_day": 10,
-        "source": "follow",
+        "section": "All（全部）",
+        "selection_strategy": "推荐顺序",
         "keywords": [],
         "allowed_post_types": [],
     },
@@ -232,9 +250,16 @@ class ConfigService:
                 raise ConfigValidationError(f"proactive_feed.{key} 必须是字符串列表")
             if any(len(item) > 100 for item in values):
                 raise ConfigValidationError(f"proactive_feed.{key} 单项不能超过 100 字符")
-        source = proactive.get("source")
-        if not isinstance(source, str) or not source or len(source) > 64:
-            raise ConfigValidationError("proactive_feed.source 必须是 1-64 字符字符串")
+        section = proactive.get("section")
+        if section not in FEED_SECTIONS:
+            raise ConfigValidationError(
+                f"proactive_feed.section 必须是可选分区之一: {', '.join(FEED_SECTIONS)}"
+            )
+        strategy = proactive.get("selection_strategy")
+        if strategy not in FEED_SELECTION_STRATEGIES:
+            raise ConfigValidationError(
+                "proactive_feed.selection_strategy 必须是推荐顺序、随机、最新或热门"
+            )
         if proactive.get("enabled") and not proactive.get("review_required"):
             if not proactive.get("dry_run"):
                 raise ConfigValidationError("主动刷帖真实发送必须启用 review_required")

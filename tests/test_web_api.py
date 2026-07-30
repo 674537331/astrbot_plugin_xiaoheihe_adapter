@@ -64,6 +64,13 @@ async def test_config_schema_api_exposes_structured_form_metadata(fake_config) -
     schema = response["json"]
     assert schema["profiles"]["type"] == "template_list"
     assert schema["polling"]["items"]["poll_interval_seconds"]["type"] == "int"
+    assert schema["proactive_feed"]["items"]["section"]["options"][0] == "All（全部）"
+    assert schema["proactive_feed"]["items"]["selection_strategy"]["options"] == [
+        "推荐顺序",
+        "随机",
+        "最新",
+        "热门",
+    ]
     assert schema["logging"]["items"]["level"]["options"] == [
         "DEBUG",
         "INFO",

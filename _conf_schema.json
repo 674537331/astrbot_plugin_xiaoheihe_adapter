@@ -287,7 +287,7 @@
   },
   "proactive_feed": {
     "type": "object",
-    "description": "主动刷帖（高风险）",
+    "description": "主动浏览与审核（高风险）",
     "items": {
       "enabled": {
         "description": "启用主动刷帖",
@@ -324,10 +324,37 @@
         "type": "int",
         "default": 10
       },
-      "source": {
-        "description": "帖子来源",
+      "section": {
+        "description": "推荐流分区",
         "type": "string",
-        "default": "follow"
+        "default": "All（全部）",
+        "options": [
+          "All（全部）",
+          "PC 游戏",
+          "手机游戏",
+          "主机游戏",
+          "盒友杂谈",
+          "盒友日常",
+          "数码科技",
+          "动漫二次元",
+          "影视娱乐",
+          "电竞赛事",
+          "游戏攻略",
+          "优惠资讯",
+          "独立游戏"
+        ],
+        "hint": "基于推荐流返回帖子的主题和标签筛选"
+      },
+      "selection_strategy": {
+        "description": "候选挑选方式",
+        "type": "string",
+        "default": "推荐顺序",
+        "options": [
+          "推荐顺序",
+          "随机",
+          "最新",
+          "热门"
+        ]
       },
       "keywords": {
         "description": "允许关键词",

@@ -39,10 +39,10 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
-## 2026-07-30 v1.1.3 本地结果
+## 2026-07-30 v1.2.0 本地结果
 
-- Pytest：`154 passed`；
-- Coverage：`80%`（启用 branch，达到 `fail_under = 80`）；
+- Pytest：`162 passed`；
+- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
 - Ruff Check：通过；
 - Ruff Format Check：通过；
 - Python compileall：通过；
@@ -53,6 +53,8 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 - 设置保存成功提示由前端契约检查和仓库静态检查共同覆盖；
 - AstrBot 将完整模型结果拆成任意多次 `send()` 时，适配器恢复分段前文本、聚合为一次评论并显示管理页提醒；
 - 多图事件基础超时、6 图自动扩展至 300 秒及 900 秒硬上限均有回归测试；
+- 推荐流 `pull/offset` 参数、`result.links` 解析和真实字段规范化有脱敏 fixture 覆盖；
+- 中文分区下拉、旧版 `source: follow` 迁移、三页筛选以及推荐/随机/最新/热门排序有回归测试；
 - 已完成事件、进程内重复通知、分页重复项和缺省时间历史通知的过滤回归测试通过；
 - SQLite v4 消息边界、到期重试、重启隔离、更新继承和评论发送闸门回归测试通过；
 - 主动候选并发批准只发送一次，更新或重启遗留 `sending` 转为 `send_unknown`；

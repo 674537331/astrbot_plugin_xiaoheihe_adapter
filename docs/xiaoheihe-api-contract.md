@@ -178,6 +178,21 @@ AstrBot 4.26.8 会在主 Agent 请求前依次处理消息链中的图片。真�
 默认图片超时 15 秒时，每张增加 30 秒，因此 6 图事件从 120 秒扩展为 300 秒。总截止时间限制
 为 900 秒，超时状态会记录本事件实际采用的秒数。
 
+### v1.2.0 推荐流与分区
+
+2026-07-30 对 `GET /bbs/app/feeds` 进行公开只读验证，确认请求使用
+`pull=0&offset=<n>&heybox_id=<uid>`，帖子数组位于 `result.links`。观察到的稳定字段包括
+`linkid/title/description/create_at/user/topics/hashtags/imgs/comment_num/up`。
+
+分区来自每条帖子的 `topics`、`hashtags` 和内容标签。当前未观察到稳定的服务端分区参数，
+因此插件使用中文下拉选项在本地筛选结构化主题与标签；`All（全部）` 保留推荐流原顺序。
+候选挑选支持推荐顺序、随机、最新和热门，热门值由评论数与点赞等公开计数计算。
+
+公开行为同时与
+[`k1m0206/better-XiaoHeiHe@361f4a4`](https://github.com/k1m0206/better-XiaoHeiHe/tree/361f4a4e05fc6e19c110652b1fb8c8b5837ca775)
+进行接口形状交叉核对。本项目仅参考端点行为，解析、筛选和排序均为独立 Python 实现。
+主动真实评论仍经过模拟运行与人工审核边界。
+
 重新核对 `SomeOvO/xhhRobot` 的公开轮询行为与 MIT 许可的
 `HadeonYu/heybox-bot@c2b5797` 后，v1.0.8 独立实现以下规则：
 
@@ -225,7 +240,7 @@ AI 客户端不进入本项目技术边界。其特殊常量、注释、目录�
 | 帖子与评论树 | `GET /bbs/app/link/tree` | 参考项目按 `link_id` 读取标题、富文本和图片 | 原帖与指定楼层双源合并 Mock 已测，字段待真实验证 |
 | 创建评论 | `POST https://workshopapi.xiaoheihe.cn/bbs/app/comment/create` | 参考项目出现该主机与路径 | 表单和响应 Mock 已测，动态签名与真实限制待验证 |
 | 近期评论核对 | `GET /bbs/app/comment/user` | 本项目隔离契约 | Mock 已测，路径、排序和一致性待真实验证 |
-| 主动帖子流 | `GET /bbs/app/feeds` | 本项目隔离契约 | Mock 已测，来源参数和字段待真实验证 |
+| 主动帖子流 | `GET /bbs/app/feeds` | 公开只读验证与行为交叉核对 | `result.links`、分页参数、规范化、中文分区与排序 Mock 已测 |
 
 所有路径只存在于 `xiaoheihe/endpoints.py`，所有字段兼容处理只存在于
 `xiaoheihe/parsers.py`。真实环境出现结构变化时，应新增脱敏 fixture、修改解析层并回归；
