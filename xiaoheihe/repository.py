@@ -118,6 +118,70 @@ class Repository:
             and float(row["next_retry_at"] or 0) <= time.time()
         )
 
+    async def event_exists(self, profile_id: str, external_event_id: str) -> bool:
+        row = await self.db.fetchone(
+            """
+            SELECT 1 FROM incoming_events
+            WHERE profile_id = ? AND external_event_id = ?
+            """,
+            (profile_id, external_event_id),
+        )
+        return row is not None
+
+    async def notification_cursor(
+        self,
+        profile_id: str,
+        event_type: str,
+    ) -> str | None:
+        row = await self.db.fetchone(
+            """
+            SELECT last_event_id FROM notification_cursors
+            WHERE profile_id = ? AND event_type = ?
+            """,
+            (profile_id, event_type),
+        )
+        return str(row["last_event_id"]) if row is not None else None
+
+    async def initialize_notification_cursor(
+        self,
+        profile_id: str,
+        event_type: str,
+        last_event_id: str,
+    ) -> bool:
+        now = time.time()
+        cursor = await self.db.execute(
+            """
+            INSERT OR IGNORE INTO notification_cursors(
+                profile_id, event_type, last_event_id, initialized_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (profile_id, event_type, str(last_event_id), now, now),
+        )
+        return cursor.rowcount == 1
+
+    async def advance_notification_cursor(
+        self,
+        profile_id: str,
+        event_type: str,
+        previous_event_id: str,
+        last_event_id: str,
+    ) -> bool:
+        cursor = await self.db.execute(
+            """
+            UPDATE notification_cursors
+            SET last_event_id = ?, updated_at = ?
+            WHERE profile_id = ? AND event_type = ? AND last_event_id = ?
+            """,
+            (
+                str(last_event_id),
+                time.time(),
+                profile_id,
+                event_type,
+                str(previous_event_id),
+            ),
+        )
+        return cursor.rowcount == 1
+
     async def mark_event(
         self,
         event_id: int,
@@ -168,12 +232,22 @@ class Repository:
         now = time.time()
         async with self.db.transaction() as connection:
             cursor = await connection.execute(
-                "SELECT retry_count FROM incoming_events WHERE id = ?",
+                "SELECT retry_count, status FROM incoming_events WHERE id = ?",
                 (event_id,),
             )
             row = await cursor.fetchone()
             if row is None:
                 raise ValueError("待重试事件不存在")
+            current_state = str(row["status"])
+            if current_state in {
+                EventState.RETRY_WAIT.value,
+                EventState.SEND_UNKNOWN.value,
+                EventState.SENT.value,
+                EventState.DRY_RUN.value,
+                EventState.IGNORED.value,
+                EventState.DEAD_LETTER.value,
+            }:
+                return EventState(current_state)
             retry_count = int(row["retry_count"])
             if retry_count >= max(0, max_retries):
                 await connection.execute(
@@ -280,6 +354,18 @@ class Repository:
             ),
         )
         return int(cursor.lastrowid)
+
+    async def latest_outgoing_for_event(self, event_id: int) -> dict[str, Any] | None:
+        row = await self.db.fetchone(
+            """
+            SELECT * FROM outgoing_replies
+            WHERE incoming_event_id = ?
+            ORDER BY attempted_at DESC, id DESC
+            LIMIT 1
+            """,
+            (event_id,),
+        )
+        return dict(row) if row is not None else None
 
     async def confirm_outgoing(self, outgoing_id: int, external_comment_id: str) -> None:
         row = await self.db.fetchone(
@@ -821,6 +907,7 @@ class Repository:
             "feed_candidates",
             "runtime_errors",
             "daily_counters",
+            "notification_cursors",
         )
         counts: dict[str, int] = {}
         for table in tables:

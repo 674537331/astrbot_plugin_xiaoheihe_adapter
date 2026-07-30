@@ -12,6 +12,7 @@ from .api_client import (
     CredentialInvalidError,
     SendUncertainError,
     XiaoheiheApiClient,
+    XiaoheiheApiError,
 )
 from .auth import AuthService, CredentialStore
 from .config_service import ConfigService
@@ -219,6 +220,61 @@ class RuntimeServices:
                         error="凭证不存在，已停止真实发送",
                     )
                 raise CredentialInvalidError("凭证不存在，已停止真实发送")
+            if event_id is not None:
+                previous = await self.repository.latest_outgoing_for_event(event_id)
+                if previous is not None:
+                    previous_status = str(previous.get("status") or "")
+                    if previous_status == EventState.SENT.value:
+                        await self.repository.mark_event(
+                            event_id,
+                            EventState.SENT,
+                            reply_text=str(previous.get("content") or text),
+                        )
+                        return {
+                            "status": EventState.SENT.value,
+                            "external_comment_id": str(previous.get("external_comment_id") or ""),
+                            "text": str(previous.get("content") or text),
+                            "duplicate_send_suppressed": True,
+                        }
+                    if previous_status in {"sending", EventState.SEND_UNKNOWN.value}:
+                        confirmed_comment_id = await self._check_uncertain_send(
+                            client,
+                            route,
+                            str(previous.get("content") or text),
+                            int(previous["id"]),
+                            attempted_at=float(previous.get("attempted_at") or time.time()),
+                        )
+                        if confirmed_comment_id:
+                            await self.repository.mark_event(
+                                event_id,
+                                EventState.SENT,
+                                reply_text=str(previous.get("content") or text),
+                            )
+                            return {
+                                "status": EventState.SENT.value,
+                                "external_comment_id": confirmed_comment_id,
+                                "text": str(previous.get("content") or text),
+                                "confirmed_existing_attempt": True,
+                            }
+                        await self.repository.mark_event(
+                            event_id,
+                            EventState.SEND_UNKNOWN,
+                            error="已有评论发送记录尚未确认，已阻止再次发送",
+                        )
+                        raise SendUncertainError(
+                            "已有评论发送记录尚未确认，已阻止再次发送",
+                            category="send_unknown",
+                        )
+                    if previous_status not in {EventState.RETRY_WAIT.value}:
+                        await self.repository.mark_event(
+                            event_id,
+                            EventState.DEAD_LETTER,
+                            error="该事件已有失败的评论发送记录，已阻止再次发送",
+                        )
+                        raise XiaoheiheApiError(
+                            "该事件已有失败的评论发送记录，已阻止再次发送",
+                            category="duplicate_send_guard",
+                        )
             outgoing_id = await self.repository.record_outgoing_attempt(
                 route.profile_id,
                 event_id,
@@ -266,16 +322,97 @@ class RuntimeServices:
                         "confirmed_after_timeout": True,
                     }
                 raise
-            except BaseException as exc:
+            except asyncio.CancelledError:
+                await self.repository.db.execute(
+                    """
+                    UPDATE outgoing_replies
+                    SET status = 'send_unknown', error = ?
+                    WHERE id = ?
+                    """,
+                    ("发送任务取消，服务端状态未知", outgoing_id),
+                )
+                if event_id is not None:
+                    await self.repository.mark_event(
+                        event_id,
+                        EventState.SEND_UNKNOWN,
+                        error="发送任务取消，服务端状态未知",
+                    )
+                raise
+            except XiaoheiheApiError as exc:
+                if exc.category == "rate_limited":
+                    await self.repository.db.execute(
+                        """
+                        UPDATE outgoing_replies
+                        SET status = 'retry_wait', error = ?
+                        WHERE id = ?
+                        """,
+                        (redact_text(str(exc))[:2000], outgoing_id),
+                    )
+                    if event_id is not None:
+                        await self.repository.schedule_retry(
+                            event_id,
+                            str(exc),
+                            max_retries=int(config["reply"]["max_retries"]),
+                        )
+                    raise
+                if exc.category in {"server", "http", "response_shape"}:
+                    await self.repository.db.execute(
+                        """
+                        UPDATE outgoing_replies
+                        SET status = 'send_unknown', error = ?
+                        WHERE id = ?
+                        """,
+                        (redact_text(str(exc))[:2000], outgoing_id),
+                    )
+                    if event_id is not None:
+                        await self.repository.mark_event(
+                            event_id,
+                            EventState.SEND_UNKNOWN,
+                            error=str(exc),
+                        )
+                    confirmed_comment_id = await self._check_uncertain_send(
+                        client,
+                        route,
+                        text,
+                        outgoing_id,
+                        attempted_at=attempted_at,
+                    )
+                    if confirmed_comment_id:
+                        if event_id is not None:
+                            await self.repository.mark_event(
+                                event_id,
+                                EventState.SENT,
+                                reply_text=text,
+                            )
+                        if proactive:
+                            await self.repository.increment_counter(
+                                route.profile_id,
+                                proactive=1,
+                            )
+                        else:
+                            await self.repository.increment_counter(
+                                route.profile_id,
+                                reply=1,
+                            )
+                        return {
+                            "status": EventState.SENT.value,
+                            "external_comment_id": confirmed_comment_id,
+                            "text": text,
+                            "confirmed_after_rejected_response": True,
+                        }
+                    raise SendUncertainError(
+                        "评论接口响应无法确认发送结果，已停止自动重试",
+                        category="send_unknown",
+                    ) from exc
                 await self.repository.db.execute(
                     "UPDATE outgoing_replies SET status = 'failed', error = ? WHERE id = ?",
                     (redact_text(str(exc))[:2000], outgoing_id),
                 )
                 if event_id is not None:
-                    await self.repository.schedule_retry(
+                    await self.repository.mark_event(
                         event_id,
-                        str(exc),
-                        max_retries=int(config["reply"]["max_retries"]),
+                        EventState.DEAD_LETTER,
+                        error=str(exc),
                     )
                 raise
             await self.repository.confirm_outgoing(outgoing_id, result.external_comment_id)
@@ -540,7 +677,7 @@ class RuntimeServices:
                 "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
             }
         return {
-            "version": "v1.0.9",
+            "version": "v1.0.10",
             "profiles": profiles,
             "adapters": [
                 {

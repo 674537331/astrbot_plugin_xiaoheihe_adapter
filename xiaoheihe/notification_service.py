@@ -4,7 +4,6 @@ import asyncio
 import itertools
 import json
 import random
-import time
 from collections import Counter, OrderedDict
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -57,7 +56,6 @@ class NotificationService:
         self._poll_summary_signatures: dict[str, tuple[Any, ...]] = {}
         self._sequence = itertools.count()
         self._stop = asyncio.Event()
-        self._startup_time = time.time()
 
     async def run(self) -> None:
         # Restore persisted work before polling starts.  This keeps a due retry from
@@ -114,39 +112,109 @@ class NotificationService:
                 continue
 
     async def poll_once(self) -> None:
-        account = await self.repository.account_state(self.profile_id)
-        first_run = not bool(account.get("last_poll_at"))
-        baseline = self._startup_time
-        backfill = int(self.config["polling"]["initial_backfill_count"])
         event_types: list[NotificationType] = []
         if self.profile.get("poll_mentions", True):
             event_types.append(NotificationType.MENTION)
         if self.profile.get("poll_replies", True):
             event_types.append(NotificationType.REPLY)
         for event_type in event_types:
-            remaining_backfill = backfill
-            cursor = ""
-            max_pages = int(self.config["polling"]["max_pages_per_poll"])
-            for page_index in range(1, max_pages + 1):
-                page = await self.client.fetch_notifications(
-                    event_type,
-                    cursor=cursor,
-                    page=page_index,
-                    page_size=int(self.config["polling"]["page_size"]),
-                )
-                self._report_poll_summary(event_type, page_index)
-                for wrapper in page.items:
-                    notification = wrapper["notification"]
-                    if first_run and notification.created_at < baseline:
-                        if remaining_backfill <= 0:
-                            continue
-                        remaining_backfill -= 1
-                    await self.enqueue(notification)
-                if not page.has_more:
+            await self._poll_event_type(event_type)
+
+    async def _poll_event_type(self, event_type: NotificationType) -> None:
+        stored_cursor = await self.repository.notification_cursor(
+            self.profile_id,
+            event_type.value,
+        )
+        page_cursor = ""
+        newest_event_id = ""
+        boundary_reached = False
+        exhausted = False
+        all_new_events_durable = True
+        first_observation = stored_cursor is None
+        remaining_backfill = int(self.config["polling"]["initial_backfill_count"])
+        max_pages = int(self.config["polling"]["max_pages_per_poll"])
+
+        for page_index in range(1, max_pages + 1):
+            page = await self.client.fetch_notifications(
+                event_type,
+                cursor=page_cursor,
+                page=page_index,
+                page_size=int(self.config["polling"]["page_size"]),
+            )
+            self._report_poll_summary(event_type, page_index)
+            notifications = [wrapper["notification"] for wrapper in page.items]
+            if notifications and not newest_event_id:
+                newest_event_id = notifications[0].external_event_id
+
+            if first_observation:
+                if page_index == 1:
+                    await self.repository.initialize_notification_cursor(
+                        self.profile_id,
+                        event_type.value,
+                        newest_event_id,
+                    )
+                    self.logger.emit(
+                        "INFO",
+                        f"{event_type.value} 通知历史基线已建立",
+                        profile_id=self.profile_id,
+                        details={
+                            "latest_event_id": newest_event_id,
+                            "initial_backfill_count": remaining_backfill,
+                        },
+                    )
+                for notification in notifications:
+                    if remaining_backfill <= 0:
+                        break
+                    remaining_backfill -= 1
+                    queued = await self.enqueue(notification)
+                    if not queued and not await self.repository.event_exists(
+                        notification.profile_id,
+                        notification.external_event_id,
+                    ):
+                        all_new_events_durable = False
+                if remaining_backfill <= 0:
                     break
-                cursor = page.next_cursor
-                if not cursor and page_index >= max_pages:
+            else:
+                for notification in notifications:
+                    if _event_at_or_before(
+                        notification.external_event_id,
+                        stored_cursor,
+                    ):
+                        boundary_reached = True
+                        break
+                    queued = await self.enqueue(notification)
+                    if not queued and not await self.repository.event_exists(
+                        notification.profile_id,
+                        notification.external_event_id,
+                    ):
+                        all_new_events_durable = False
+                if boundary_reached:
                     break
+
+            if not page.has_more:
+                exhausted = True
+                break
+            page_cursor = page.next_cursor
+
+        if first_observation or not newest_event_id:
+            return
+        if not all_new_events_durable:
+            return
+        if not (boundary_reached or exhausted):
+            self.logger.emit(
+                "WARNING",
+                f"{event_type.value} 新通知超过单轮最大页数，暂不推进消息边界",
+                profile_id=self.profile_id,
+                details={"max_pages": max_pages},
+            )
+            return
+        if _event_is_newer(newest_event_id, stored_cursor):
+            await self.repository.advance_notification_cursor(
+                self.profile_id,
+                event_type.value,
+                stored_cursor,
+                newest_event_id,
+            )
 
     def _report_poll_summary(self, event_type: NotificationType, page_index: int) -> None:
         summaries = getattr(self.client, "last_notification_polls", {})
@@ -200,16 +268,26 @@ class NotificationService:
                 profile_id=self.profile_id,
             )
             return False
-        if not recovered and not await self.repository.is_event_queueable(
-            notification.profile_id,
-            event_key,
-        ):
-            return False
+        event_id: int | None = None
+        if not recovered:
+            event_id = await self.repository.claim_event(notification)
+            if event_id is None:
+                event_id = await self.repository.claim_retry_event(notification)
+            if event_id is None:
+                return False
+            self._recovery_ids[event_key] = event_id
         decision = self.permissions.decide(notification)
         priority = 0 if decision.is_owner else 10
         try:
             self._queue.put_nowait((priority, next(self._sequence), notification))
         except asyncio.QueueFull:
+            if event_id is not None:
+                await self.repository.defer_event(
+                    event_id,
+                    "待处理队列已满，等待后续轮询恢复",
+                    delay_seconds=float(self.config["polling"]["poll_interval_seconds"]),
+                )
+                self._recovery_ids.pop(event_key, None)
             self.logger.emit(
                 "WARNING",
                 "待处理事件队列已满，停止本轮入队",
@@ -228,6 +306,43 @@ class NotificationService:
         )
         for row in rows:
             if str(row["profile_id"]) != self.profile_id:
+                continue
+            event_id = int(row["id"])
+            status = str(row["status"])
+            outgoing = await self.repository.latest_outgoing_for_event(event_id)
+            if outgoing is not None:
+                outgoing_status = str(outgoing.get("status") or "")
+                if outgoing_status == EventState.SENT.value:
+                    await self.repository.mark_event(
+                        event_id,
+                        EventState.SENT,
+                        reply_text=str(outgoing.get("content") or ""),
+                    )
+                elif outgoing_status == EventState.DRY_RUN.value:
+                    await self.repository.mark_event(
+                        event_id,
+                        EventState.DRY_RUN,
+                        reply_text=str(outgoing.get("content") or ""),
+                    )
+                elif outgoing_status in {"sending", EventState.SEND_UNKNOWN.value}:
+                    await self.repository.mark_event(
+                        event_id,
+                        EventState.SEND_UNKNOWN,
+                        error="插件重启时发现已有未确认的评论发送记录，已停止自动重发",
+                    )
+                else:
+                    await self.repository.mark_event(
+                        event_id,
+                        EventState.DEAD_LETTER,
+                        error="插件重启时发现已有失败的评论发送记录，已停止自动重发",
+                    )
+                continue
+            if status == EventState.DISPATCHED.value:
+                await self.repository.mark_event(
+                    event_id,
+                    EventState.DEAD_LETTER,
+                    error="插件重启时事件已进入 AstrBot 管线，无法确认旧管线结果，已停止重复分发",
+                )
                 continue
             try:
                 raw = json.loads(row.get("raw_json") or "{}")
@@ -253,7 +368,6 @@ class NotificationService:
                 ],
                 raw=raw if isinstance(raw, dict) else {},
             )
-            event_id = int(row["id"])
             if str(row["status"]) == EventState.RETRY_WAIT.value:
                 claimed_id = await self.repository.claim_retry_event(notification)
                 if claimed_id is None:
@@ -301,9 +415,20 @@ class NotificationService:
                 self._queue.task_done()
 
     async def _handle(self, notification: Notification, *, event_id: int | None = None) -> None:
+        event_id = event_id or self._recovery_ids.pop(
+            notification.external_event_id,
+            None,
+        )
         if await self.repository.is_self_comment(
             notification.profile_id, notification.external_comment_id
         ):
+            if event_id is not None:
+                await self.repository.mark_event(
+                    event_id,
+                    EventState.IGNORED,
+                    error="机器人自身评论通知",
+                    should_filter=True,
+                )
             return
         event_id = event_id or await self.repository.claim_event(notification)
         if event_id is None:
@@ -358,6 +483,33 @@ class NotificationService:
         self._floor_locks.clear()
         self._pending_event_keys.clear()
         self._limit_warning_users.clear()
+
+
+def _numeric_event_id(value: str) -> int | None:
+    normalized = str(value).strip()
+    if not normalized.isdecimal():
+        return None
+    return int(normalized)
+
+
+def _event_at_or_before(event_id: str, stored_cursor: str) -> bool:
+    if not stored_cursor:
+        return False
+    current_number = _numeric_event_id(event_id)
+    cursor_number = _numeric_event_id(stored_cursor)
+    if current_number is not None and cursor_number is not None:
+        return current_number <= cursor_number
+    return str(event_id) == str(stored_cursor)
+
+
+def _event_is_newer(event_id: str, stored_cursor: str) -> bool:
+    if not stored_cursor:
+        return bool(event_id)
+    current_number = _numeric_event_id(event_id)
+    cursor_number = _numeric_event_id(stored_cursor)
+    if current_number is not None and cursor_number is not None:
+        return current_number > cursor_number
+    return str(event_id) != str(stored_cursor)
 
 
 def _iso_now() -> str:

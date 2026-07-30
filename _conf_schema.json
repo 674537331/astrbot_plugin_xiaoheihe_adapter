@@ -94,7 +94,7 @@
         "description": "首次启动回溯条数",
         "type": "int",
         "default": 0,
-        "hint": "默认 0，不处理已有历史通知。"
+        "hint": "默认 0：首次成功轮询记录当前最新 message_id，之后接收新通知。"
       }
     }
   },
@@ -156,7 +156,8 @@
       "dry_run_mark_processed": {
         "description": "模拟运行后标记完成",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "保存模拟回复后完成该事件，相同通知后续轮询直接读取完成状态。"
       },
       "max_reply_chars": {
         "description": "最大回复字符数",

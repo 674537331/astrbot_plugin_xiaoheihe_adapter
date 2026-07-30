@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from xiaoheihe.api_client import SendUncertainError
+from xiaoheihe.api_client import SendUncertainError, XiaoheiheApiError
 from xiaoheihe.models import (
     Credentials,
     EventState,
@@ -77,7 +77,7 @@ async def test_runtime_dry_run_can_remain_replayable(tmp_path, fake_config) -> N
 async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
     runtime = RuntimeServices(fake_config, tmp_path)
     status = await runtime.status()
-    assert status["version"] == "v1.0.9"
+    assert status["version"] == "v1.0.10"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     await runtime.close()
@@ -187,8 +187,10 @@ class FakeSendingClient:
         self.result = result or SendResult("sent-1", True)
         self.error = error
         self.comments = []
+        self.send_calls = 0
 
     async def send_comment(self, route, content):
+        self.send_calls += 1
         if self.error:
             raise self.error
         return self.result
@@ -243,6 +245,54 @@ async def test_runtime_send_unknown_never_blindly_retries(tmp_path, fake_config)
         "SELECT status FROM outgoing_replies WHERE incoming_event_id = ?", (event_id,)
     )
     assert outgoing["status"] == "send_unknown"
+    await runtime.close()
+
+
+async def test_runtime_upstream_failed_is_terminal_and_never_resent(
+    tmp_path,
+    fake_config,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    await runtime.ensure_started()
+    event_id = await runtime.repository.claim_event(notification())
+    client = FakeSendingClient(
+        error=XiaoheiheApiError(
+            "小黑盒 API 返回非成功状态 failed: code 1000",
+            category="upstream_rejected",
+        )
+    )
+
+    async def get_client(profile_id, anonymous=False):
+        return client
+
+    runtime.get_client = get_client
+    route = RoutingTarget("default", "post", "root", "root")
+    with pytest.raises(XiaoheiheApiError, match="code 1000"):
+        await runtime.deliver(
+            event_id=event_id,
+            route=route,
+            content="must send once",
+            dry_run=False,
+        )
+    row = await runtime.repository.db.fetchone(
+        "SELECT status FROM incoming_events WHERE id = ?",
+        (event_id,),
+    )
+    assert row["status"] == EventState.DEAD_LETTER.value
+
+    with pytest.raises(XiaoheiheApiError, match="阻止再次发送"):
+        await runtime.deliver(
+            event_id=event_id,
+            route=route,
+            content="must send once",
+            dry_run=False,
+        )
+    assert client.send_calls == 1
+    outgoing_count = await runtime.repository.db.fetchone(
+        "SELECT COUNT(*) AS count FROM outgoing_replies WHERE incoming_event_id = ?",
+        (event_id,),
+    )
+    assert outgoing_count["count"] == 1
     await runtime.close()
 
 

@@ -6,7 +6,8 @@
 小黑盒 HTTP API
   → XiaoheiheApiClient（连接池、签名、限流、重试、脱敏）
   → NotificationService / FeedService
-  → Repository（事务幂等）+ PermissionService + ContextBuilder
+  → notification_cursors（分账号、分通知类型 message_id 边界）
+  → Repository（先持久化再入队、事务幂等）+ PermissionService + ContextBuilder
   → XiaoheihePlatformAdapter
   → AstrBotMessage + XiaoheiheMessageEvent
   → Platform.commit_event()
@@ -25,7 +26,7 @@ AstrBot 原生管线负责。
 - `api_client.py`：单账号长生命周期异步客户端和结构化错误。
 - `endpoints.py` / `parsers.py` / `request_signing.py`：隔离不稳定的外部契约。
 - `auth.py`：二维码状态机与原子凭证存储。
-- `notification_service.py`：分页轮询、有界优先队列、首次基线和状态推进。
+- `notification_service.py`：`message_id` 分页边界、有界优先队列、首次基线和状态推进。
 - `context_builder.py`：帖子/楼层缓存、内容清洗、图片 URL 校验、临时上下文。
 - `permission_service.py`：自身、黑名单、主人、白名单、普通触发的固定优先级。
 - `feed_service.py`：高风险主动刷帖筛选、候选与人工审核。
@@ -67,11 +68,17 @@ claimed → ignored
 `dispatched` 在提交 AstrBot 队列前写入，避免快速完成的 `sent/dry_run` 被较旧状态覆盖。
 最终完成仅包括发送成功、成功模拟运行、明确忽略或人工丢弃。
 
+热重载恢复采用保守策略：`claimed/context_ready` 且没有发送记录的事件可继续处理；
+`dispatched` 事件隔离为失败终态；已有 `sending/send_unknown` 记录的事件进入人工核对状态；
+已有失败发送记录的事件进入 `dead_letter`。该策略优先保证一个外部通知最多触发一次评论。
+
 ## 并发
 
 - 每个 `profile_id` 只有一个轮询器；
 - 有界优先队列限制总积压和单用户积压；
-- 入队前通过 SQLite 状态索引和进程内事件键过滤已完成、处理中及重复通知；
+- 首次轮询把当前最新 `message_id` 写入 `notification_cursors`，默认从此后的新通知开始；
+- 新通知先原子写入 SQLite 再进入队列，持久化成功且扫描到旧边界后才推进游标；
+- SQLite 唯一约束、发送记录和进程内事件键共同过滤重复通知；
 - 主人事件提高优先级但不突破硬上限；
 - 帖子/楼层上下文网络读取在锁外完成；同一楼层从原生事件提交到最终发送或超时使用串行锁，
   不同楼层受 worker 数量限制；
@@ -88,5 +95,6 @@ claimed → ignored
 - 图片仅接受无用户信息的公开 HTTPS URL，并在提交组件前校验 DNS 解析结果；
 - v1.0.0 使用图片 URL 直传，本地图片缓存保持为空；
 - 外部内容置于 `<xiaoheihe_context trust="untrusted">` 用户侧临时片段中；
-- POST 评论超时进入 `send_unknown`，核对不到时不盲目重试。
+- POST 评论超时进入 `send_unknown`，核对结果不明确时保持人工检查状态；
+- 评论接口明确返回 `status=failed` 时进入失败终态，事件级发送闸门拦截第二次 POST；
 - 主动候选批准复用与普通回复相同的楼层锁、发送记录、自身评论记录和超时核对链路。

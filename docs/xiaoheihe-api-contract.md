@@ -121,6 +121,30 @@ Agent Runner 均被调用。该结果验证的是接收与生成链路，真实�
 并使用进程内待处理事件键过滤分页内和相邻轮询中的重复项；到期的 `retry_wait` 事件仍可
 正常重新入队。此修正不改变小黑盒请求参数或回复目标。
 
+### v1.0.10 消息边界与评论终态修正
+
+AstrBot 4.26.8 的真实日志显示，适配器在一次启动周期中依次重新提交“测试九、测试八、
+测试五、测试四、测试三、测试二、测试一下”等既有通知。小黑盒消息中心持续返回历史页，
+部分响应缺少可靠创建时间；解析层为缺省时间填入当前时间后，v1.0.9 的启动时间判断无法
+识别这些历史记录。
+
+重新核对固定快照 `SomeOvO/xhhRobot@5efd9449` 后确认：
+
+- `xhh/main.go` 明确假定消息按 `message_id` 从大到小返回，并保存上一轮最大消息 ID；
+- 首次运行默认先读取当前最新消息 ID，再把已有消息写为已处理历史；
+- `db/main.go` 以 `msg_id` 唯一插入，重启后从数据库恢复最新边界；
+- `xhh/reply.go` 对评论响应 `status=failed` 直接标记完成，避免重复请求。
+
+v1.0.10 采用独立 Python 实现：`notification_cursors` 按账号和通知类型保存最新
+`message_id`，首次轮询默认只建立基线；新事件先写入 `incoming_events`，扫描到旧边界且
+全部新事件已持久化后才推进游标。真实日志中的评论响应
+`status=failed/msg=出现一点问题/code=1000` 归为明确拒绝并进入失败终态。服务端结果
+不明确的网络、5xx 或响应结构异常进入 `send_unknown`，按近期机器人评论核对，发送闸门
+保留已有尝试并拦截第二次 POST。
+
+真实环境已观察到评论创建请求和 `failed/code 1000` 返回；成功响应中的评论 ID、近期评论
+可见延迟和全部错误码语义继续按待验证项管理。
+
 重新核对 `SomeOvO/xhhRobot` 的公开轮询行为与 MIT 许可的
 `HadeonYu/heybox-bot@c2b5797` 后，v1.0.8 独立实现以下规则：
 
@@ -147,9 +171,9 @@ Python 独立实现。
 | --- | --- | --- |
 | [`xhh/login.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/login.go) | 请求二维码、按二维码 URL 参数轮询扫码状态、从成功响应 Cookie 取得登录身份 | `auth.py` 与 `api_client.py` 复用同一匿名异步客户端，凭证由 `CredentialStore` 原子持久化 |
 | [`xhh/sendreq.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/sendreq.go) | Web 客户端参数、稳定设备 ID、动态请求签名；评论使用 Workshop 主机 | `api_client.py` 集中添加公共参数并复用连接池；签名来自许可清晰的独立实现 |
-| [`xhh/main.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/main.go) | 用 `message_type=16`、`offset/limit/no_more` 拉取“@我的”，按消息 ID 翻页至上一轮边界 | `fetch_notifications()` 保留相同分类查询；解析层接收响应类型 16/17，SQLite 唯一约束负责跨重启幂等 |
+| [`xhh/main.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/main.go) | 用 `message_type=16`、`offset/limit/no_more` 拉取“@我的”，按消息 ID 翻页至上一轮边界；首次默认以当前最新 ID 建立历史基线 | `notification_cursors` 按账号和通知类型保存边界；解析层接收响应类型 16/17，SQLite 唯一约束负责跨重启幂等 |
 | [`xhh/GetLinkInfo.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/GetLinkInfo.go) | `/bbs/app/link/tree` 返回标题、JSON 富文本和图片 | `parsers.py` 规范化文本与图片，`ContextBuilder` 将背景作为本轮不可信临时上下文 |
-| [`xhh/reply.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/reply.go) | Workshop 评论接口使用 `is_cy/link_id/reply_id/root_id/text` 表单 | `send_comment()` 使用结构化 `RoutingTarget` 生成相同字段，并把超时转入 `send_unknown` 核对 |
+| [`xhh/reply.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/reply.go) | Workshop 评论接口使用 `is_cy/link_id/reply_id/root_id/text` 表单；`status=failed` 作为完成状态处理 | `send_comment()` 使用结构化 `RoutingTarget` 生成相同字段；明确拒绝进入失败终态，超时与不明确响应进入 `send_unknown` 核对 |
 | [`xhh/owner.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/owner.go) | 以数字 UID 进行允许列表判断 | `PermissionService` 全程按字符串 UID 处理主人、黑白名单和独立管理员映射 |
 | [`xhh/start.go`](https://github.com/SomeOvO/xhhRobot/blob/5efd9449e191feece1c6e2ff5f54a1d37fdd03df/xhh/start.go) | 通知获取与回复处理分为后台任务 | `TaskManager` 管理轮询器、有界回复 worker、清理、健康检查和登录任务 |
 

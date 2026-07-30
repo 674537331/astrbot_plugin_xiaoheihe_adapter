@@ -187,12 +187,30 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON incoming_events(status, next_retry_at, updated_at);
         """,
     ),
+    (
+        4,
+        """
+        CREATE TABLE IF NOT EXISTS notification_cursors (
+            profile_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            last_event_id TEXT NOT NULL DEFAULT '',
+            initialized_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(profile_id, event_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_notification_cursors_updated
+            ON notification_cursors(updated_at);
+        CREATE INDEX IF NOT EXISTS idx_outgoing_event_time
+            ON outgoing_replies(incoming_event_id, attempted_at DESC);
+        """,
+    ),
 )
 
 MIGRATION_MARKERS = {
     1: "INSERT INTO schema_migrations(version) VALUES (1);",
     2: "INSERT INTO schema_migrations(version) VALUES (2);",
     3: "INSERT INTO schema_migrations(version) VALUES (3);",
+    4: "INSERT INTO schema_migrations(version) VALUES (4);",
 }
 
 

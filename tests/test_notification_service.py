@@ -94,6 +94,10 @@ async def test_first_poll_does_not_enqueue_history(repository) -> None:
     service = make_service(repository, [notice("old", time.time() - 60)], dispatch)
     await service.poll_once()
     assert service._queue.empty()
+    assert (
+        await repository.notification_cursor("default", NotificationType.MENTION.value)
+        == "event-old"
+    )
 
 
 async def test_optional_first_backfill_and_worker_dispatch(repository) -> None:
@@ -125,7 +129,11 @@ async def test_real_type_17_mention_reaches_event_record(repository) -> None:
     async def dispatch(event_id, *args):
         await repository.mark_event(event_id, EventState.DRY_RUN, reply_text="fixture reply")
 
-    await repository.update_account_state("default", last_poll_at="2026-07-29T00:00:00Z")
+    await repository.initialize_notification_cursor(
+        "default",
+        NotificationType.MENTION.value,
+        "89999",
+    )
     service = make_service(repository, [], dispatch)
     service.client = FixtureClient()
     await service.poll_once()
@@ -284,6 +292,16 @@ async def test_poll_uses_pages_and_skips_duplicate_claim(repository) -> None:
 
     service = make_service(repository, [], dispatch)
     service.client = PagedClient()
+    await repository.initialize_notification_cursor(
+        "default",
+        NotificationType.MENTION.value,
+        "baseline",
+    )
+    await repository.initialize_notification_cursor(
+        "default",
+        NotificationType.REPLY.value,
+        "baseline",
+    )
     await service.poll_once()
     assert len(calls) == 4  # two pages for mentions and two pages for replies
     assert service._queue.qsize() == 1
@@ -293,6 +311,85 @@ async def test_poll_uses_pages_and_skips_duplicate_claim(repository) -> None:
         await service._handle(item)
         service._queue.task_done()
     assert len(dispatched) == 1
+
+
+async def test_message_id_baseline_blocks_history_with_missing_timestamp(repository) -> None:
+    old = replace(
+        notice("100", time.time()),
+        external_event_id="100",
+        notification_id="100",
+    )
+    client = FakeClient([old])
+    dispatched = []
+
+    async def dispatch(*args):
+        dispatched.append(args)
+
+    service = make_service(repository, [], dispatch)
+    service.client = client
+    await service.poll_once()
+    assert service._queue.empty()
+
+    newer = replace(
+        notice("101", time.time() - 86400),
+        external_event_id="101",
+        external_comment_id="comment-101",
+        notification_id="101",
+    )
+    client.notifications = [newer, old]
+    await service.poll_once()
+    assert service._queue.qsize() == 1
+    _, _, queued = service._queue.get_nowait()
+    assert queued.external_event_id == "101"
+    assert await repository.notification_cursor("default", NotificationType.MENTION.value) == "101"
+
+
+async def test_restart_quarantines_dispatched_event_instead_of_redispatching(repository) -> None:
+    current = notice("already-dispatched", time.time())
+    event_id = await repository.claim_event(current)
+    assert event_id is not None
+    await repository.mark_event(event_id, EventState.DISPATCHED)
+    dispatched = []
+
+    async def dispatch(*args):
+        dispatched.append(args)
+
+    service = make_service(repository, [], dispatch)
+    assert await service.recover_pending() == 0
+    assert service._queue.empty()
+    row = await repository.db.fetchone(
+        "SELECT status, error FROM incoming_events WHERE id = ?",
+        (event_id,),
+    )
+    assert row["status"] == EventState.DEAD_LETTER.value
+    assert "停止重复分发" in row["error"]
+    assert not dispatched
+
+
+async def test_restart_does_not_retry_event_with_failed_send_attempt(repository) -> None:
+    current = notice("failed-send", time.time())
+    event_id = await repository.claim_event(current)
+    assert event_id is not None
+    await repository.defer_event(event_id, "send failed", delay_seconds=1)
+    await repository.db.execute(
+        "UPDATE incoming_events SET next_retry_at = 0 WHERE id = ?",
+        (event_id,),
+    )
+    await repository.record_outgoing_attempt(
+        "default",
+        event_id,
+        current.route,
+        "reply",
+        "failed",
+        error="upstream rejected",
+    )
+    service = make_service(repository, [], lambda *args: None)
+    assert await service.recover_pending() == 0
+    row = await repository.db.fetchone(
+        "SELECT status FROM incoming_events WHERE id = ?",
+        (event_id,),
+    )
+    assert row["status"] == EventState.DEAD_LETTER.value
 
 
 async def test_worker_drains_one_item_and_stop_is_idempotent(repository) -> None:
