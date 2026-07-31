@@ -110,6 +110,60 @@ async def test_retry_schedule_reclaims_atomically_and_dead_letters(repository) -
     assert row["next_retry_at"] is None
 
 
+async def test_retry_schedule_is_idempotent_until_reclaimed(repository) -> None:
+    event_id = await repository.claim_event(make_notification("retry-once"))
+    assert event_id is not None
+    assert (
+        await repository.schedule_retry(event_id, "first", max_retries=3) is EventState.RETRY_WAIT
+    )
+    assert (
+        await repository.schedule_retry(event_id, "duplicate scheduling", max_retries=3)
+        is EventState.RETRY_WAIT
+    )
+    row = await repository.db.fetchone(
+        "SELECT retry_count, error FROM incoming_events WHERE id = ?",
+        (event_id,),
+    )
+    assert row["retry_count"] == 1
+    assert row["error"] == "first"
+
+
+async def test_notification_cursor_initializes_and_advances_atomically(repository) -> None:
+    assert await repository.notification_cursor("default", "mention") is None
+    assert await repository.initialize_notification_cursor("default", "mention", "100")
+    assert not await repository.initialize_notification_cursor("default", "mention", "99")
+    assert await repository.notification_cursor("default", "mention") == "100"
+    assert not await repository.advance_notification_cursor(
+        "default",
+        "mention",
+        "stale",
+        "101",
+    )
+    assert await repository.advance_notification_cursor(
+        "default",
+        "mention",
+        "100",
+        "101",
+    )
+    assert await repository.notification_cursor("default", "mention") == "101"
+
+
+async def test_due_retry_query_only_returns_due_rows(repository) -> None:
+    due = make_notification("due")
+    later = make_notification("later")
+    due_id = await repository.claim_event(due)
+    later_id = await repository.claim_event(later)
+    await repository.defer_event(due_id, "due", delay_seconds=60)
+    await repository.defer_event(later_id, "later", delay_seconds=60)
+    await repository.db.execute(
+        "UPDATE incoming_events SET next_retry_at = 0 WHERE id = ?",
+        (due_id,),
+    )
+
+    rows = await repository.due_retry_events(profile_id="default")
+    assert [row["id"] for row in rows] == [due_id]
+
+
 async def test_account_error_feed_and_diagnostics(repository) -> None:
     await repository.update_account_state("default", status="success", uid="1", nickname="Bot")
     assert (await repository.account_state("default"))["uid"] == "1"
@@ -129,7 +183,7 @@ async def test_account_error_feed_and_diagnostics(repository) -> None:
     assert await repository.review_feed_candidate(candidate_id, "approved", "edited")
     assert (await repository.feed_candidate(candidate_id))["edited_text"] == "edited"
     snapshot = await repository.diagnostic_snapshot()
-    assert snapshot["schema_version"] == 3
+    assert snapshot["schema_version"] == 5
     assert snapshot["counts"]["feed_candidates"] == 1
     assert snapshot["account_states"][0]["nickname"] == "Bot"
     assert snapshot["recent_errors"][0]["category"] == "response_shape"

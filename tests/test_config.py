@@ -13,9 +13,14 @@ from xiaoheihe.config_service import (
 
 def test_config_defaults_and_profile(fake_config) -> None:
     fake_config.pop("network")
+    fake_config.pop("providers")
     service = ConfigService(fake_config)
     assert service.profile("default")["dry_run"] is True
     assert service.snapshot()["network"]["max_pending_events"] == 50
+    assert service.snapshot()["providers"] == {
+        "llm_provider_id": "",
+        "image_provider_id": "",
+    }
 
 
 @pytest.mark.asyncio
@@ -63,3 +68,15 @@ def test_config_rejects_unsafe_storage_and_timeout_values(fake_config) -> None:
     safe["network"]["request_timeout_seconds"] = 0
     with pytest.raises(ConfigValidationError, match="request_timeout_seconds"):
         ConfigService(safe)
+
+
+def test_config_rejects_invalid_provider_ids() -> None:
+    invalid_type = copy.deepcopy(DEFAULT_CONFIG)
+    invalid_type["providers"]["llm_provider_id"] = 123
+    with pytest.raises(ConfigValidationError, match="llm_provider_id"):
+        ConfigService(invalid_type)
+
+    too_long = copy.deepcopy(DEFAULT_CONFIG)
+    too_long["providers"]["image_provider_id"] = "x" * 257
+    with pytest.raises(ConfigValidationError, match="image_provider_id"):
+        ConfigService(too_long)

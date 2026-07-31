@@ -11,7 +11,7 @@
       <div>
         <p class="eyebrow">ASTRBOT PLATFORM ADAPTER</p>
         <h1>小黑盒管理</h1>
-        <p id="hero-summary">安全登录、原生事件、dry-run 与人工审核。</p>
+        <p id="hero-summary">安全登录、原生事件、模拟运行与人工审核。</p>
       </div>
       <button id="refresh-all" class="secondary">刷新总览</button>
     </header>
@@ -64,14 +64,14 @@
           <div class="section-heading">
             <div>
               <h2>统一插件配置</h2>
-              <p>这里直接编辑 AstrBot 原生插件配置，管理页与插件设置共享同一数据源。</p>
+              <p>AstrBot 原生插件设置与本页共享同一个配置对象；保存后按需热重载后台任务。</p>
             </div>
             <div class="button-row">
               <button id="save-config">校验并保存</button>
               <button id="restore-defaults" class="secondary">恢复默认</button>
             </div>
           </div>
-          <textarea id="config-editor" spellcheck="false" aria-label="插件配置 JSON"></textarea>
+          <div id="config-form" class="config-form" aria-label="插件配置表单"></div>
           <p id="config-result" class="result"></p>
         </div>
       </section>
@@ -81,7 +81,7 @@
           <div class="filters">
             <select id="event-status">
               <option value="">全部状态</option>
-              <option>sent</option><option>dry_run</option><option>ignored</option>
+              <option>sent</option><option value="generated">已生成</option><option value="dry_run">模拟运行</option><option>ignored</option>
               <option>retry_wait</option><option>send_unknown</option>
               <option>dead_letter</option><option>dispatched</option>
             </select>
@@ -146,6 +146,22 @@
       </section>
     </main>
 
+    <div id="confirm-overlay" class="confirm-overlay" hidden>
+      <section
+        class="confirm-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        aria-describedby="confirm-message"
+      >
+        <h2 id="confirm-title">请确认操作</h2>
+        <p id="confirm-message"></p>
+        <div class="button-row confirm-actions">
+          <button id="confirm-cancel" class="secondary" type="button">取消</button>
+          <button id="confirm-accept" type="button">确认</button>
+        </div>
+      </section>
+    </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script type="module" src="./app.js"></script>
   </body>

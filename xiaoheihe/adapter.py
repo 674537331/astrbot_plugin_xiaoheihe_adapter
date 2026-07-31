@@ -30,11 +30,38 @@ from .notification_service import NotificationService
 from .permission_service import PermissionService
 from .runtime import get_runtime
 
+MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS = 900
+MIN_IMAGE_REPLY_GRACE_SECONDS = 15
+MAX_IMAGE_REPLY_GRACE_SECONDS = 60
+
+
+def effective_reply_timeout_seconds(
+    *,
+    base_timeout_seconds: int,
+    image_count: int,
+    image_timeout_seconds: int,
+) -> int:
+    """Add bounded processing time for AstrBot's per-image vision preprocessing."""
+    base_timeout = max(5, int(base_timeout_seconds))
+    count = max(0, int(image_count))
+    if count == 0:
+        return base_timeout
+    per_image_grace = min(
+        MAX_IMAGE_REPLY_GRACE_SECONDS,
+        max(MIN_IMAGE_REPLY_GRACE_SECONDS, int(image_timeout_seconds) * 2),
+    )
+    return min(
+        MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS,
+        base_timeout + count * per_image_grace,
+    )
+
+
 DEFAULT_PLATFORM_CONFIG = {
     "id": "xiaoheihe",
     "enable": False,
     "profile_id": "default",
 }
+ADAPTER_LOGO_PATH = "../logo.png"
 
 
 @register_platform_adapter(
@@ -42,6 +69,7 @@ DEFAULT_PLATFORM_CONFIG = {
     "小黑盒平台适配器",
     default_config_tmpl=DEFAULT_PLATFORM_CONFIG,
     adapter_display_name="小黑盒",
+    logo_path=ADAPTER_LOGO_PATH,
     support_streaming_message=False,
 )
 class XiaoheihePlatformAdapter(Platform):
@@ -74,6 +102,7 @@ class XiaoheihePlatformAdapter(Platform):
             id=str(self.config.get("id", "xiaoheihe")),
             default_config_tmpl={**DEFAULT_PLATFORM_CONFIG, **self.config},
             adapter_display_name="小黑盒",
+            logo_path=ADAPTER_LOGO_PATH,
             support_streaming_message=False,
         )
 
@@ -94,7 +123,9 @@ class XiaoheihePlatformAdapter(Platform):
                     break
                 try:
                     await self._start_profile_services()
-                except BaseException as exc:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
                     runtime.logging.emit(
                         "ERROR",
                         f"适配器后台服务启动失败: {exc}",
@@ -190,7 +221,7 @@ class XiaoheihePlatformAdapter(Platform):
                 get_runtime().clear_proactive_circuit(str(self.config.get("profile_id", "default")))
             except asyncio.CancelledError:
                 raise
-            except BaseException as exc:
+            except Exception as exc:
                 get_runtime().report_proactive_circuit(
                     str(self.config.get("profile_id", "default")),
                     exc,
@@ -228,6 +259,7 @@ class XiaoheihePlatformAdapter(Platform):
         candidate_metadata: dict[str, Any] | None = None,
     ) -> None:
         runtime = get_runtime()
+        runtime_config = runtime.config.snapshot()
         credentials = runtime.credentials.load(notification.profile_id)
         if credentials is None:
             raise RuntimeError("分发事件时账号凭证不存在")
@@ -242,8 +274,15 @@ class XiaoheihePlatformAdapter(Platform):
             nickname=notification.sender_nickname,
         )
         components = [Plain(context.user_text)]
-        if runtime.config.snapshot()["context"]["enable_image_understanding"]:
+        image_understanding_enabled = bool(runtime_config["context"]["enable_image_understanding"])
+        if image_understanding_enabled:
             components.extend(Image(file=url, url=url) for url in context.image_urls)
+        base_reply_timeout = int(runtime_config["reply"]["reply_timeout_seconds"])
+        effective_reply_timeout = effective_reply_timeout_seconds(
+            base_timeout_seconds=base_reply_timeout,
+            image_count=len(context.image_urls) if image_understanding_enabled else 0,
+            image_timeout_seconds=int(runtime_config["context"]["image_timeout_seconds"]),
+        )
         message.message = components
         message.message_str = context.user_text
         message.timestamp = int(notification.created_at or time.time())
@@ -256,6 +295,8 @@ class XiaoheihePlatformAdapter(Platform):
             "post_author_uid": str(notification.post_author_uid),
             "image_urls": list(context.image_urls),
             "warnings": list(context.warnings),
+            "reply_timeout_base_seconds": base_reply_timeout,
+            "reply_timeout_effective_seconds": effective_reply_timeout,
         }
         profile = runtime.config.profile(notification.profile_id)
         event = XiaoheiheMessageEvent(
@@ -269,7 +310,7 @@ class XiaoheihePlatformAdapter(Platform):
             dry_run=bool(profile.get("dry_run", True)),
             capture_candidate=capture_candidate,
             candidate_metadata=candidate_metadata,
-            reply_timeout_seconds=int(runtime.config.snapshot()["reply"]["reply_timeout_seconds"]),
+            reply_timeout_seconds=effective_reply_timeout,
         )
         event.is_wake = True
         event.is_at_or_wake_command = True
@@ -277,6 +318,9 @@ class XiaoheihePlatformAdapter(Platform):
             event.role = "admin"
         event.set_extra("xiaoheihe_dynamic_context", context.dynamic_context)
         event.set_extra("xiaoheihe_route", notification.route.as_dict())
+        fixed_llm_provider_id = str(runtime_config["providers"]["llm_provider_id"]).strip()
+        if fixed_llm_provider_id:
+            event.set_extra("selected_provider", fixed_llm_provider_id)
         self.commit_event(event)
         try:
             await asyncio.wait_for(

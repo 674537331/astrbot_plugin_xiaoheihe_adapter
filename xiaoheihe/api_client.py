@@ -159,7 +159,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.0.7",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.1.3",
                 },
             )
         if self.credentials:
@@ -230,7 +230,7 @@ class XiaoheiheApiClient:
             try:
                 offset = max(0, int(cursor))
             except ValueError:
-                pass
+                offset = (max(1, page) - 1) * normalized_page_size
         params: dict[str, Any] = {
             "offset": offset,
             "limit": normalized_page_size,
@@ -266,20 +266,51 @@ class XiaoheiheApiClient:
     async def fetch_thread_context(
         self, post_id: str, *, root_comment_id: str = ""
     ) -> ThreadContext:
-        params: dict[str, Any] = {"link_id": post_id, "h_src": ""}
-        if root_comment_id:
-            params["root_comment_id"] = root_comment_id
-        response = await self._request(EndpointName.POST_TREE, params=params)
+        # The reference mobile-web route returns the complete original post
+        # when queried by link_id alone. A root-specific query may return a
+        # narrowed comment tree, so keep the two sources separate and merge.
+        post_response = await self._request(
+            EndpointName.POST_TREE,
+            params={"link_id": post_id, "h_src": ""},
+        )
         try:
-            return parse_thread_context(response.payload, post_id)
+            post_context = parse_thread_context(post_response.payload, post_id)
         except ResponseShapeError as exc:
             error = ResponseContractError(
                 str(exc),
                 category="response_shape",
-                details=_response_shape_summary(response.payload),
+                details={
+                    "context_source": "post",
+                    **_response_shape_summary(post_response.payload),
+                },
             )
             self._remember_error(error)
             raise error from exc
+        if not root_comment_id:
+            return post_context
+
+        thread_response = await self._request(
+            EndpointName.POST_TREE,
+            params={
+                "link_id": post_id,
+                "root_comment_id": root_comment_id,
+                "h_src": "",
+            },
+        )
+        try:
+            thread_context = parse_thread_context(thread_response.payload, post_id)
+        except ResponseShapeError as exc:
+            error = ResponseContractError(
+                str(exc),
+                category="response_shape",
+                details={
+                    "context_source": "thread",
+                    **_response_shape_summary(thread_response.payload),
+                },
+            )
+            self._remember_error(error)
+            raise error from exc
+        return _merge_post_and_thread_context(post_context, thread_context)
 
     async def send_comment(self, route: RoutingTarget, content: str) -> SendResult:
         body = {
@@ -541,6 +572,21 @@ class XiaoheiheApiClient:
         self._client = None
         if client is not None and self._owns_client:
             await client.aclose()
+
+
+def _merge_post_and_thread_context(
+    post_context: ThreadContext,
+    thread_context: ThreadContext,
+) -> ThreadContext:
+    return ThreadContext(
+        post_id=post_context.post_id or thread_context.post_id,
+        title=post_context.title or thread_context.title,
+        body=post_context.body or thread_context.body,
+        author_uid=post_context.author_uid or thread_context.author_uid,
+        author_name=post_context.author_name or thread_context.author_name,
+        comments=thread_context.comments or post_context.comments,
+        image_urls=list(dict.fromkeys(post_context.image_urls + thread_context.image_urls)),
+    )
 
 
 def _backoff(attempt: int) -> float:

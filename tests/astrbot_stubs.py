@@ -179,7 +179,14 @@ def install() -> None:
 
     event.AstrMessageEvent = AstrMessageEvent
     event.MessageChain = MessageChain
-    event.filter = types.SimpleNamespace(on_llm_request=lambda: lambda function: function)
+
+    def passthrough_filter(**kwargs):
+        return lambda function: function
+
+    event.filter = types.SimpleNamespace(
+        on_llm_request=passthrough_filter,
+        on_llm_response=passthrough_filter,
+    )
     components.Plain = Plain
     components.Image = Image
     platform.AstrBotMessage = AstrBotMessage
@@ -198,6 +205,19 @@ def install() -> None:
     class ProviderRequest:
         def __init__(self) -> None:
             self.extra_user_content_parts = []
+            self.image_urls = []
+
+    class LLMResponse:
+        def __init__(
+            self,
+            role: str = "assistant",
+            completion_text: str = "",
+            *,
+            is_chunk: bool = False,
+        ) -> None:
+            self.role = role
+            self.completion_text = completion_text
+            self.is_chunk = is_chunk
 
     class TextPart:
         def __init__(self, text: str) -> None:
@@ -227,6 +247,7 @@ def install() -> None:
         return lambda cls: cls
 
     provider.ProviderRequest = ProviderRequest
+    provider.LLMResponse = LLMResponse
     core_agent_message.TextPart = TextPart
     api.AstrBotConfig = AstrBotConfig
     star.Context = object

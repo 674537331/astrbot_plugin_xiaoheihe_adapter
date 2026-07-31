@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from tests.astrbot_stubs import REQUEST, Query
 from xiaoheihe.config_service import ConfigService
 from xiaoheihe.web_api import WebApiController
@@ -16,6 +18,31 @@ class FakeContext:
 class FakeRuntime:
     def __init__(self, config) -> None:
         self.config = ConfigService(config)
+
+
+def test_config_save_shows_success_toast() -> None:
+    source = (Path(__file__).resolve().parents[1] / "pages" / "xiaoheihe" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    save_handler = source.split('"save-config"', maxsplit=1)[1].split(
+        '"restore-defaults"', maxsplit=1
+    )[0]
+    assert 'toast(changed === "无变化"' in save_handler
+    assert '"success"' in save_handler
+
+
+def test_plugin_page_uses_embedded_confirmation_for_candidate_approval() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "pages" / "xiaoheihe" / "app.js").read_text(encoding="utf-8")
+    html = (root / "pages" / "xiaoheihe" / "index.html").read_text(encoding="utf-8")
+    approval_handler = source.split('approve.textContent = "批准"', maxsplit=1)[1].split(
+        'reject.textContent = "拒绝"', maxsplit=1
+    )[0]
+    assert 'id="confirm-overlay"' in html
+    assert "await confirmAction(" in approval_handler
+    assert "window.confirm(" not in source
+    assert "if (!confirm(" not in source
+    assert 'result.result === "dry_run"' in approval_handler
 
 
 def test_registers_only_plugin_prefixed_routes(fake_config) -> None:
@@ -43,10 +70,36 @@ async def test_config_api_reads_and_saves_same_object(fake_config) -> None:
     assert fake_config.save_count == 1
 
 
+async def test_config_schema_api_exposes_structured_form_metadata(fake_config) -> None:
+    controller = WebApiController(FakeRuntime(fake_config))
+    REQUEST.username = "admin"
+    response = await controller.config_schema()
+    assert response["status_code"] == 200
+    schema = response["json"]
+    assert schema["profiles"]["type"] == "template_list"
+    assert schema["polling"]["items"]["poll_interval_seconds"]["type"] == "int"
+    assert schema["providers"]["items"]["llm_provider_id"]["_special"] == ("select_provider")
+    assert schema["providers"]["items"]["image_provider_id"]["_special"] == ("select_provider")
+    assert schema["logging"]["items"]["level"]["options"] == [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+    ]
+
+
 async def test_config_api_rejects_unknown_group(fake_config) -> None:
     controller = WebApiController(FakeRuntime(fake_config))
     REQUEST.username = "admin"
     REQUEST._json = {"unexpected": {}}
+    response = await controller.config_save()
+    assert response["status_code"] == 400
+
+
+async def test_config_api_rejects_non_object_body(fake_config) -> None:
+    controller = WebApiController(FakeRuntime(fake_config))
+    REQUEST.username = "admin"
+    REQUEST._json = []
     response = await controller.config_save()
     assert response["status_code"] == 400
 

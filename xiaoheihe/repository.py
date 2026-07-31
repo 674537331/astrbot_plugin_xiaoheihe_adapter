@@ -54,7 +54,7 @@ class Repository:
                     notification.parent_comment_id,
                     notification.content,
                     raw_json,
-                    notification.created_at,
+                    now,
                     now,
                     now,
                 ),
@@ -101,6 +101,86 @@ class Repository:
             )
             result = await row.fetchone()
             return int(result["id"]) if result else None
+
+    async def is_event_queueable(self, profile_id: str, external_event_id: str) -> bool:
+        row = await self.db.fetchone(
+            """
+            SELECT status, next_retry_at
+            FROM incoming_events
+            WHERE profile_id = ? AND external_event_id = ?
+            """,
+            (profile_id, external_event_id),
+        )
+        if row is None:
+            return True
+        return (
+            str(row["status"]) == EventState.RETRY_WAIT.value
+            and float(row["next_retry_at"] or 0) <= time.time()
+        )
+
+    async def event_exists(self, profile_id: str, external_event_id: str) -> bool:
+        row = await self.db.fetchone(
+            """
+            SELECT 1 FROM incoming_events
+            WHERE profile_id = ? AND external_event_id = ?
+            """,
+            (profile_id, external_event_id),
+        )
+        return row is not None
+
+    async def notification_cursor(
+        self,
+        profile_id: str,
+        event_type: str,
+    ) -> str | None:
+        row = await self.db.fetchone(
+            """
+            SELECT last_event_id FROM notification_cursors
+            WHERE profile_id = ? AND event_type = ?
+            """,
+            (profile_id, event_type),
+        )
+        return str(row["last_event_id"]) if row is not None else None
+
+    async def initialize_notification_cursor(
+        self,
+        profile_id: str,
+        event_type: str,
+        last_event_id: str,
+    ) -> bool:
+        now = time.time()
+        cursor = await self.db.execute(
+            """
+            INSERT OR IGNORE INTO notification_cursors(
+                profile_id, event_type, last_event_id, initialized_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (profile_id, event_type, str(last_event_id), now, now),
+        )
+        return cursor.rowcount == 1
+
+    async def advance_notification_cursor(
+        self,
+        profile_id: str,
+        event_type: str,
+        previous_event_id: str,
+        last_event_id: str,
+    ) -> bool:
+        cursor = await self.db.execute(
+            """
+            UPDATE notification_cursors
+            SET last_event_id = ?, updated_at = ?
+            WHERE profile_id = ? AND event_type = ? AND last_event_id = ?
+            """,
+            (
+                str(last_event_id),
+                time.time(),
+                profile_id,
+                event_type,
+                str(previous_event_id),
+            ),
+        )
+        return cursor.rowcount == 1
 
     async def mark_event(
         self,
@@ -152,12 +232,22 @@ class Repository:
         now = time.time()
         async with self.db.transaction() as connection:
             cursor = await connection.execute(
-                "SELECT retry_count FROM incoming_events WHERE id = ?",
+                "SELECT retry_count, status FROM incoming_events WHERE id = ?",
                 (event_id,),
             )
             row = await cursor.fetchone()
             if row is None:
                 raise ValueError("待重试事件不存在")
+            current_state = str(row["status"])
+            if current_state in {
+                EventState.RETRY_WAIT.value,
+                EventState.SEND_UNKNOWN.value,
+                EventState.SENT.value,
+                EventState.DRY_RUN.value,
+                EventState.IGNORED.value,
+                EventState.DEAD_LETTER.value,
+            }:
+                return EventState(current_state)
             retry_count = int(row["retry_count"])
             if retry_count >= max(0, max_retries):
                 await connection.execute(
@@ -218,6 +308,27 @@ class Repository:
         )
         return [dict(row) for row in rows]
 
+    async def due_retry_events(
+        self, limit: int = 50, *, profile_id: str = ""
+    ) -> list[dict[str, Any]]:
+        rows = await self.db.fetchall(
+            """
+            SELECT * FROM incoming_events
+            WHERE (? = '' OR profile_id = ?)
+              AND status = 'retry_wait'
+              AND COALESCE(next_retry_at, 0) <= ?
+            ORDER BY next_retry_at ASC, updated_at ASC
+            LIMIT ?
+            """,
+            (
+                profile_id,
+                profile_id,
+                time.time(),
+                max(1, min(limit, 500)),
+            ),
+        )
+        return [dict(row) for row in rows]
+
     async def is_self_comment(self, profile_id: str, external_comment_id: str) -> bool:
         row = await self.db.fetchone(
             """
@@ -264,6 +375,18 @@ class Repository:
             ),
         )
         return int(cursor.lastrowid)
+
+    async def latest_outgoing_for_event(self, event_id: int) -> dict[str, Any] | None:
+        row = await self.db.fetchone(
+            """
+            SELECT * FROM outgoing_replies
+            WHERE incoming_event_id = ?
+            ORDER BY attempted_at DESC, id DESC
+            LIMIT 1
+            """,
+            (event_id,),
+        )
+        return dict(row) if row is not None else None
 
     async def confirm_outgoing(self, outgoing_id: int, external_comment_id: str) -> None:
         row = await self.db.fetchone(
@@ -546,13 +669,14 @@ class Repository:
         author_uid: str,
         text: str,
         reason: str,
+        incoming_event_id: int | None = None,
     ) -> int | None:
         cursor = await self.db.execute(
             """
             INSERT OR IGNORE INTO feed_candidates(
                 profile_id, post_id, post_title, post_author_uid,
-                generated_text, reason, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                generated_text, reason, incoming_event_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
@@ -561,10 +685,23 @@ class Repository:
                 str(author_uid),
                 text,
                 reason,
+                incoming_event_id,
                 time.time(),
             ),
         )
         return int(cursor.lastrowid) if cursor.rowcount == 1 else None
+
+    async def proactive_event_id(self, profile_id: str, post_id: str) -> int | None:
+        row = await self.db.fetchone(
+            """
+            SELECT id FROM incoming_events
+            WHERE profile_id = ? AND post_id = ? AND event_type = 'proactive_feed'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (profile_id, post_id),
+        )
+        return int(row["id"]) if row else None
 
     async def list_feed_candidates(
         self, *, status: str = "pending", limit: int = 100
@@ -572,6 +709,7 @@ class Repository:
         allowed = {
             "pending",
             "approved",
+            "sending",
             "rejected",
             "sent",
             "expired",
@@ -615,6 +753,79 @@ class Repository:
             (status, edited_text, time.time(), candidate_id),
         )
         return cursor.rowcount == 1
+
+    async def reject_feed_candidate(self, candidate_id: int) -> bool:
+        cursor = await self.db.execute(
+            """
+            UPDATE feed_candidates
+            SET status = 'rejected', reviewed_at = ?
+            WHERE id = ? AND status IN ('pending', 'approved', 'send_unknown')
+            """,
+            (time.time(), candidate_id),
+        )
+        return cursor.rowcount == 1
+
+    async def claim_feed_candidate_for_send(
+        self,
+        candidate_id: int,
+        edited_text: str,
+    ) -> dict[str, Any] | None:
+        async with self.db.transaction() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE feed_candidates
+                SET status = 'sending', edited_text = ?, reviewed_at = ?
+                WHERE id = ? AND status IN ('pending', 'approved')
+                """,
+                (edited_text, time.time(), candidate_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            result = await connection.execute(
+                "SELECT * FROM feed_candidates WHERE id = ?",
+                (candidate_id,),
+            )
+            row = await result.fetchone()
+            return dict(row) if row is not None else None
+
+    async def finish_feed_candidate_send(
+        self,
+        candidate_id: int,
+        status: str,
+        edited_text: str,
+        *,
+        sent_comment_id: str = "",
+    ) -> bool:
+        if status not in {"sent", "failed", "send_unknown"}:
+            raise ValueError("无效候选发送终态")
+        cursor = await self.db.execute(
+            """
+            UPDATE feed_candidates
+            SET status = ?, edited_text = ?, reviewed_at = ?,
+                sent_comment_id = CASE WHEN ? != '' THEN ? ELSE sent_comment_id END
+            WHERE id = ? AND status = 'sending'
+            """,
+            (
+                status,
+                edited_text,
+                time.time(),
+                sent_comment_id,
+                sent_comment_id,
+                candidate_id,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    async def recover_interrupted_feed_sends(self) -> int:
+        cursor = await self.db.execute(
+            """
+            UPDATE feed_candidates
+            SET status = 'send_unknown', reviewed_at = ?
+            WHERE status = 'sending'
+            """,
+            (time.time(),),
+        )
+        return max(0, cursor.rowcount)
 
     async def cleanup_preview(
         self, retention: dict[str, Any], *, now: float | None = None
@@ -805,6 +1016,7 @@ class Repository:
             "feed_candidates",
             "runtime_errors",
             "daily_counters",
+            "notification_cursors",
         )
         counts: dict[str, int] = {}
         for table in tables:

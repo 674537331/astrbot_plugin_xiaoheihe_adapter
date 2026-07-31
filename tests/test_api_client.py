@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from urllib.parse import parse_qs
 
 import httpx
@@ -42,6 +43,61 @@ def client_with_handler(handler, *, authenticated=True, callback=None):
     )
     client._limiter = AsyncRateLimiter(0, jitter_seconds=0)
     return client, http_client
+
+
+async def test_comment_context_merges_original_post_and_root_comment_tree() -> None:
+    observed: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = dict(request.url.params)
+        observed.append(query)
+        if "root_comment_id" not in query:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "result": {
+                        "link": {
+                            "linkid": "30003",
+                            "title": "原帖标题",
+                            "text": (
+                                '[{"type":"text","text":"原帖正文"},'
+                                '{"type":"image","url":"https://cdn.example.com/post.png"}]'
+                            ),
+                            "user": {"userid": "author", "username": "作者"},
+                        }
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "result": {
+                    "link": {"linkid": "30003"},
+                    "comments": [
+                        {
+                            "id": "root-1",
+                            "content": "楼层内容",
+                            "user": {"userid": "user", "username": "用户"},
+                        }
+                    ],
+                },
+            },
+        )
+
+    client, http_client = client_with_handler(handler)
+    context = await client.fetch_thread_context("30003", root_comment_id="root-1")
+
+    assert len(observed) == 2
+    assert "root_comment_id" not in observed[0]
+    assert observed[1]["root_comment_id"] == "root-1"
+    assert context.title == "原帖标题"
+    assert context.body == "原帖正文"
+    assert context.image_urls == ["https://cdn.example.com/post.png"]
+    assert context.comments[0]["content"] == "楼层内容"
+    await client.close()
+    await http_client.aclose()
 
 
 async def test_qr_wait_scan_success_and_notification_parse() -> None:
@@ -114,7 +170,32 @@ async def test_notification_queries_use_reference_parameters_and_offset_paging()
     assert "message_type" not in observed[1]
     assert client.last_notification_polls["mention"]["raw_count"] == 1
     assert client.last_notification_polls["mention"]["accepted_count"] == 1
-    assert client.last_notification_polls["mention"]["message_types"] == ["16"]
+    assert client.last_notification_polls["mention"]["message_types"] == ["17"]
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_real_world_comment_mentions_type_17_are_all_accepted() -> None:
+    base = load_fixture("notifications_reference_messages.json")["result"]["messages"][0]
+    messages = []
+    for index in range(5):
+        item = copy.deepcopy(base)
+        item["message_id"] = f"mention-{index}"
+        item["comment_a_id"] = f"comment-{index}"
+        messages.append(item)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "ok", "result": {"messages": messages, "no_more": True}},
+        )
+
+    client, http_client = client_with_handler(handler)
+    page = await client.fetch_notifications(NotificationType.MENTION)
+    assert len(page.items) == 5
+    assert client.last_notification_polls["mention"]["raw_count"] == 5
+    assert client.last_notification_polls["mention"]["accepted_count"] == 5
+    assert client.last_notification_polls["mention"]["message_types"] == ["17"]
     await client.close()
     await http_client.aclose()
 

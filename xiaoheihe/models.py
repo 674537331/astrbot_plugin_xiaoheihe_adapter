@@ -44,6 +44,7 @@ class RoutingTarget:
     root_comment_id: str = ""
     parent_comment_id: str = ""
     notification_id: str = ""
+    incoming_event_id: int | None = None
 
     @property
     def session_id(self) -> str:
@@ -75,8 +76,11 @@ class RoutingTarget:
                 )
         raise ValueError(f"无法从 session_id 恢复小黑盒目标: {session_id!r}")
 
-    def as_dict(self) -> dict[str, str]:
-        return asdict(self)
+    def as_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        if self.incoming_event_id is None:
+            payload.pop("incoming_event_id", None)
+        return payload
 
 
 @dataclass(slots=True)

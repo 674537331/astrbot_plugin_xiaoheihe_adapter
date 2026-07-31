@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 from collections.abc import Awaitable, Callable, MutableMapping
+from pathlib import Path
 from typing import Any
 
 from .security import SecurityError, validate_profile_id
@@ -26,6 +28,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_pages_per_poll": 3,
         "page_size": 20,
         "initial_backfill_count": 0,
+    },
+    "providers": {
+        "llm_provider_id": "",
+        "image_provider_id": "",
     },
     "context": {
         "max_post_chars": 6000,
@@ -116,6 +122,16 @@ class ConfigService:
 
     def defaults(self) -> dict[str, Any]:
         return copy.deepcopy(DEFAULT_CONFIG)
+
+    def ui_schema(self) -> dict[str, Any]:
+        schema_path = Path(__file__).resolve().parent.parent / "_conf_schema.json"
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigValidationError(f"读取配置界面定义失败: {exc}") from exc
+        if not isinstance(schema, dict):
+            raise ConfigValidationError("配置界面定义根节点必须是对象")
+        return schema
 
     def add_restart_callback(self, callback: RestartCallback) -> None:
         self._callbacks.append(callback)
@@ -208,6 +224,14 @@ class ConfigService:
             raise ConfigValidationError("单用户队列上限不能大于全局队列上限")
         if not 0.2 <= float(network["min_request_interval_seconds"]) <= 60:
             raise ConfigValidationError("最小请求间隔必须在 0.2–60 秒")
+
+        providers = _object(config, "providers")
+        for key in ("llm_provider_id", "image_provider_id"):
+            value = providers.get(key)
+            if not isinstance(value, str):
+                raise ConfigValidationError(f"providers.{key} 必须是字符串")
+            if len(value) > 256:
+                raise ConfigValidationError(f"providers.{key} 不能超过 256 字符")
 
         proactive = _object(config, "proactive_feed")
         _bounded_int(proactive, "interval_seconds", 300, 86400)

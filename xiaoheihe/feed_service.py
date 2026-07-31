@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -24,6 +25,7 @@ class FeedService:
         repository: Repository,
         synthetic_dispatch: SyntheticDispatch,
         reviewed_delivery: ReviewedDelivery,
+        approval_lock: asyncio.Lock | None = None,
     ) -> None:
         self.profile_id = profile_id
         self.config = config
@@ -31,6 +33,7 @@ class FeedService:
         self.repository = repository
         self.synthetic_dispatch = synthetic_dispatch
         self.reviewed_delivery = reviewed_delivery
+        self._approval_lock = approval_lock or asyncio.Lock()
 
     async def run_once(self) -> int:
         feed_config = self.config["proactive_feed"]
@@ -122,35 +125,79 @@ class FeedService:
         return not keywords or any(keyword in text.casefold() for keyword in keywords)
 
     async def approve(self, candidate_id: int, edited_text: str | None = None) -> str:
-        candidate = await self.repository.feed_candidate(candidate_id)
-        if not candidate:
-            raise ValueError("候选不存在")
-        if candidate["status"] not in {"pending", "approved"}:
-            raise ValueError("候选已处理")
-        text = sanitize_reply_text(
-            edited_text or candidate.get("edited_text") or candidate["generated_text"],
-            int(self.config["reply"]["max_reply_chars"]),
-        )
-        await self.repository.review_feed_candidate(candidate_id, "approved", text)
-        if self.config["proactive_feed"].get("dry_run", True):
-            return "dry_run"
-        counters = await self.repository.today_counters(self.profile_id)
-        if counters["proactive_count"] >= int(self.config["proactive_feed"]["max_per_day"]):
-            raise ValueError("已达到主动回复每日上限")
-        route = RoutingTarget(profile_id=self.profile_id, post_id=candidate["post_id"])
-        try:
-            result = await self.reviewed_delivery(route, text)
-        except SendUncertainError:
-            await self.repository.review_feed_candidate(candidate_id, "send_unknown", text)
-            raise
-        except BaseException:
-            await self.repository.review_feed_candidate(candidate_id, "failed", text)
-            raise
-        await self.repository.review_feed_candidate(candidate_id, "sent", text)
-        return str(result["external_comment_id"])
+        async with self._approval_lock:
+            candidate = await self.repository.feed_candidate(candidate_id)
+            if not candidate:
+                raise ValueError("候选不存在")
+            if candidate["status"] not in {"pending", "approved"}:
+                raise ValueError("候选已处理")
+            text = sanitize_reply_text(
+                edited_text or candidate.get("edited_text") or candidate["generated_text"],
+                int(self.config["reply"]["max_reply_chars"]),
+            )
+            if self.config["proactive_feed"].get("dry_run", True):
+                changed = await self.repository.review_feed_candidate(
+                    candidate_id,
+                    "approved",
+                    text,
+                )
+                if not changed:
+                    raise ValueError("候选已处理")
+                return "dry_run"
+            counters = await self.repository.today_counters(self.profile_id)
+            if counters["proactive_count"] >= int(self.config["proactive_feed"]["max_per_day"]):
+                raise ValueError("已达到主动回复每日上限")
+            claimed = await self.repository.claim_feed_candidate_for_send(
+                candidate_id,
+                text,
+            )
+            if claimed is None:
+                raise ValueError("候选已由其他审核请求处理")
+            event_id = claimed.get("incoming_event_id")
+            if event_id is None:
+                event_id = await self.repository.proactive_event_id(
+                    self.profile_id,
+                    str(claimed["post_id"]),
+                )
+            route = RoutingTarget(
+                profile_id=self.profile_id,
+                post_id=str(claimed["post_id"]),
+                incoming_event_id=int(event_id) if event_id is not None else None,
+            )
+            try:
+                result = await self.reviewed_delivery(route, text)
+            except asyncio.CancelledError:
+                await self.repository.finish_feed_candidate_send(
+                    candidate_id,
+                    "send_unknown",
+                    text,
+                )
+                raise
+            except SendUncertainError:
+                await self.repository.finish_feed_candidate_send(
+                    candidate_id,
+                    "send_unknown",
+                    text,
+                )
+                raise
+            except Exception:
+                await self.repository.finish_feed_candidate_send(
+                    candidate_id,
+                    "failed",
+                    text,
+                )
+                raise
+            comment_id = str(result["external_comment_id"])
+            await self.repository.finish_feed_candidate_send(
+                candidate_id,
+                "sent",
+                text,
+                sent_comment_id=comment_id,
+            )
+            return comment_id
 
     async def reject(self, candidate_id: int) -> bool:
-        return await self.repository.review_feed_candidate(candidate_id, "rejected")
+        return await self.repository.reject_feed_candidate(candidate_id)
 
     async def reject_expired(self, cutoff_timestamp: float) -> int:
         candidates = await self.repository.list_feed_candidates(status="pending", limit=500)

@@ -25,6 +25,7 @@ async def test_database_migrations_and_pragmas(tmp_path) -> None:
         "feed_candidates",
         "runtime_errors",
         "daily_counters",
+        "notification_cursors",
     } <= names
     await database.close()
 
@@ -36,7 +37,7 @@ async def test_database_close_is_idempotent(tmp_path) -> None:
     await database.close()
 
 
-async def test_database_upgrades_v2_to_v3(tmp_path) -> None:
+async def test_database_upgrades_v2_to_latest(tmp_path) -> None:
     path = tmp_path / "upgrade.db"
     connection = await aiosqlite.connect(path)
     await connection.executescript(MIGRATIONS[0][1])
@@ -47,8 +48,10 @@ async def test_database_upgrades_v2_to_v3(tmp_path) -> None:
 
     database = Database(path)
     await database.open()
-    assert await database.schema_version() == 3
+    assert await database.schema_version() == MIGRATIONS[-1][0]
     columns = await database.fetchall("PRAGMA table_info(incoming_events)")
     names = {row["name"] for row in columns}
     assert {"retry_count", "next_retry_at"} <= names
+    tables = await database.fetchall("SELECT name FROM sqlite_master WHERE type = 'table'")
+    assert "notification_cursors" in {row["name"] for row in tables}
     await database.close()
