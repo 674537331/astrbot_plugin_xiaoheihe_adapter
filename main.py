@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
@@ -8,6 +10,11 @@ from astrbot.core.agent.message import TextPart
 
 from .xiaoheihe.adapter import XiaoheihePlatformAdapter  # noqa: F401
 from .xiaoheihe.runtime import PLUGIN_NAME, RuntimeServices, bind_runtime
+
+IMAGE_PROVIDER_PROMPT = (
+    "请逐张准确描述这些图片的可见内容，并完整提取与用户问题相关的文字和关键数据。"
+    "只提供图片描述，不回答用户问题；多张图片请按顺序区分。"
+)
 
 try:
     from .xiaoheihe.web_api import WebApiController
@@ -21,7 +28,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.1",
+    "1.2.2",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -97,7 +104,25 @@ class XiaoheiheAdapterPlugin(Star):
             request.extra_user_content_parts.append(
                 TextPart(text=str(dynamic_context)).mark_as_temp()
             )
-        provider = self.context.get_using_provider(umo=event.unified_msg_origin)
+        config = self.runtime.config.snapshot()
+        provider_settings = config["providers"]
+        profile_id = str(event.message_obj.raw_message.get("route", {}).get("profile_id", ""))
+        image_provider_id = str(provider_settings["image_provider_id"]).strip()
+        if request.image_urls and image_provider_id:
+            captioned = await self._caption_images(
+                request,
+                provider_id=image_provider_id,
+                profile_id=profile_id,
+            )
+            if captioned:
+                self.runtime.clear_vision_alert()
+                return
+
+        llm_provider_id = str(provider_settings["llm_provider_id"]).strip()
+        if llm_provider_id:
+            provider = self.context.get_provider_by_id(llm_provider_id)
+        else:
+            provider = self.context.get_using_provider(umo=event.unified_msg_origin)
         provider_config = getattr(provider, "provider_config", {}) if provider else {}
         modalities = (
             provider_config.get("modalities") if isinstance(provider_config, dict) else None
@@ -111,11 +136,63 @@ class XiaoheiheAdapterPlugin(Star):
             image_count = len(request.image_urls)
             request.image_urls.clear()
             self.runtime.report_vision_degraded(
-                str(event.message_obj.raw_message.get("route", {}).get("profile_id", "")),
+                profile_id,
                 image_count,
             )
         else:
             self.runtime.clear_vision_alert()
+
+    async def _caption_images(
+        self,
+        request: ProviderRequest,
+        *,
+        provider_id: str,
+        profile_id: str,
+    ) -> bool:
+        provider = self.context.get_provider_by_id(provider_id)
+        if provider is None:
+            self.runtime.logging.emit(
+                "WARNING",
+                "固定图片 Provider 不存在，回退当前 LLM 图片流程",
+                profile_id=profile_id,
+                details={"provider_id": provider_id},
+            )
+            return False
+        try:
+            response = await provider.text_chat(
+                prompt=IMAGE_PROVIDER_PROMPT,
+                session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
+                image_urls=list(request.image_urls),
+                persist=False,
+            )
+        except Exception as exc:
+            self.runtime.logging.emit(
+                "WARNING",
+                f"固定图片 Provider 处理失败，回退当前 LLM 图片流程: {exc}",
+                profile_id=profile_id,
+                details={"provider_id": provider_id},
+            )
+            return False
+        caption = str(getattr(response, "completion_text", "") or "").strip()
+        if not caption:
+            self.runtime.logging.emit(
+                "WARNING",
+                "固定图片 Provider 返回空描述，回退当前 LLM 图片流程",
+                profile_id=profile_id,
+                details={"provider_id": provider_id},
+            )
+            return False
+        request.extra_user_content_parts.append(
+            TextPart(
+                text=(
+                    '<xiaoheihe_image_context trust="untrusted">\n'
+                    f"{caption}\n"
+                    "</xiaoheihe_image_context>"
+                )
+            ).mark_as_temp()
+        )
+        request.image_urls.clear()
+        return True
 
     @filter.on_llm_response(priority=-1000)
     async def capture_xiaoheihe_complete_reply(

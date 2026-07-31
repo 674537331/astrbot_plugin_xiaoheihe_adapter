@@ -1,11 +1,10 @@
-# AstrBot 兼容性说明（v1.2.1）
+# AstrBot 兼容性说明（v1.1.3）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.2.1 保持覆盖更新后的平台实例协调、评论与原帖上下文合并、推荐流主动浏览，
-并使用 Plugin Page 页面内确认框完成移动端人工审核。
-2026-07-30 发布 v1.2.1 前再次核对：
+AstrBot 4.26.8。v1.1.3 保持覆盖更新后的平台实例协调、评论与原帖上下文合并，并为多图视觉预处理提供按图片数量计算的回复时间。
+2026-07-30 发布 v1.1.3 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -34,11 +33,13 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
 | 分段回复 | `on_llm_response()` + `AstrMessageEvent.get_result()` + 非流式平台 `send()` | 分段清理前保存完整文本，任意数量的分段只提交一条小黑盒评论 |
 | 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；模型调用由 AstrBot 核心负责 |
+| 固定 LLM Provider | 事件入队前设置 `selected_provider` extra | 兼容 4.24.2 与 4.26.2 的主 Agent Provider 选择时序；留空时继续使用会话或全局 Provider |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
 | 临时上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` + `TextPart(...).mark_as_temp()` | 背景仅注入本轮用户侧内容，不改 system prompt，不永久污染会话 |
 | 图片 | `astrbot.api.message_components.Image(file=url, url=url)` | v1.0.0 只传经过安全校验的公开 HTTPS URL，交给 AstrBot 媒体链路 |
-| 视觉降级 | `Context.get_using_provider()` + provider `modalities` | 仅在提供商明确不含 `image` 时移除图片并保留文本；未声明能力时遵循 AstrBot 向后兼容语义 |
+| 固定图片 Provider | `Context.get_provider_by_id()` + `Provider.text_chat()` | 成功时注入临时图片描述；失败或空结果时保留原图并回退主 Provider 与 AstrBot 原生图片流程 |
+| 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 按固定或当前主 Provider 检查能力；仅在明确不含 `image` 时移除图片并保留文本 |
 | 配置 | 构造参数中的 `AstrBotConfig` + `save_config()` | 原生设置和 Plugin Page 共用同一个对象，不写核心配置文件 |
 | 数据目录 | `StarTools.get_data_dir(plugin_name)` | 凭证与 SQLite 位于插件专属数据目录，覆盖更新后继续读取 |
 | Plugin Page | `window.AstrBotPluginPage` + `context.register_web_api()` + `astrbot.api.web` | 4.26.2 完整可用；页面只通过受限 bridge 通信 |
@@ -46,8 +47,8 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 生命周期 | `Star.initialize()`、`Star.terminate()`、`Platform.terminate()` | 热重载时协调平台实例；停止时取消任务并关闭 HTTP Client/SQLite/SSE |
 
 AstrBot 4.24.2、4.26.2 和 4.26.8 均在插件加载完成后调用可选的 `Star.initialize()`，并由
-`Context.platform_manager` 暴露当前平台实例。AstrBot 覆盖更新会重新加载插件模块，已经
-终止的平台实例则由插件负责重建。v1.1.1 在 `initialize()` 中识别已经处于运行阶段的平台
+`Context.platform_manager` 暴露当前平台实例。AstrBot 覆盖更新会重新加载插件模块，但不会
+替插件重建已经终止的平台实例。v1.1.1 在 `initialize()` 中识别已经处于运行阶段的平台
 管理器，并调用当前源码提供的 `PlatformManager.reload(config)` 重建所有已启用的
 `xiaoheihe` 实例；冷启动时实例列表为空，平台仍由 AstrBot 的正常初始化流程创建。
 
@@ -101,7 +102,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.1 的最新迁移版本为 v4，已有
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.1.3 的最新迁移版本为 v4，已有
 记录原位保留。卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据
 边界；更新前备份插件数据目录可用于回滚。
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astrbot-plugin-xiaoheihe-adapter"
-version = "1.2.1"
+version = "1.2.2"
 description = "AstrBot native Xiaoheihe platform adapter"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"

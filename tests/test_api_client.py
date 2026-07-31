@@ -175,49 +175,6 @@ async def test_notification_queries_use_reference_parameters_and_offset_paging()
     await http_client.aclose()
 
 
-async def test_recommendation_feed_uses_verified_parameters_and_normalizes_links() -> None:
-    observed = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        observed.update(dict(request.url.params))
-        assert request.url.path == "/bbs/app/feeds"
-        return httpx.Response(200, json=load_fixture("feed_recommendation.json"))
-
-    client, http_client = client_with_handler(handler)
-    page = await client.fetch_feed(offset=20)
-
-    assert observed["pull"] == "0"
-    assert observed["offset"] == "20"
-    assert observed["app"] == "heybox"
-    assert observed["heybox_id"] == "10001"
-    assert "source" not in observed
-    assert "cursor" not in observed
-    assert "limit" not in observed
-    assert page.next_cursor == "21"
-    assert page.has_more is True
-    post = page.items[0]
-    assert post["post_id"] == "81001"
-    assert post["content"] == "讨论一款 PC 游戏的玩法设计。"
-    assert post["author"]["uid"] == "51001"
-    assert post["author"]["nickname"] == "FixtureAuthor"
-    assert post["section_names"] == ["Steam", "PC游戏"]
-    assert post["image_urls"] == ["https://cdn.example.com/recommendation-1.jpg"]
-    assert post["popularity_score"] == 46
-    await client.close()
-    await http_client.aclose()
-
-
-async def test_recommendation_feed_shape_change_is_observable() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"status": "ok", "result": {"unexpected": []}})
-
-    client, http_client = client_with_handler(handler)
-    with pytest.raises(ResponseContractError, match="缺少 links/items/list"):
-        await client.fetch_feed()
-    await client.close()
-    await http_client.aclose()
-
-
 async def test_real_world_comment_mentions_type_17_are_all_accepted() -> None:
     base = load_fixture("notifications_reference_messages.json")["result"]["messages"][0]
     messages = []

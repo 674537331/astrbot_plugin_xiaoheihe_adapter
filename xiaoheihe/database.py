@@ -204,6 +204,30 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON outgoing_replies(incoming_event_id, attempted_at DESC);
         """,
     ),
+    (
+        5,
+        """
+        ALTER TABLE feed_candidates
+            ADD COLUMN incoming_event_id INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_feed_incoming_event
+            ON feed_candidates(incoming_event_id);
+        UPDATE feed_candidates
+        SET incoming_event_id = (
+            SELECT id FROM incoming_events
+            WHERE incoming_events.profile_id = feed_candidates.profile_id
+              AND incoming_events.post_id = feed_candidates.post_id
+              AND incoming_events.event_type = 'proactive_feed'
+            ORDER BY incoming_events.id DESC
+            LIMIT 1
+        )
+        WHERE incoming_event_id IS NULL;
+        UPDATE incoming_events
+        SET discovered_at = claimed_at
+        WHERE event_type = 'proactive_feed'
+          AND claimed_at IS NOT NULL
+          AND claimed_at > discovered_at;
+        """,
+    ),
 )
 
 MIGRATION_MARKERS = {
@@ -211,6 +235,7 @@ MIGRATION_MARKERS = {
     2: "INSERT INTO schema_migrations(version) VALUES (2);",
     3: "INSERT INTO schema_migrations(version) VALUES (3);",
     4: "INSERT INTO schema_migrations(version) VALUES (4);",
+    5: "INSERT INTO schema_migrations(version) VALUES (5);",
 }
 
 

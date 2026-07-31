@@ -486,6 +486,7 @@ class RuntimeServices:
             str(metadata.get("post_author_uid", "")),
             text,
             str(metadata.get("candidate_reason", "AI 候选回复")),
+            incoming_event_id=event_id,
         )
         await self.repository.mark_event(
             event_id,
@@ -570,7 +571,7 @@ class RuntimeServices:
             self.repository,
             synthetic_dispatch,
             lambda route, text: self.deliver(
-                event_id=None,
+                event_id=route.incoming_event_id,
                 route=route,
                 content=text,
                 dry_run=False,
@@ -743,7 +744,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.1",
+            "version": "v1.2.2",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),

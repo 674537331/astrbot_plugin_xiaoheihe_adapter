@@ -27,7 +27,6 @@ from .models import (
 from .parsers import (
     ResponseShapeError,
     parse_credentials,
-    parse_feed,
     parse_login_state,
     parse_notifications,
     parse_qr_response,
@@ -160,7 +159,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.2.1",
+                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.1.3",
                 },
             )
         if self.credentials:
@@ -352,17 +351,27 @@ class XiaoheiheApiClient:
             raise ResponseContractError("近期评论列表字段不是数组", category="response_shape")
         return [dict(item) for item in items if isinstance(item, Mapping)]
 
-    async def fetch_feed(self, *, offset: int = 0) -> ApiPage:
+    async def fetch_feed(
+        self, *, source: str = "follow", cursor: str = "", limit: int = 10
+    ) -> ApiPage:
         params: dict[str, Any] = {
-            "app": "heybox",
-            "pull": 0,
-            "offset": max(0, offset),
+            "source": source,
+            "limit": max(1, min(limit, 50)),
         }
+        if cursor:
+            params["cursor"] = cursor
         response = await self._request(EndpointName.FEED, params=params)
-        try:
-            return parse_feed(response.payload, offset=max(0, offset))
-        except ResponseShapeError as exc:
-            raise ResponseContractError(str(exc), category="response_shape") from exc
+        body = response.payload.get("result", response.payload.get("data", response.payload))
+        if not isinstance(body, Mapping):
+            raise ResponseContractError("帖子流响应不是对象", category="response_shape")
+        items = body.get("items", body.get("links", body.get("list", [])))
+        if not isinstance(items, list):
+            raise ResponseContractError("帖子流列表字段不是数组", category="response_shape")
+        return ApiPage(
+            items=[dict(item) for item in items if isinstance(item, Mapping)],
+            next_cursor=str(body.get("next_cursor", body.get("cursor", ""))),
+            has_more=bool(body.get("has_more", False)),
+        )
 
     async def _request(
         self,

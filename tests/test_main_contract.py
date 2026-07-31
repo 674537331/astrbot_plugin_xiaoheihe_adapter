@@ -95,6 +95,155 @@ async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_im
     await plugin.terminate()
 
 
+async def test_plugin_uses_fixed_image_provider_and_keeps_caption_temporary(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Provider:
+        def __init__(self, modalities, caption="") -> None:
+            self.provider_config = {"modalities": modalities}
+            self.caption = caption
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(completion_text=self.caption)
+
+    main_provider = Provider(["text"], "")
+    image_provider = Provider(["text", "image"], "识别到一张测试图片")
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return {"main-fixed": main_provider, "image-fixed": image_provider}.get(provider_id)
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("fixed providers should not use the session provider")
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {
+                    "llm_provider_id": "main-fixed",
+                    "image_provider_id": "image-fixed",
+                }
+            }
+        ),
+    )
+    event = type(
+        "Event",
+        (),
+        {
+            "captured": {},
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_extra": lambda self, key, default="": default,
+            "set_extra": lambda self, key, value: self.captured.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/a.png"]
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    assert len(image_provider.calls) == 1
+    assert image_provider.calls[0]["image_urls"] == ["https://images.example.test/a.png"]
+    assert request.extra_user_content_parts[-1].temp is True
+    assert "识别到一张测试图片" in request.extra_user_content_parts[-1].text
+    await plugin.terminate()
+
+
+async def test_plugin_falls_back_to_main_images_when_fixed_image_provider_fails(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class MainProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+
+    class BrokenImageProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+
+        async def text_chat(self, **kwargs):
+            raise RuntimeError("vision provider unavailable")
+
+    main_provider = MainProvider()
+    image_provider = BrokenImageProvider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return {"main-fixed": main_provider, "image-fixed": image_provider}.get(provider_id)
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("fixed providers should not use the session provider")
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {
+                    "llm_provider_id": "main-fixed",
+                    "image_provider_id": "image-fixed",
+                }
+            }
+        ),
+    )
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_extra": lambda self, key, default="": default,
+            "set_extra": lambda self, key, value: None,
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/a.png"]
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == ["https://images.example.test/a.png"]
+    assert request.extra_user_content_parts == []
+    await plugin.terminate()
+
+
 async def test_plugin_hot_reload_reconciles_enabled_xiaoheihe_adapter(
     isolated_smoke_import,
 ) -> None:

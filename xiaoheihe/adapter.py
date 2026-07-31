@@ -318,6 +318,9 @@ class XiaoheihePlatformAdapter(Platform):
             event.role = "admin"
         event.set_extra("xiaoheihe_dynamic_context", context.dynamic_context)
         event.set_extra("xiaoheihe_route", notification.route.as_dict())
+        fixed_llm_provider_id = str(runtime_config["providers"]["llm_provider_id"]).strip()
+        if fixed_llm_provider_id:
+            event.set_extra("selected_provider", fixed_llm_provider_id)
         self.commit_event(event)
         try:
             await asyncio.wait_for(

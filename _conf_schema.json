@@ -98,6 +98,26 @@
       }
     }
   },
+  "providers": {
+    "type": "object",
+    "description": "模型 Provider",
+    "items": {
+      "llm_provider_id": {
+        "description": "固定 LLM Provider",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "hint": "指定小黑盒适配器使用的 LLM Provider ID；留空则跟随当前配置文件或会话设置。"
+      },
+      "image_provider_id": {
+        "description": "固定图片 Provider",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "hint": "指定小黑盒图片理解使用的 Provider ID；留空则由当前 LLM Provider 和 AstrBot 原生图片流程处理。"
+      }
+    }
+  },
   "context": {
     "type": "object",
     "description": "上下文与图片",
@@ -287,7 +307,7 @@
   },
   "proactive_feed": {
     "type": "object",
-    "description": "主动浏览与审核（高风险）",
+    "description": "主动刷帖（高风险）",
     "items": {
       "enabled": {
         "description": "启用主动刷帖",
@@ -324,37 +344,10 @@
         "type": "int",
         "default": 10
       },
-      "section": {
-        "description": "推荐流分区",
+      "source": {
+        "description": "帖子来源",
         "type": "string",
-        "default": "All（全部）",
-        "options": [
-          "All（全部）",
-          "PC 游戏",
-          "手机游戏",
-          "主机游戏",
-          "盒友杂谈",
-          "盒友日常",
-          "数码科技",
-          "动漫二次元",
-          "影视娱乐",
-          "电竞赛事",
-          "游戏攻略",
-          "优惠资讯",
-          "独立游戏"
-        ],
-        "hint": "基于推荐流返回帖子的主题和标签筛选"
-      },
-      "selection_strategy": {
-        "description": "候选挑选方式",
-        "type": "string",
-        "default": "推荐顺序",
-        "options": [
-          "推荐顺序",
-          "随机",
-          "最新",
-          "热门"
-        ]
+        "default": "follow"
       },
       "keywords": {
         "description": "允许关键词",

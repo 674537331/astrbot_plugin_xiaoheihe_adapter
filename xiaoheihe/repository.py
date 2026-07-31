@@ -54,7 +54,7 @@ class Repository:
                     notification.parent_comment_id,
                     notification.content,
                     raw_json,
-                    notification.created_at,
+                    now,
                     now,
                     now,
                 ),
@@ -669,13 +669,14 @@ class Repository:
         author_uid: str,
         text: str,
         reason: str,
+        incoming_event_id: int | None = None,
     ) -> int | None:
         cursor = await self.db.execute(
             """
             INSERT OR IGNORE INTO feed_candidates(
                 profile_id, post_id, post_title, post_author_uid,
-                generated_text, reason, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                generated_text, reason, incoming_event_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
@@ -684,10 +685,23 @@ class Repository:
                 str(author_uid),
                 text,
                 reason,
+                incoming_event_id,
                 time.time(),
             ),
         )
         return int(cursor.lastrowid) if cursor.rowcount == 1 else None
+
+    async def proactive_event_id(self, profile_id: str, post_id: str) -> int | None:
+        row = await self.db.fetchone(
+            """
+            SELECT id FROM incoming_events
+            WHERE profile_id = ? AND post_id = ? AND event_type = 'proactive_feed'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (profile_id, post_id),
+        )
+        return int(row["id"]) if row else None
 
     async def list_feed_candidates(
         self, *, status: str = "pending", limit: int = 100

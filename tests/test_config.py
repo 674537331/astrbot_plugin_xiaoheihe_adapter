@@ -13,22 +13,14 @@ from xiaoheihe.config_service import (
 
 def test_config_defaults_and_profile(fake_config) -> None:
     fake_config.pop("network")
+    fake_config.pop("providers")
     service = ConfigService(fake_config)
     assert service.profile("default")["dry_run"] is True
     assert service.snapshot()["network"]["max_pending_events"] == 50
-
-
-def test_config_migrates_legacy_follow_source_to_recommendation_defaults() -> None:
-    legacy = copy.deepcopy(DEFAULT_CONFIG)
-    legacy["proactive_feed"].pop("section")
-    legacy["proactive_feed"].pop("selection_strategy")
-    legacy["proactive_feed"]["source"] = "follow"
-
-    snapshot = ConfigService(legacy).snapshot()
-
-    assert snapshot["proactive_feed"]["section"] == "All（全部）"
-    assert snapshot["proactive_feed"]["selection_strategy"] == "推荐顺序"
-    assert "source" not in snapshot["proactive_feed"]
+    assert service.snapshot()["providers"] == {
+        "llm_provider_id": "",
+        "image_provider_id": "",
+    }
 
 
 @pytest.mark.asyncio
@@ -78,15 +70,13 @@ def test_config_rejects_unsafe_storage_and_timeout_values(fake_config) -> None:
         ConfigService(safe)
 
 
-@pytest.mark.parametrize(
-    ("key", "value", "message"),
-    [
-        ("section", "未知分区", "可选分区"),
-        ("selection_strategy", "随便挑", "推荐顺序"),
-    ],
-)
-def test_config_rejects_unknown_feed_select_values(key, value, message) -> None:
-    config = copy.deepcopy(DEFAULT_CONFIG)
-    config["proactive_feed"][key] = value
-    with pytest.raises(ConfigValidationError, match=message):
-        ConfigService(config)
+def test_config_rejects_invalid_provider_ids() -> None:
+    invalid_type = copy.deepcopy(DEFAULT_CONFIG)
+    invalid_type["providers"]["llm_provider_id"] = 123
+    with pytest.raises(ConfigValidationError, match="llm_provider_id"):
+        ConfigService(invalid_type)
+
+    too_long = copy.deepcopy(DEFAULT_CONFIG)
+    too_long["providers"]["image_provider_id"] = "x" * 257
+    with pytest.raises(ConfigValidationError, match="image_provider_id"):
+        ConfigService(too_long)

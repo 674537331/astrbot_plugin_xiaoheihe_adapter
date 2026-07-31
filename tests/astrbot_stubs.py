@@ -205,6 +205,7 @@ def install() -> None:
     class ProviderRequest:
         def __init__(self) -> None:
             self.extra_user_content_parts = []
+            self.image_urls = []
 
     class LLMResponse:
         def __init__(

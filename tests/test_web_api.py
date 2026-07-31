@@ -20,38 +20,6 @@ class FakeRuntime:
         self.config = ConfigService(config)
 
 
-class FakeApprovalRepository:
-    async def feed_candidate(self, candidate_id: int):
-        if candidate_id != 7:
-            return None
-        return {"id": 7, "profile_id": "default"}
-
-
-class FakeApprovalFeed:
-    def __init__(self) -> None:
-        self.calls = []
-
-    async def approve(self, candidate_id: int, edited_text: str | None) -> str:
-        self.calls.append((candidate_id, edited_text))
-        return "dry_run"
-
-
-class FakeApprovalRuntime:
-    def __init__(self) -> None:
-        self.repository = FakeApprovalRepository()
-        self.feed = FakeApprovalFeed()
-
-    async def get_client(self, profile_id: str):
-        assert profile_id == "default"
-        return object()
-
-    def feed_service(self, profile_id: str, client, synthetic_dispatch):
-        assert profile_id == "default"
-        assert client is not None
-        assert synthetic_dispatch is not None
-        return self.feed
-
-
 def test_config_save_shows_success_toast() -> None:
     source = (Path(__file__).resolve().parents[1] / "pages" / "xiaoheihe" / "app.js").read_text(
         encoding="utf-8"
@@ -110,13 +78,8 @@ async def test_config_schema_api_exposes_structured_form_metadata(fake_config) -
     schema = response["json"]
     assert schema["profiles"]["type"] == "template_list"
     assert schema["polling"]["items"]["poll_interval_seconds"]["type"] == "int"
-    assert schema["proactive_feed"]["items"]["section"]["options"][0] == "All（全部）"
-    assert schema["proactive_feed"]["items"]["selection_strategy"]["options"] == [
-        "推荐顺序",
-        "随机",
-        "最新",
-        "热门",
-    ]
+    assert schema["providers"]["items"]["llm_provider_id"]["_special"] == ("select_provider")
+    assert schema["providers"]["items"]["image_provider_id"]["_special"] == ("select_provider")
     assert schema["logging"]["items"]["level"]["options"] == [
         "DEBUG",
         "INFO",
@@ -148,14 +111,3 @@ async def test_web_api_requires_dashboard_identity(fake_config) -> None:
     assert response["status_code"] == 401
     REQUEST.username = "admin"
     REQUEST.query = Query({})
-
-
-async def test_feed_approve_api_passes_edited_text_to_feed_service() -> None:
-    runtime = FakeApprovalRuntime()
-    controller = WebApiController(runtime)
-    REQUEST.username = "admin"
-    REQUEST._json = {"edited_text": "  审核后的回复  "}
-    response = await controller.feed_approve("7")
-    assert response["status_code"] == 200
-    assert response["json"] == {"approved": True, "result": "dry_run"}
-    assert runtime.feed.calls == [(7, "审核后的回复")]

@@ -183,7 +183,7 @@ async def test_account_error_feed_and_diagnostics(repository) -> None:
     assert await repository.review_feed_candidate(candidate_id, "approved", "edited")
     assert (await repository.feed_candidate(candidate_id))["edited_text"] == "edited"
     snapshot = await repository.diagnostic_snapshot()
-    assert snapshot["schema_version"] == 4
+    assert snapshot["schema_version"] == 5
     assert snapshot["counts"]["feed_candidates"] == 1
     assert snapshot["account_states"][0]["nickname"] == "Bot"
     assert snapshot["recent_errors"][0]["category"] == "response_shape"
