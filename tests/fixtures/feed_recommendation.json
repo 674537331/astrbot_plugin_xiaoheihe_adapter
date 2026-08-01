@@ -1,0 +1,36 @@
+{
+  "status": "ok",
+  "result": {
+    "keep_previous": 0,
+    "links": [
+      {
+        "linkid": "81001",
+        "title": "脱敏推荐流帖子",
+        "description": "讨论一款 PC 游戏的玩法设计。",
+        "create_at": 1785381000,
+        "comment_num": 12,
+        "up": 34,
+        "content_type": "article",
+        "user": {
+          "userid": "51001",
+          "username": "FixtureAuthor"
+        },
+        "topics": [
+          {
+            "name": "Steam"
+          }
+        ],
+        "hashtags": [
+          {
+            "name": "PC游戏"
+          }
+        ],
+        "imgs": [
+          {
+            "url": "https://cdn.example.com/recommendation-1.jpg"
+          }
+        ]
+      }
+    ]
+  }
+}

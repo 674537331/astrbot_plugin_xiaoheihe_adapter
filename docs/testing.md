@@ -39,15 +39,18 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
-## 2026-07-30 v1.1.3 本地结果
+## 2026-08-01 v1.2.5 本地结果
 
-- Pytest：`154 passed`；
-- Coverage：`80%`（启用 branch，达到 `fail_under = 80`）；
+- Pytest：`166 passed`；
+- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
 - Ruff Check：通过；
 - Ruff Format Check：通过；
 - Python compileall：通过；
 - `node --check pages/xiaoheihe/app.js`：通过；
 - 仓库 JSON/YAML/静态文件/敏感运行文件检查：通过；
+- UTF-8 与连续乱码标记检查：通过；
+- 浏览器交互：首屏懒加载、日志 SSE 生命周期、移动端单栏和主动审核确认均通过；
+- 客户端池并发初始化回归：8 个并发调用只创建 1 个 HTTP Client、读取 1 次凭证；
 - 评论 @ 类型 `17` 已覆盖“解析 → 轮询入队 → SQLite 事件记录 → 模拟运行完成”集成路径；
 - 评论 @ 的原帖详情、指定楼层、通知原帖快照和双方图片合并路径已覆盖；
 - 设置保存成功提示由前端契约检查和仓库静态检查共同覆盖；

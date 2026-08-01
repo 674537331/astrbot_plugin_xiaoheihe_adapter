@@ -107,21 +107,7 @@ async def test_recommendation_feed_uses_verified_pull_contract() -> None:
         observed.update(dict(request.url.params))
         return httpx.Response(
             200,
-            json={
-                "status": "ok",
-                "result": {
-                    "links": [
-                        {
-                            "linkid": "81001",
-                            "description": "讨论一款 PC 游戏的玩法设计。",
-                            "create_at": 1_700_000_000,
-                            "user": {"userid": "51001", "username": "FixtureAuthor"},
-                            "topics": [{"name": "Steam"}, {"name": "PC游戏"}],
-                            "imgs": [{"url": "https://cdn.example.com/feed.jpg"}],
-                        }
-                    ]
-                },
-            },
+            json=load_fixture("feed_recommendation.json"),
         )
 
     client, http_client = client_with_handler(handler)
@@ -135,7 +121,7 @@ async def test_recommendation_feed_uses_verified_pull_contract() -> None:
     assert "limit" not in observed
     assert page.next_cursor == "21"
     assert page.items[0]["section_names"] == ["Steam", "PC游戏"]
-    assert page.items[0]["image_urls"] == ["https://cdn.example.com/feed.jpg"]
+    assert page.items[0]["image_urls"] == ["https://cdn.example.com/recommendation-1.jpg"]
     await client.close()
     await http_client.aclose()
 

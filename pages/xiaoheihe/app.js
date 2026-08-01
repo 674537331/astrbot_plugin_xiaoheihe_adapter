@@ -6,7 +6,9 @@ const state = {
   loginTimer: null,
   loginRefreshTimer: null,
   sseId: null,
+  sseConnecting: false,
   reconnectTimer: null,
+  logRenderId: null,
   logs: [],
   eventPage: 1,
   eventPages: 1,
@@ -66,7 +68,7 @@ function confirmAction(message, { confirmText = "确认", danger = false } = {})
 async function busy(button, work) {
   button.disabled = true;
   try { return await work(); }
-  catch (error) { toast(error.message, "error"); throw error; }
+  catch (error) { toast(error.message, "error"); return undefined; }
   finally { button.disabled = false; }
 }
 
@@ -591,17 +593,26 @@ function renderLogs() {
   $("log-output").scrollTop = $("log-output").scrollHeight;
 }
 
+function queueLogRender() {
+  if (state.logRenderId !== null) return;
+  state.logRenderId = requestAnimationFrame(() => {
+    state.logRenderId = null;
+    renderLogs();
+  });
+}
+
 async function connectSse() {
-  if (state.unloaded || state.sseId) return;
+  if (state.unloaded || state.sseId || state.sseConnecting || activeTab() !== "logs") return;
+  state.sseConnecting = true;
   try {
-    state.sseId = await bridge.subscribeSSE("logs/stream", {
+    const subscription = await bridge.subscribeSSE("logs/stream", {
       onOpen() { $("sse-state").textContent = "SSE 已连接"; },
       onMessage(event) {
         const payload = event.parsed;
         if (payload?.type === "log" && payload.entry) {
           state.logs.push(payload.entry);
           state.logs = state.logs.slice(-400);
-          renderLogs();
+          queueLogRender();
         }
       },
       onError() {
@@ -609,9 +620,16 @@ async function connectSse() {
         scheduleReconnect();
       },
     });
+    if (state.unloaded || activeTab() !== "logs") {
+      bridge.unsubscribeSSE(subscription);
+    } else {
+      state.sseId = subscription;
+    }
   } catch {
     $("sse-state").textContent = "SSE 连接失败，正在重连…";
     scheduleReconnect();
+  } finally {
+    state.sseConnecting = false;
   }
 }
 
@@ -620,7 +638,18 @@ function scheduleReconnect() {
   const current = state.sseId;
   state.sseId = null;
   if (current) bridge.unsubscribeSSE(current);
-  state.reconnectTimer = setTimeout(connectSse, 2500);
+  if (activeTab() === "logs" && !state.unloaded) {
+    state.reconnectTimer = setTimeout(connectSse, 2500);
+  }
+}
+
+function disconnectSse() {
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  const current = state.sseId;
+  state.sseId = null;
+  if (current) bridge.unsubscribeSSE(current);
+  $("sse-state").textContent = "打开运行日志时连接 SSE";
 }
 
 async function loadStorage() {
@@ -634,22 +663,45 @@ async function loadStorage() {
   );
 }
 
+function activeTab() {
+  return document.querySelector(".tabs button.active")?.dataset.tab || "overview";
+}
+
+async function loadTab(tabName) {
+  if (tabName === "overview") return loadStatus();
+  if (tabName === "login") return loadLogin();
+  if (tabName === "settings") return undefined;
+  if (tabName === "events") return loadEvents();
+  if (tabName === "feed") return loadCandidates();
+  if (tabName === "storage") return loadStorage();
+  if (tabName === "logs") {
+    await loadLogs();
+    return connectSse();
+  }
+  return undefined;
+}
+
 async function initialLoad() {
   await bridge.ready();
-  await Promise.all([loadConfig(), loadStatus(), loadLogs(), loadStorage()]);
-  await Promise.all([loadLogin(), loadEvents(), loadCandidates()]);
-  await connectSse();
+  await Promise.all([loadConfig(), loadStatus()]);
 }
 
 document.querySelectorAll(".tabs button").forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     document.querySelectorAll(".tabs button").forEach((item) => item.classList.toggle("active", item === button));
     document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === button.dataset.tab));
+    if (button.dataset.tab !== "logs") disconnectSse();
+    try { await loadTab(button.dataset.tab); }
+    catch (error) { toast(`${button.textContent}加载失败：${error.message}`, "error"); }
   });
 });
 
 $("refresh-all").addEventListener("click", () => busy($("refresh-all"), async () => {
-  await Promise.all([loadStatus(), loadStorage(), loadLogin()]);
+  const tabName = activeTab();
+  await Promise.all([
+    loadStatus(),
+    tabName === "overview" ? Promise.resolve() : loadTab(tabName),
+  ]);
   toast("状态已刷新");
 }));
 $("login-profile").addEventListener("change", loadLogin);
@@ -763,6 +815,7 @@ window.addEventListener("beforeunload", () => {
   clearInterval(state.loginTimer);
   clearTimeout(state.loginRefreshTimer);
   clearTimeout(state.reconnectTimer);
+  if (state.logRenderId !== null) cancelAnimationFrame(state.logRenderId);
   if (state.sseId) bridge.unsubscribeSSE(state.sseId);
 });
 

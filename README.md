@@ -6,13 +6,13 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.4**
+当前版本：**v1.2.5**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.4 重点：
+v1.2.5 重点：
 
 - 多图事件按实际图片数量自动增加视觉处理时间，默认 6 图事件由 120 秒扩展为 300 秒；
 - 设置保存后显示成功提示，并注明配置是否产生变化；
@@ -32,6 +32,9 @@ v1.2.4 重点：
 - 数据库迁移会自动补齐主动候选与原事件的关联；
 - 可从 AstrBot 已配置 Provider 下拉框中为小黑盒事件固定 LLM Provider，并单独指定图片理解 Provider；
 - 覆盖更新保留账号凭证、SQLite、配置和通知游标。
+- 管理页按需加载隐藏标签内容，并只在日志页保持 SSE 连接，降低空闲请求、数据库查询和页面占用；
+- 同一账号的并发首次请求只创建一个长生命周期 HTTP 客户端，不重复读取凭证或创建连接池；
+- 发布链路统一使用 UTF-8，远端仓库、元数据和 Release 正文不再出现中文乱码。
 
 ## 核心特性
 

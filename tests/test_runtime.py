@@ -86,7 +86,7 @@ async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
         ]
     )
     status = await runtime.status()
-    assert status["version"] == "v1.2.4"
+    assert status["version"] == "v1.2.5"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     assert status["adapters"] == [
@@ -262,6 +262,46 @@ async def test_runtime_client_pool_and_binding(tmp_path, fake_config) -> None:
     unbind_runtime(runtime)
     with pytest.raises(RuntimeError):
         get_runtime()
+    await runtime.close()
+
+
+async def test_runtime_client_pool_singleflights_concurrent_start(
+    tmp_path,
+    fake_config,
+    monkeypatch,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    load_calls = 0
+    start_calls = 0
+
+    def load_credentials(profile_id):
+        nonlocal load_calls
+        load_calls += 1
+        assert profile_id == "default"
+        return None
+
+    class FakeClient:
+        def __init__(self, profile_id, *, credentials=None, **kwargs) -> None:
+            self.profile_id = profile_id
+            self.credentials = credentials
+            self.closed = False
+
+        async def start(self) -> None:
+            nonlocal start_calls
+            start_calls += 1
+            await asyncio.sleep(0)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(runtime.credentials, "load", load_credentials)
+    monkeypatch.setattr("xiaoheihe.runtime.XiaoheiheApiClient", FakeClient)
+
+    clients = await asyncio.gather(*(runtime.get_client("default") for _ in range(8)))
+
+    assert len({id(client) for client in clients}) == 1
+    assert load_calls == 1
+    assert start_calls == 1
     await runtime.close()
 
 

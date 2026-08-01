@@ -45,6 +45,28 @@ def test_plugin_page_uses_embedded_confirmation_for_candidate_approval() -> None
     assert 'result.result === "dry_run"' in approval_handler
 
 
+def test_plugin_page_defers_hidden_panel_requests_and_log_stream() -> None:
+    source = (Path(__file__).resolve().parents[1] / "pages" / "xiaoheihe" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    initial_load = source.split("async function initialLoad()", maxsplit=1)[1].split(
+        "document.querySelectorAll", maxsplit=1
+    )[0]
+    assert "loadConfig()" in initial_load
+    assert "loadStatus()" in initial_load
+    for deferred in (
+        "loadLogin()",
+        "loadEvents()",
+        "loadCandidates()",
+        "loadLogs()",
+        "loadStorage()",
+    ):
+        assert deferred not in initial_load
+    assert "connectSse()" not in initial_load
+    assert 'activeTab() !== "logs"' in source
+    assert "queueLogRender()" in source
+
+
 def test_registers_only_plugin_prefixed_routes(fake_config) -> None:
     controller = WebApiController(FakeRuntime(fake_config))
     context = FakeContext()

@@ -73,6 +73,7 @@ class RuntimeServices:
             on_login=self.notify_profile_changed,
         )
         self._clients: dict[tuple[str, bool], XiaoheiheApiClient] = {}
+        self._client_locks: dict[tuple[str, bool], asyncio.Lock] = {}
         self._started = False
         self._closed = False
         self._start_lock = asyncio.Lock()
@@ -108,32 +109,35 @@ class RuntimeServices:
     async def get_client(self, profile_id: str, anonymous: bool = False) -> XiaoheiheApiClient:
         await self.ensure_started()
         key = (profile_id, anonymous)
-        credentials = None if anonymous else self.credentials.load(profile_id)
-        if credentials is not None and ensure_client_identity(credentials):
-            self.credentials.save(credentials)
         existing = self._clients.get(key)
         if existing and not existing.closed:
-            existing_uid = existing.credentials.uid if existing.credentials else ""
-            requested_uid = credentials.uid if credentials else ""
-            if existing_uid == requested_uid:
+            return existing
+
+        lock = self._client_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            existing = self._clients.get(key)
+            if existing and not existing.closed:
                 return existing
-            await existing.close()
-        config = self.config.snapshot()
-        network = config["network"]
-        reply = config["reply"]
-        client = XiaoheiheApiClient(
-            profile_id,
-            credentials=credentials,
-            request_timeout_seconds=float(network["request_timeout_seconds"]),
-            connect_timeout_seconds=float(network["connect_timeout_seconds"]),
-            read_timeout_seconds=float(network["read_timeout_seconds"]),
-            min_request_interval_seconds=float(network["min_request_interval_seconds"]),
-            max_retries=int(reply["max_retries"]),
-            on_auth_invalid=self._on_auth_invalid,
-        )
-        await client.start()
-        self._clients[key] = client
-        return client
+
+            credentials = None if anonymous else self.credentials.load(profile_id)
+            if credentials is not None and ensure_client_identity(credentials):
+                self.credentials.save(credentials)
+            config = self.config.snapshot()
+            network = config["network"]
+            reply = config["reply"]
+            client = XiaoheiheApiClient(
+                profile_id,
+                credentials=credentials,
+                request_timeout_seconds=float(network["request_timeout_seconds"]),
+                connect_timeout_seconds=float(network["connect_timeout_seconds"]),
+                read_timeout_seconds=float(network["read_timeout_seconds"]),
+                min_request_interval_seconds=float(network["min_request_interval_seconds"]),
+                max_retries=int(reply["max_retries"]),
+                on_auth_invalid=self._on_auth_invalid,
+            )
+            await client.start()
+            self._clients[key] = client
+            return client
 
     async def invalidate_client(
         self,
@@ -141,11 +145,16 @@ class RuntimeServices:
         *,
         include_anonymous: bool = True,
     ) -> None:
-        for key in tuple(self._clients):
-            if key[0] != profile_id or (key[1] and not include_anonymous):
-                continue
-            client = self._clients.pop(key)
-            await client.close()
+        anonymous_modes = (False, True) if include_anonymous else (False,)
+        for anonymous in anonymous_modes:
+            await self._close_client_key((profile_id, anonymous))
+
+    async def _close_client_key(self, key: tuple[str, bool]) -> None:
+        lock = self._client_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            client = self._clients.pop(key, None)
+            if client is not None:
+                await client.close()
 
     def register_adapter(self, adapter: Any) -> None:
         self._adapters.add(adapter)
@@ -735,7 +744,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.4",
+            "version": "v1.2.5",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),
@@ -780,10 +789,8 @@ class RuntimeServices:
                 total_limit_mb=int(snapshot["retention"]["log_total_limit_mb"]),
             )
         if changed & {"network", "reply"}:
-            clients = tuple(self._clients.values())
-            self._clients.clear()
-            for client in clients:
-                await client.close()
+            for key in tuple(set(self._clients) | set(self._client_locks)):
+                await self._close_client_key(key)
         self.logging.emit(
             "INFO",
             "配置已保存并通知相关后台任务安全重载",
@@ -938,6 +945,7 @@ class RuntimeServices:
             with suppress(BaseException):
                 await client.close()
         self._clients.clear()
+        self._client_locks.clear()
         if self._started:
             await self.database.close()
         self.logging.close()

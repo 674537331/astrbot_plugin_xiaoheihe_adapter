@@ -3,6 +3,9 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.pycache-*/
+.test-*/
+.codex-remote-attachments/
 .coverage
 coverage.xml
 htmlcov/
@@ -21,4 +24,3 @@ data/
 *.png
 credentials/
 .env
-

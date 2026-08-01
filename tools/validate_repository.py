@@ -19,7 +19,9 @@ EXCLUDED = {
     "dist",
 }
 EXCLUDED_FILES = {".coverage", "coverage.xml"}
+EXCLUDED_PREFIXES = (".pycache-", ".test-")
 FORBIDDEN_SUFFIXES = {".db", ".db-shm", ".db-wal", ".log", ".qr"}
+TEXT_SUFFIXES = {".css", ".html", ".js", ".json", ".md", ".py", ".toml", ".txt", ".yaml", ".yml"}
 MAX_ARCHIVE_INPUT_BYTES = 5 * 1024 * 1024
 
 
@@ -44,7 +46,11 @@ def files() -> list[Path]:
         if path.is_file()
         and path.name not in EXCLUDED_FILES
         and not any(
-            part in EXCLUDED or part.endswith(".egg-info") for part in path.relative_to(ROOT).parts
+            part in EXCLUDED
+            or part == ".codex-remote-attachments"
+            or part.startswith(EXCLUDED_PREFIXES)
+            or part.endswith(".egg-info")
+            for part in path.relative_to(ROOT).parts
         )
     ]
 
@@ -55,12 +61,18 @@ def main() -> int:
     for path in repository_files:
         relative = path.relative_to(ROOT).as_posix()
         try:
+            source = (
+                path.read_text(encoding="utf-8") if path.suffix.lower() in TEXT_SUFFIXES else ""
+            )
             if path.suffix == ".json":
-                json.loads(path.read_text(encoding="utf-8"))
+                json.loads(source)
             elif path.suffix in {".yaml", ".yml"}:
-                yaml.safe_load(path.read_text(encoding="utf-8"))
+                yaml.safe_load(source)
         except (UnicodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
             failures.append(f"{relative}: invalid syntax: {exc}")
+            source = ""
+        if "\ufffd" in source or "?" * 3 in source:
+            failures.append(f"{relative}: suspicious text-encoding corruption marker")
 
         lower_name = path.name.lower()
         if any(lower_name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES):
