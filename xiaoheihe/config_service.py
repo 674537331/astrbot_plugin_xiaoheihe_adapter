@@ -99,15 +99,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 PROACTIVE_FEED_SOURCES = {
     "all",
-    "game",
-    "hardware",
-    "software",
-    "esports",
+    "pc_game",
+    "mobile_game",
+    "console_game",
+    "community",
+    "daily",
+    "digital_tech",
     "anime",
-    "movie",
-    "music",
-    "life",
-    "tech",
+    "film_tv",
+    "esports",
+    "guide",
+    "deals",
+    "indie_game",
+}
+
+LEGACY_FEED_SOURCES = {
+    "follow": "all",
+    "game": "pc_game",
+    "hardware": "digital_tech",
+    "software": "digital_tech",
+    "movie": "film_tv",
+    "music": "daily",
+    "life": "daily",
+    "tech": "digital_tech",
 }
 
 RestartCallback = Callable[[set[str]], Awaitable[None]]
@@ -311,8 +325,10 @@ class ConfigService:
     @staticmethod
     def _normalize_legacy(config: dict[str, Any]) -> None:
         proactive = config.get("proactive_feed")
-        if isinstance(proactive, dict) and proactive.get("source") == "follow":
-            proactive["source"] = "all"
+        if isinstance(proactive, dict):
+            source = proactive.get("source")
+            if source in LEGACY_FEED_SOURCES:
+                proactive["source"] = LEGACY_FEED_SOURCES[source]
 
     @classmethod
     def _merge_defaults(cls, value: Any, defaults: Any) -> Any:

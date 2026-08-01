@@ -463,6 +463,119 @@ def _boolean(value: Any) -> bool:
     return bool(value)
 
 
+def parse_feed(payload: Mapping[str, Any], *, offset: int = 0) -> ApiPage:
+    """Normalize recommendation-feed data while preserving its topic metadata."""
+    candidate = payload.get("result", payload.get("data", payload))
+    if isinstance(candidate, Mapping):
+        if not any(field in candidate for field in ("links", "items", "list")):
+            raise ResponseShapeError("推荐流响应缺少 links/items/list 字段")
+        raw_items = _first(candidate, "links", "items", "list", default=[])
+    elif isinstance(candidate, list):
+        raw_items = candidate
+    else:
+        raise ResponseShapeError("推荐流 data/result 应为对象或数组")
+    if not isinstance(raw_items, list):
+        raise ResponseShapeError("推荐流 links/items/list 字段不是数组")
+
+    items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        if not isinstance(raw, Mapping):
+            continue
+        author = raw.get("user", raw.get("author", {}))
+        author_obj = author if isinstance(author, Mapping) else {}
+        normalized = dict(raw)
+        normalized.update(
+            {
+                "post_id": _id(raw, "linkid", "link_id", "post_id", "id"),
+                "content": str(_first(raw, "description", "content", "text", "summary")),
+                "created_at": _feed_timestamp(
+                    _first(raw, "create_at", "created_at", "time", "timestamp", default=0)
+                ),
+                "author": {
+                    **dict(author_obj),
+                    "uid": _id(
+                        author_obj,
+                        "userid",
+                        "uid",
+                        "heybox_id",
+                        "heyboxid",
+                        "user_id",
+                        "id",
+                    ),
+                    "nickname": str(_first(author_obj, "username", "nickname", "name")),
+                },
+                "image_urls": _feed_image_urls(raw),
+                "section_names": _feed_section_names(raw),
+                "popularity_score": _feed_popularity(raw),
+            }
+        )
+        items.append(normalized)
+    next_offset = max(0, offset) + len(raw_items)
+    return ApiPage(
+        items=items,
+        next_cursor=str(next_offset) if raw_items else "",
+        has_more=bool(raw_items),
+    )
+
+
+def _feed_timestamp(value: Any) -> float:
+    if value in (None, ""):
+        return 0
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return result / 1000 if result > 10_000_000_000 else result
+
+
+def _feed_image_urls(post: Mapping[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for field in ("imgs", "thumbs", "images", "image_urls"):
+        values = post.get(field, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, Mapping):
+                url = str(_first(value, "url", "src", "original", "image_url", "large_url"))
+            else:
+                url = str(value or "")
+            if url:
+                urls.append(url)
+    return list(dict.fromkeys(urls))
+
+
+def _feed_section_names(post: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for field in ("topics", "hashtags", "content_tags", "list_content_tags", "link_tag"):
+        values = post.get(field, [])
+        if isinstance(values, (str, Mapping)):
+            values = [values]
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            name = (
+                str(_first(value, "name", "title", "text", "tag"))
+                if isinstance(value, Mapping)
+                else str(value or "")
+            )
+            if name:
+                names.append(name.strip())
+    return list(dict.fromkeys(name for name in names if name))
+
+
+def _feed_popularity(post: Mapping[str, Any]) -> int:
+    score = 0
+    for field in ("comment_num", "comments", "up", "like_num", "link_award_num"):
+        value = post.get(field, 0)
+        if isinstance(value, Mapping | list):
+            continue
+        try:
+            score += max(0, int(float(value or 0)))
+        except (TypeError, ValueError):
+            continue
+    return score
+
+
 def parse_thread_context(payload: Mapping[str, Any], post_id: str) -> ThreadContext:
     body = _data(payload)
     post = body.get("post", body.get("link", body))

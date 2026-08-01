@@ -6,13 +6,13 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.3**
+当前版本：**v1.2.4**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.3 重点：
+v1.2.4 重点：
 
 - 多图事件按实际图片数量自动增加视觉处理时间，默认 6 图事件由 120 秒扩展为 300 秒；
 - 设置保存后显示成功提示，并注明配置是否产生变化；
@@ -27,7 +27,8 @@ v1.2.3 重点：
 - 主动回复审核发送会回写原主动事件，事件记录展示最终发送状态和实际处理完成时间；
 - 主动浏览额度在读取推荐流时消耗，达到上限后不会继续读取；
 - 回复上下文同时提供原帖发布时间、触发回复时间和当前处理时间；
-- 推荐流可选择全部或游戏、硬件、软件、电竞、动漫、影视、音乐、生活、科技分区；
+- 修复主动推荐流错误传递 `source` 参数导致的 `pull 参数不正确 (0/1)`；
+- 推荐流可选择全部、PC 游戏、手机游戏、主机游戏、数码科技、动漫二次元等中文分区；
 - 数据库迁移会自动补齐主动候选与原事件的关联；
 - 可从 AstrBot 已配置 Provider 下拉框中为小黑盒事件固定 LLM Provider，并单独指定图片理解 Provider；
 - 覆盖更新保留账号凭证、SQLite、配置和通知游标。
@@ -247,7 +248,8 @@ source: all
 
 启用后，候选内容通过 AstrBot 原生事件链路生成并保存到“主动审核”。审核页支持编辑、批准和
 拒绝；批准后发送已审核文本，无需再次调用模型。`max_per_day` 表示每日主动浏览的帖子数，不是
-每日评论发送数；达到上限后适配器不会再读取推荐流。
+每日评论发送数；达到上限后适配器不会再读取推荐流。推荐流分区始终使用小黑盒已验证的
+`pull=0` 请求，管理页的中文分区仅用于筛选返回帖子的主题和标签。
 
 ## 数据与安全
 

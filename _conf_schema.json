@@ -348,18 +348,21 @@
         "description": "推荐流分区",
         "type": "string",
         "default": "all",
-        "options": ["all", "game", "hardware", "software", "esports", "anime", "movie", "music", "life", "tech"],
+        "options": ["all", "pc_game", "mobile_game", "console_game", "community", "daily", "digital_tech", "anime", "film_tv", "esports", "guide", "deals", "indie_game"],
         "option_labels": {
           "all": "全部",
-          "game": "游戏",
-          "hardware": "硬件",
-          "software": "软件",
-          "esports": "电竞",
-          "anime": "动漫",
-          "movie": "影视",
-          "music": "音乐",
-          "life": "生活",
-          "tech": "科技"
+          "pc_game": "PC 游戏",
+          "mobile_game": "手机游戏",
+          "console_game": "主机游戏",
+          "community": "盒友杂谈",
+          "daily": "盒友日常",
+          "digital_tech": "数码科技",
+          "anime": "动漫二次元",
+          "film_tv": "影视娱乐",
+          "esports": "电竞赛事",
+          "guide": "游戏攻略",
+          "deals": "优惠资讯",
+          "indie_game": "独立游戏"
         }
       },
       "keywords": {

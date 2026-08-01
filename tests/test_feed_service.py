@@ -103,7 +103,7 @@ async def test_feed_counts_read_items_and_limits_fetch_size(repository) -> None:
     client.fetch_feed = fetch_feed
     service = FeedService("default", config, client, repository, dispatch, unused_delivery)
     assert await service.run_once() == 0
-    assert captured == {"source": "all", "limit": 3}
+    assert captured == {"offset": 0}
     assert (await repository.today_counters("default"))["proactive_count"] == 0
 
 
@@ -318,3 +318,44 @@ async def test_feed_skips_self_blacklisted_and_already_replied(repository) -> No
     service = FeedService("default", config, client, repository, dispatch, unused_delivery)
     assert await service.run_once() == 0
     assert not dispatched
+
+
+async def test_feed_source_filters_recommendation_topics_locally(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"].update({"enabled": True, "source": "pc_game"})
+    client = FakeFeedClient()
+
+    async def fetch_feed(**kwargs):
+        assert kwargs == {"offset": 0}
+        return ApiPage(
+            items=[
+                {
+                    "post_id": "mobile-post",
+                    "title": "手游讨论",
+                    "content": "聊聊新版本的玩法。",
+                    "author": {"uid": "mobile-author"},
+                    "section_names": ["手机游戏"],
+                },
+                {
+                    "post_id": "pc-post",
+                    "title": "PC 游戏讨论",
+                    "content": "聊聊这套机制设计。",
+                    "author": {"uid": "pc-author", "nickname": "PCAuthor"},
+                    "section_names": ["Steam", "PC游戏"],
+                    "image_urls": ["https://cdn.example.com/post.jpg"],
+                },
+            ]
+        )
+
+    client.fetch_feed = fetch_feed
+    dispatched = []
+
+    async def dispatch(notification, metadata):
+        dispatched.append((notification, metadata))
+
+    service = FeedService("default", config, client, repository, dispatch, unused_delivery)
+    assert await service.run_once() == 1
+    notification, metadata = dispatched[0]
+    assert notification.post_id == "pc-post"
+    assert notification.image_urls == ["https://cdn.example.com/post.jpg"]
+    assert metadata["post_author_uid"] == "pc-author"

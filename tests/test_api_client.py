@@ -100,6 +100,46 @@ async def test_comment_context_merges_original_post_and_root_comment_tree() -> N
     await http_client.aclose()
 
 
+async def test_recommendation_feed_uses_verified_pull_contract() -> None:
+    observed: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "result": {
+                    "links": [
+                        {
+                            "linkid": "81001",
+                            "description": "讨论一款 PC 游戏的玩法设计。",
+                            "create_at": 1_700_000_000,
+                            "user": {"userid": "51001", "username": "FixtureAuthor"},
+                            "topics": [{"name": "Steam"}, {"name": "PC游戏"}],
+                            "imgs": [{"url": "https://cdn.example.com/feed.jpg"}],
+                        }
+                    ]
+                },
+            },
+        )
+
+    client, http_client = client_with_handler(handler)
+    page = await client.fetch_feed(offset=20)
+
+    assert observed["pull"] == "0"
+    assert observed["offset"] == "20"
+    assert observed["app"] == "heybox"
+    assert "source" not in observed
+    assert "cursor" not in observed
+    assert "limit" not in observed
+    assert page.next_cursor == "21"
+    assert page.items[0]["section_names"] == ["Steam", "PC游戏"]
+    assert page.items[0]["image_urls"] == ["https://cdn.example.com/feed.jpg"]
+    await client.close()
+    await http_client.aclose()
+
+
 async def test_qr_wait_scan_success_and_notification_parse() -> None:
     responses = {
         "/account/get_qrcode_url/": load_fixture("qr_response.json"),

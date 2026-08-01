@@ -16,6 +16,22 @@ ReviewedDelivery = Callable[[RoutingTarget, str], Awaitable[dict[str, Any]]]
 
 SKIP_PATTERN = re.compile(r"(广告|推广|抽奖|开奖|出售|收购|交易|代购|引战|骂战|互喷)", re.I)
 
+SECTION_ALIASES: dict[str, tuple[str, ...]] = {
+    "all": (),
+    "pc_game": ("pc游戏", "pc 游戏", "steam游戏", "steam", "单机游戏"),
+    "mobile_game": ("手机游戏", "手游"),
+    "console_game": ("主机游戏", "switch", "xbox", "playstation", "ps5", "ps4", "任天堂"),
+    "community": ("盒友杂谈", "杂谈"),
+    "daily": ("盒友日常", "日常", "生活"),
+    "digital_tech": ("数码科技", "数码", "硬件", "外设", "科技"),
+    "anime": ("动漫", "二次元", "漫画", "番剧", "同人"),
+    "film_tv": ("影视", "电影", "电视剧", "综艺"),
+    "esports": ("电竞", "赛事"),
+    "guide": ("攻略", "心得", "教程"),
+    "deals": ("特惠资讯", "优惠", "折扣", "史低"),
+    "indie_game": ("独立游戏", "indie"),
+}
+
 
 class FeedService:
     def __init__(
@@ -44,10 +60,7 @@ class FeedService:
         remaining = max(0, int(feed_config["max_per_day"]) - counters["proactive_count"])
         if not remaining:
             return 0
-        page = await self.client.fetch_feed(
-            source=str(feed_config.get("source", "all")),
-            limit=min(int(feed_config["max_per_run"]) * 5, remaining),
-        )
+        page = await self.client.fetch_feed(offset=0)
         browsed_posts = page.items[:remaining]
         if browsed_posts:
             await self.repository.increment_counter(self.profile_id, proactive=len(browsed_posts))
@@ -80,19 +93,25 @@ class FeedService:
                 root_comment_id="",
                 parent_comment_id="",
                 content=clean_untrusted_text(
-                    str(post.get("content", post.get("text", ""))), max_chars=4000
+                    str(post.get("content", post.get("description", post.get("text", "")))),
+                    max_chars=4000,
                 ),
                 created_at=time.time(),
                 post_author_uid=author_uid,
                 explicit_wake=True,
-                image_urls=[],
+                image_urls=[
+                    str(url) for url in post.get("image_urls", []) if isinstance(url, str) and url
+                ],
                 raw={"event_type": "proactive_feed", "post": post},
             )
             await self.synthetic_dispatch(
                 notification,
                 {
-                    "candidate_reason": "通过主动刷帖安全过滤器",
+                    "candidate_reason": (
+                        f"推荐流 · {feed_config.get('source', 'all')} · 通过安全过滤器"
+                    ),
                     "post_title": str(post.get("title", "")),
+                    "post_author_uid": author_uid,
                 },
             )
             generated += 1
@@ -100,13 +119,13 @@ class FeedService:
 
     def _eligible(self, post: dict[str, Any], author_uid: str) -> bool:
         title = str(post.get("title", ""))
-        body = str(post.get("content", post.get("text", "")))
+        body = str(post.get("content", post.get("description", post.get("text", ""))))
         text = f"{title}\n{body}".strip()
         if not text or len(clean_untrusted_text(text)) < 4:
             return False
         if SKIP_PATTERN.search(text):
             return False
-        post_type = str(post.get("type", "")).lower()
+        post_type = str(post.get("content_type", post.get("type", ""))).lower()
         if post_type in {"ad", "advertisement", "lottery", "trade"}:
             return False
         credentials = getattr(self.client, "credentials", None)
@@ -125,6 +144,16 @@ class FeedService:
         }
         if allowed_types and post_type not in allowed_types:
             return False
+        source = str(self.config["proactive_feed"].get("source", "all"))
+        aliases = SECTION_ALIASES.get(source, ())
+        if aliases:
+            section_names = {
+                str(value).strip().casefold()
+                for value in post.get("section_names", [])
+                if str(value).strip()
+            }
+            if not any(alias.casefold() in name for alias in aliases for name in section_names):
+                return False
         keywords = [
             str(item).casefold()
             for item in self.config["proactive_feed"].get("keywords", [])
