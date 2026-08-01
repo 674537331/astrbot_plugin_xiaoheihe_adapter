@@ -1,47 +1,47 @@
 {
   "profiles": {
     "type": "template_list",
-    "description": "小黑盒账号档案",
-    "hint": "当前版本正式支持单账号运行；结构和存储均按 profile_id 隔离。凭证独立保存在插件数据目录。",
+    "description": "???????",
+    "hint": "????????????????????? profile_id ?????????????????",
     "templates": {
       "account": {
-        "name": "账号档案",
+        "name": "????",
         "display_item": "profile_id",
         "hide_hint_in_list": true,
         "items": {
           "profile_id": {
-            "description": "档案 ID",
+            "description": "?? ID",
             "type": "string",
             "default": "default",
-            "hint": "仅允许字母、数字、下划线和短横线；须与机器人页面适配器的 profile_id 一致。"
+            "hint": "???????????????????????????? profile_id ???"
           },
           "display_name": {
-            "description": "显示名称",
+            "description": "????",
             "type": "string",
-            "default": "默认账号"
+            "default": "????"
           },
           "enabled": {
-            "description": "启用档案",
+            "description": "????",
             "type": "bool",
             "default": true
           },
           "poll_mentions": {
-            "description": "轮询 @ 通知",
+            "description": "?? @ ??",
             "type": "bool",
             "default": true
           },
           "poll_replies": {
-            "description": "轮询评论回复",
+            "description": "??????",
             "type": "bool",
             "default": true
           },
           "dry_run": {
-            "description": "模拟运行（仅生成，不发送）",
+            "description": "?????????????",
             "type": "bool",
             "default": true
           },
           "owner_uid": {
-            "description": "主人小黑盒 UID",
+            "description": "????? UID",
             "type": "string",
             "default": ""
           }
@@ -52,7 +52,7 @@
       {
         "__template_key": "account",
         "profile_id": "default",
-        "display_name": "默认账号",
+        "display_name": "????",
         "enabled": true,
         "poll_mentions": true,
         "poll_replies": true,
@@ -63,10 +63,10 @@
   },
   "polling": {
     "type": "object",
-    "description": "通知轮询",
+    "description": "????",
     "items": {
       "poll_interval_seconds": {
-        "description": "轮询间隔（秒）",
+        "description": "???????",
         "type": "int",
         "default": 60,
         "slider": {
@@ -76,94 +76,94 @@
         }
       },
       "poll_jitter_seconds": {
-        "description": "轮询随机抖动（秒）",
+        "description": "?????????",
         "type": "float",
         "default": 5.0
       },
       "max_pages_per_poll": {
-        "description": "每类通知最大页数",
+        "description": "????????",
         "type": "int",
         "default": 3
       },
       "page_size": {
-        "description": "单页通知数",
+        "description": "?????",
         "type": "int",
         "default": 20
       },
       "initial_backfill_count": {
-        "description": "首次启动回溯条数",
+        "description": "????????",
         "type": "int",
         "default": 0,
-        "hint": "默认 0：首次成功轮询记录当前最新 message_id，之后接收新通知。"
+        "hint": "?? 0????????????? message_id?????????"
       }
     }
   },
   "providers": {
     "type": "object",
-    "description": "模型 Provider",
+    "description": "?? Provider",
     "items": {
       "llm_provider_id": {
-        "description": "固定 LLM Provider",
+        "description": "?? LLM Provider",
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "指定小黑盒适配器使用的 LLM Provider ID；留空则跟随当前配置文件或会话设置。"
+        "hint": "??????????? LLM Provider ID??????????????????"
       },
       "image_provider_id": {
-        "description": "固定图片 Provider",
+        "description": "???? Provider",
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "指定小黑盒图片理解使用的 Provider ID；留空则由当前 LLM Provider 和 AstrBot 原生图片流程处理。"
+        "hint": "???????????? Provider ID??????? LLM Provider ? AstrBot ?????????"
       }
     }
   },
   "context": {
     "type": "object",
-    "description": "上下文与图片",
+    "description": "??????",
     "items": {
       "max_post_chars": {
-        "description": "帖子正文最大字符数",
+        "description": "?????????",
         "type": "int",
         "default": 6000
       },
       "max_thread_comments": {
-        "description": "楼层最大评论数",
+        "description": "???????",
         "type": "int",
         "default": 40
       },
       "context_cache_ttl_seconds": {
-        "description": "上下文缓存 TTL",
+        "description": "????? TTL",
         "type": "int",
         "default": 300
       },
       "context_cache_max_entries": {
-        "description": "上下文缓存最大条目",
+        "description": "?????????",
         "type": "int",
         "default": 256
       },
       "enable_image_understanding": {
-        "description": "启用图片理解",
+        "description": "??????",
         "type": "bool",
         "default": true
       },
       "max_images_per_event": {
-        "description": "每事件最大图片数",
+        "description": "????????",
         "type": "int",
         "default": 6
       },
       "max_image_size_mb": {
-        "description": "单图上限 MB",
+        "description": "???? MB",
         "type": "int",
         "default": 8
       },
       "max_total_image_size_mb": {
-        "description": "单事件图片总上限 MB",
+        "description": "???????? MB",
         "type": "int",
         "default": 24
       },
       "image_timeout_seconds": {
-        "description": "图片读取超时",
+        "description": "??????",
         "type": "int",
         "default": 15
       }
@@ -171,37 +171,37 @@
   },
   "reply": {
     "type": "object",
-    "description": "回复策略",
+    "description": "????",
     "items": {
       "dry_run_mark_processed": {
-        "description": "模拟运行后标记完成",
+        "description": "?????????",
         "type": "bool",
         "default": true,
-        "hint": "保存模拟回复后完成该事件，相同通知后续轮询直接读取完成状态。"
+        "hint": "??????????????????????????????"
       },
       "max_reply_chars": {
-        "description": "最大回复字符数",
+        "description": "???????",
         "type": "int",
         "default": 500,
-        "hint": "小黑盒实际限制待真实环境确认。"
+        "hint": "???????????????"
       },
       "reply_timeout_seconds": {
-        "description": "回复生成超时",
+        "description": "??????",
         "type": "int",
         "default": 120
       },
       "max_retries": {
-        "description": "安全请求最大重试次数",
+        "description": "??????????",
         "type": "int",
         "default": 3
       },
       "only_explicit_mentions": {
-        "description": "只回复明确 @",
+        "description": "????? @",
         "type": "bool",
         "default": true
       },
       "reply_to_direct_replies": {
-        "description": "回复别人对机器人评论的直接回复",
+        "description": "???????????????",
         "type": "bool",
         "default": true
       }
@@ -209,15 +209,15 @@
   },
   "permissions": {
     "type": "object",
-    "description": "身份与过滤",
+    "description": "?????",
     "items": {
       "whitelist_mode": {
-        "description": "启用用户白名单模式",
+        "description": "?????????",
         "type": "bool",
         "default": false
       },
       "user_whitelist": {
-        "description": "用户 UID 白名单",
+        "description": "?? UID ???",
         "type": "list",
         "default": [],
         "items": {
@@ -225,7 +225,7 @@
         }
       },
       "user_blacklist": {
-        "description": "用户 UID 黑名单",
+        "description": "?? UID ???",
         "type": "list",
         "default": [],
         "items": {
@@ -233,7 +233,7 @@
         }
       },
       "author_whitelist": {
-        "description": "帖子作者 UID 白名单",
+        "description": "???? UID ???",
         "type": "list",
         "default": [],
         "items": {
@@ -241,7 +241,7 @@
         }
       },
       "author_blacklist": {
-        "description": "帖子作者 UID 黑名单",
+        "description": "???? UID ???",
         "type": "list",
         "default": [],
         "items": {
@@ -249,7 +249,7 @@
         }
       },
       "keyword_blacklist": {
-        "description": "关键词黑名单",
+        "description": "??????",
         "type": "list",
         "default": [],
         "items": {
@@ -257,49 +257,49 @@
         }
       },
       "map_owner_to_astrbot_admin": {
-        "description": "将主人映射为 AstrBot 管理员",
+        "description": "?????? AstrBot ???",
         "type": "bool",
         "default": false,
-        "hint": "高风险选项，默认关闭。"
+        "hint": "???????????"
       }
     }
   },
   "network": {
     "type": "object",
-    "description": "网络、并发和重试",
+    "description": "????????",
     "items": {
       "request_timeout_seconds": {
-        "description": "请求总超时",
+        "description": "?????",
         "type": "int",
         "default": 20
       },
       "connect_timeout_seconds": {
-        "description": "连接超时",
+        "description": "????",
         "type": "int",
         "default": 8
       },
       "read_timeout_seconds": {
-        "description": "读取超时",
+        "description": "????",
         "type": "int",
         "default": 15
       },
       "min_request_interval_seconds": {
-        "description": "最小请求间隔",
+        "description": "??????",
         "type": "float",
         "default": 1.0
       },
       "max_reply_concurrency": {
-        "description": "最大回复并发",
+        "description": "??????",
         "type": "int",
         "default": 2
       },
       "max_pending_events": {
-        "description": "待处理事件硬上限",
+        "description": "????????",
         "type": "int",
         "default": 50
       },
       "max_pending_per_user": {
-        "description": "单用户待处理上限",
+        "description": "????????",
         "type": "int",
         "default": 5
       }
@@ -307,63 +307,66 @@
   },
   "proactive_feed": {
     "type": "object",
-    "description": "主动刷帖（高风险）",
+    "description": "?????????",
     "items": {
       "enabled": {
-        "description": "启用主动刷帖",
+        "description": "??????",
         "type": "bool",
         "default": false
       },
       "dry_run": {
-        "description": "主动帖子模拟运行",
+        "description": "????????",
         "type": "bool",
         "default": true
       },
       "review_required": {
-        "description": "真实发送前要求人工审核",
+        "description": "???????????",
         "type": "bool",
         "default": true
       },
       "interval_seconds": {
-        "description": "运行间隔",
+        "description": "????",
         "type": "int",
         "default": 900
       },
       "jitter_seconds": {
-        "description": "每轮附加随机抖动",
+        "description": "????????",
         "type": "int",
         "default": 60
       },
       "max_per_run": {
-        "description": "每轮最大候选数",
+        "description": "???????",
         "type": "int",
         "default": 1
       },
       "max_per_day": {
-        "description": "每日主动浏览上限",
+        "description": "????????",
         "type": "int",
         "default": 10
       },
       "source": {
-        "description": "推荐流分区",
+        "description": "?????",
         "type": "string",
         "default": "all",
-        "options": ["all", "game", "hardware", "software", "esports", "anime", "movie", "music", "life", "tech"],
+        "options": ["all", "pc_game", "mobile_game", "console_game", "community", "daily", "digital_tech", "anime", "film_tv", "esports", "guide", "deals", "indie_game"],
         "option_labels": {
-          "all": "全部",
-          "game": "游戏",
-          "hardware": "硬件",
-          "software": "软件",
-          "esports": "电竞",
-          "anime": "动漫",
-          "movie": "影视",
-          "music": "音乐",
-          "life": "生活",
-          "tech": "科技"
+          "all": "??",
+          "pc_game": "PC ??",
+          "mobile_game": "????",
+          "console_game": "????",
+          "community": "????",
+          "daily": "????",
+          "digital_tech": "????",
+          "anime": "?????",
+          "film_tv": "????",
+          "esports": "????",
+          "guide": "????",
+          "deals": "????",
+          "indie_game": "????"
         }
       },
       "keywords": {
-        "description": "允许关键词",
+        "description": "?????",
         "type": "list",
         "default": [],
         "items": {
@@ -371,7 +374,7 @@
         }
       },
       "allowed_post_types": {
-        "description": "允许的帖子类型（空列表表示不限制）",
+        "description": "?????????????????",
         "type": "list",
         "default": [],
         "items": {
@@ -382,55 +385,55 @@
   },
   "retention": {
     "type": "object",
-    "description": "数据保留与上限",
+    "description": "???????",
     "items": {
       "incoming_body_days": {
-        "description": "通知正文保留天数",
+        "description": "????????",
         "type": "int",
         "default": 30
       },
       "dry_run_days": {
-        "description": "模拟运行正文保留天数",
+        "description": "??????????",
         "type": "int",
         "default": 30
       },
       "failed_days": {
-        "description": "失败记录保留天数",
+        "description": "????????",
         "type": "int",
         "default": 30
       },
       "success_reply_days": {
-        "description": "成功回复正文保留天数",
+        "description": "??????????",
         "type": "int",
         "default": 90
       },
       "session_mapping_days": {
-        "description": "会话映射闲置保留天数",
+        "description": "??????????",
         "type": "int",
         "default": 180
       },
       "dedup_days": {
-        "description": "去重键保留天数",
+        "description": "???????",
         "type": "int",
         "default": 365
       },
       "database_warn_mb": {
-        "description": "数据库警告阈值 MB",
+        "description": "??????? MB",
         "type": "int",
         "default": 150
       },
       "database_soft_limit_mb": {
-        "description": "数据库软上限 MB",
+        "description": "?????? MB",
         "type": "int",
         "default": 200
       },
       "log_total_limit_mb": {
-        "description": "日志总上限 MB",
+        "description": "????? MB",
         "type": "int",
         "default": 100
       },
       "image_cache_soft_limit_mb": {
-        "description": "图片缓存软上限 MB",
+        "description": "??????? MB",
         "type": "int",
         "default": 200
       }
@@ -438,10 +441,10 @@
   },
   "logging": {
     "type": "object",
-    "description": "日志",
+    "description": "??",
     "items": {
       "level": {
-        "description": "最低日志级别",
+        "description": "??????",
         "type": "string",
         "default": "INFO",
         "options": [
@@ -452,7 +455,7 @@
         ]
       },
       "max_memory_entries": {
-        "description": "WebUI 内存日志条数",
+        "description": "WebUI ??????",
         "type": "int",
         "default": 2000
       }

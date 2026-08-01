@@ -59,12 +59,12 @@ async def test_comment_context_merges_original_post_and_root_comment_tree() -> N
                     "result": {
                         "link": {
                             "linkid": "30003",
-                            "title": "原帖标题",
+                            "title": "????",
                             "text": (
-                                '[{"type":"text","text":"原帖正文"},'
+                                '[{"type":"text","text":"????"},'
                                 '{"type":"image","url":"https://cdn.example.com/post.png"}]'
                             ),
-                            "user": {"userid": "author", "username": "作者"},
+                            "user": {"userid": "author", "username": "??"},
                         }
                     },
                 },
@@ -78,8 +78,8 @@ async def test_comment_context_merges_original_post_and_root_comment_tree() -> N
                     "comments": [
                         {
                             "id": "root-1",
-                            "content": "楼层内容",
-                            "user": {"userid": "user", "username": "用户"},
+                            "content": "????",
+                            "user": {"userid": "user", "username": "??"},
                         }
                     ],
                 },
@@ -92,10 +92,50 @@ async def test_comment_context_merges_original_post_and_root_comment_tree() -> N
     assert len(observed) == 2
     assert "root_comment_id" not in observed[0]
     assert observed[1]["root_comment_id"] == "root-1"
-    assert context.title == "原帖标题"
-    assert context.body == "原帖正文"
+    assert context.title == "????"
+    assert context.body == "????"
     assert context.image_urls == ["https://cdn.example.com/post.png"]
-    assert context.comments[0]["content"] == "楼层内容"
+    assert context.comments[0]["content"] == "????"
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_recommendation_feed_uses_verified_pull_contract() -> None:
+    observed: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "result": {
+                    "links": [
+                        {
+                            "linkid": "81001",
+                            "description": "???? PC ????????",
+                            "create_at": 1_700_000_000,
+                            "user": {"userid": "51001", "username": "FixtureAuthor"},
+                            "topics": [{"name": "Steam"}, {"name": "PC??"}],
+                            "imgs": [{"url": "https://cdn.example.com/feed.jpg"}],
+                        }
+                    ]
+                },
+            },
+        )
+
+    client, http_client = client_with_handler(handler)
+    page = await client.fetch_feed(offset=20)
+
+    assert observed["pull"] == "0"
+    assert observed["offset"] == "20"
+    assert observed["app"] == "heybox"
+    assert "source" not in observed
+    assert "cursor" not in observed
+    assert "limit" not in observed
+    assert page.next_cursor == "21"
+    assert page.items[0]["section_names"] == ["Steam", "PC??"]
+    assert page.items[0]["image_urls"] == ["https://cdn.example.com/feed.jpg"]
     await client.close()
     await http_client.aclose()
 
@@ -208,7 +248,7 @@ async def test_authenticated_upstream_failed_status_is_not_silent_success() -> N
         )
 
     client, http_client = client_with_handler(handler)
-    with pytest.raises(XiaoheiheApiError, match="非成功状态 failed"):
+    with pytest.raises(XiaoheiheApiError, match="????? failed"):
         await client.fetch_notifications(NotificationType.MENTION)
     assert client.last_error["category"] == "upstream_rejected"
     assert client.last_success_at is None
@@ -225,7 +265,7 @@ async def test_relogin_business_status_invalidates_credentials() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"status": "relogin", "msg": "请重新登录"},
+            json={"status": "relogin", "msg": "?????"},
         )
 
     client, http_client = client_with_handler(handler, callback=callback)

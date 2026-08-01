@@ -14,7 +14,23 @@ from .security import clean_untrusted_text, sanitize_reply_text
 SyntheticDispatch = Callable[[Notification, dict[str, Any]], Awaitable[None]]
 ReviewedDelivery = Callable[[RoutingTarget, str], Awaitable[dict[str, Any]]]
 
-SKIP_PATTERN = re.compile(r"(广告|推广|抽奖|开奖|出售|收购|交易|代购|引战|骂战|互喷)", re.I)
+SKIP_PATTERN = re.compile(r"(??|??|??|??|??|??|??|??|??|??|??)", re.I)
+
+SECTION_ALIASES: dict[str, tuple[str, ...]] = {
+    "all": (),
+    "pc_game": ("pc??", "pc ??", "steam??", "steam", "????"),
+    "mobile_game": ("????", "??"),
+    "console_game": ("????", "switch", "xbox", "playstation", "ps5", "ps4", "???"),
+    "community": ("????", "??"),
+    "daily": ("????", "??", "??"),
+    "digital_tech": ("????", "??", "??", "??", "??"),
+    "anime": ("??", "???", "??", "??", "??"),
+    "film_tv": ("??", "??", "???", "??"),
+    "esports": ("??", "??"),
+    "guide": ("??", "??", "??"),
+    "deals": ("????", "??", "??", "??"),
+    "indie_game": ("????", "indie"),
+}
 
 
 class FeedService:
@@ -44,10 +60,7 @@ class FeedService:
         remaining = max(0, int(feed_config["max_per_day"]) - counters["proactive_count"])
         if not remaining:
             return 0
-        page = await self.client.fetch_feed(
-            source=str(feed_config.get("source", "all")),
-            limit=min(int(feed_config["max_per_run"]) * 5, remaining),
-        )
+        page = await self.client.fetch_feed(offset=0)
         browsed_posts = page.items[:remaining]
         if browsed_posts:
             await self.repository.increment_counter(self.profile_id, proactive=len(browsed_posts))
@@ -80,19 +93,25 @@ class FeedService:
                 root_comment_id="",
                 parent_comment_id="",
                 content=clean_untrusted_text(
-                    str(post.get("content", post.get("text", ""))), max_chars=4000
+                    str(post.get("content", post.get("description", post.get("text", "")))),
+                    max_chars=4000,
                 ),
                 created_at=time.time(),
                 post_author_uid=author_uid,
                 explicit_wake=True,
-                image_urls=[],
+                image_urls=[
+                    str(url) for url in post.get("image_urls", []) if isinstance(url, str) and url
+                ],
                 raw={"event_type": "proactive_feed", "post": post},
             )
             await self.synthetic_dispatch(
                 notification,
                 {
-                    "candidate_reason": "通过主动刷帖安全过滤器",
+                    "candidate_reason": (
+                        f"??? ? {feed_config.get('source', 'all')} ? ???????"
+                    ),
                     "post_title": str(post.get("title", "")),
+                    "post_author_uid": author_uid,
                 },
             )
             generated += 1
@@ -100,13 +119,13 @@ class FeedService:
 
     def _eligible(self, post: dict[str, Any], author_uid: str) -> bool:
         title = str(post.get("title", ""))
-        body = str(post.get("content", post.get("text", "")))
+        body = str(post.get("content", post.get("description", post.get("text", ""))))
         text = f"{title}\n{body}".strip()
         if not text or len(clean_untrusted_text(text)) < 4:
             return False
         if SKIP_PATTERN.search(text):
             return False
-        post_type = str(post.get("type", "")).lower()
+        post_type = str(post.get("content_type", post.get("type", ""))).lower()
         if post_type in {"ad", "advertisement", "lottery", "trade"}:
             return False
         credentials = getattr(self.client, "credentials", None)
@@ -125,6 +144,16 @@ class FeedService:
         }
         if allowed_types and post_type not in allowed_types:
             return False
+        source = str(self.config["proactive_feed"].get("source", "all"))
+        aliases = SECTION_ALIASES.get(source, ())
+        if aliases:
+            section_names = {
+                str(value).strip().casefold()
+                for value in post.get("section_names", [])
+                if str(value).strip()
+            }
+            if not any(alias.casefold() in name for alias in aliases for name in section_names):
+                return False
         keywords = [
             str(item).casefold()
             for item in self.config["proactive_feed"].get("keywords", [])
@@ -136,9 +165,9 @@ class FeedService:
         async with self._approval_lock:
             candidate = await self.repository.feed_candidate(candidate_id)
             if not candidate:
-                raise ValueError("候选不存在")
+                raise ValueError("?????")
             if candidate["status"] not in {"pending", "approved"}:
-                raise ValueError("候选已处理")
+                raise ValueError("?????")
             text = sanitize_reply_text(
                 edited_text or candidate.get("edited_text") or candidate["generated_text"],
                 int(self.config["reply"]["max_reply_chars"]),
@@ -150,14 +179,14 @@ class FeedService:
                     text,
                 )
                 if not changed:
-                    raise ValueError("候选已处理")
+                    raise ValueError("?????")
                 return "dry_run"
             claimed = await self.repository.claim_feed_candidate_for_send(
                 candidate_id,
                 text,
             )
             if claimed is None:
-                raise ValueError("候选已由其他审核请求处理")
+                raise ValueError("????????????")
             event_id = claimed.get("incoming_event_id")
             if event_id is None:
                 event_id = await self.repository.proactive_event_id(

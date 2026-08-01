@@ -12,8 +12,8 @@ from .xiaoheihe.adapter import XiaoheihePlatformAdapter  # noqa: F401
 from .xiaoheihe.runtime import PLUGIN_NAME, RuntimeServices, bind_runtime
 
 IMAGE_PROVIDER_PROMPT = (
-    "请逐张准确描述这些图片的可见内容，并完整提取与用户问题相关的文字和关键数据。"
-    "只提供图片描述，不回答用户问题；多张图片请按顺序区分。"
+    "??????????????????????????????????????"
+    "???????????????????????????"
 )
 
 try:
@@ -27,8 +27,8 @@ except ModuleNotFoundError as exc:
 @register(
     PLUGIN_NAME,
     "RyanVaderAn",
-    "AstrBot 的小黑盒原生平台适配器",
-    "1.2.3",
+    "AstrBot ???????????",
+    "1.2.4",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -83,7 +83,7 @@ class XiaoheiheAdapterPlugin(Star):
             options.append(
                 {
                     "value": provider_id,
-                    "label": f"{provider_id} · {model}" if model else provider_id,
+                    "label": f"{provider_id} ? {model}" if model else provider_id,
                 }
             )
         return options
@@ -101,7 +101,7 @@ class XiaoheiheAdapterPlugin(Star):
         if not callable(get_insts) or not callable(reload_platform):
             self.runtime.report_adapter_reconcile_failure(
                 "xiaoheihe",
-                RuntimeError("当前 AstrBot 平台管理器缺少热重载接口"),
+                RuntimeError("?? AstrBot ????????????"),
             )
             return
 
@@ -123,7 +123,7 @@ class XiaoheiheAdapterPlugin(Star):
             self.runtime.clear_adapter_reconcile_failure(adapter_id)
             self.runtime.logging.emit(
                 "INFO",
-                "插件更新后已重新加载小黑盒适配器实例",
+                "??????????????????",
                 profile_id=str(config.get("profile_id", "default")),
                 details={"adapter_id": adapter_id},
             )
@@ -188,7 +188,7 @@ class XiaoheiheAdapterPlugin(Star):
         if provider is None:
             self.runtime.logging.emit(
                 "WARNING",
-                "固定图片 Provider 不存在，回退当前 LLM 图片流程",
+                "???? Provider ???????? LLM ????",
                 profile_id=profile_id,
                 details={"provider_id": provider_id},
             )
@@ -203,7 +203,7 @@ class XiaoheiheAdapterPlugin(Star):
         except Exception as exc:
             self.runtime.logging.emit(
                 "WARNING",
-                f"固定图片 Provider 处理失败，回退当前 LLM 图片流程: {exc}",
+                f"???? Provider ????????? LLM ????: {exc}",
                 profile_id=profile_id,
                 details={"provider_id": provider_id},
             )
@@ -212,7 +212,7 @@ class XiaoheiheAdapterPlugin(Star):
         if not caption:
             self.runtime.logging.emit(
                 "WARNING",
-                "固定图片 Provider 返回空描述，回退当前 LLM 图片流程",
+                "???? Provider ?????????? LLM ????",
                 profile_id=profile_id,
                 details={"provider_id": provider_id},
             )

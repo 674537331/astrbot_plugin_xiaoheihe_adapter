@@ -86,7 +86,7 @@ async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
         ]
     )
     status = await runtime.status()
-    assert status["version"] == "v1.2.3"
+    assert status["version"] == "v1.2.4"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     assert status["adapters"] == [
@@ -202,9 +202,9 @@ async def test_runtime_reports_astrbot_segmented_reply(tmp_path, fake_config) ->
 
     alerts = {item["key"]: item for item in (await runtime.status())["alerts"]}
     assert "astrbot_segmented_reply" in alerts
-    assert "自动合并为一条评论" in alerts["astrbot_segmented_reply"]["message"]
+    assert "?????????" in alerts["astrbot_segmented_reply"]["message"]
     matching_logs = [
-        entry for entry in runtime.logging.list() if "检测到 AstrBot 分段回复" in entry["message"]
+        entry for entry in runtime.logging.list() if "??? AstrBot ????" in entry["message"]
     ]
     assert len(matching_logs) == 1
     await runtime.close()
@@ -341,7 +341,7 @@ async def test_runtime_upstream_failed_is_terminal_and_never_resent(
     event_id = await runtime.repository.claim_event(notification())
     client = FakeSendingClient(
         error=XiaoheiheApiError(
-            "小黑盒 API 返回非成功状态 failed: code 1000",
+            "??? API ??????? failed: code 1000",
             category="upstream_rejected",
         )
     )
@@ -364,7 +364,7 @@ async def test_runtime_upstream_failed_is_terminal_and_never_resent(
     )
     assert row["status"] == EventState.DEAD_LETTER.value
 
-    with pytest.raises(XiaoheiheApiError, match="阻止再次发送"):
+    with pytest.raises(XiaoheiheApiError, match="??????"):
         await runtime.deliver(
             event_id=event_id,
             route=route,

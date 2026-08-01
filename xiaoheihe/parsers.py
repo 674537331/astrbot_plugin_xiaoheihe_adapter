@@ -25,13 +25,13 @@ class ResponseShapeError(ValueError):
 
 def _mapping(value: Any, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ResponseShapeError(f"{name} 应为对象")
+        raise ResponseShapeError(f"{name} ????")
     return value
 
 
 def _data(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     candidate = payload.get("result", payload.get("data", payload))
-    return _mapping(candidate, "响应 data/result")
+    return _mapping(candidate, "?? data/result")
 
 
 def _first(mapping: Mapping[str, Any], *keys: str, default: Any = "") -> Any:
@@ -51,7 +51,7 @@ def _timestamp(value: Any) -> float:
     try:
         result = float(value)
     except (TypeError, ValueError) as exc:
-        raise ResponseShapeError("通知时间字段不是数字") from exc
+        raise ResponseShapeError("??????????") from exc
     if result > 10_000_000_000:
         result /= 1000
     return result
@@ -63,7 +63,7 @@ def parse_qr_response(
     body = _data(payload)
     qr_content = str(_first(body, "qrcode", "qr_url", "url", "qr_content"))
     if not qr_content:
-        raise ResponseShapeError("二维码响应缺少 qrcode/qr_url")
+        raise ResponseShapeError("??????? qrcode/qr_url")
     poll_params = {
         str(key): str(value)
         for key, value in parse_qsl(
@@ -88,7 +88,7 @@ def parse_qr_response(
     try:
         expiry = float(raw_expiry)
     except (TypeError, ValueError) as exc:
-        raise ResponseShapeError("二维码过期时间不是数字") from exc
+        raise ResponseShapeError("???????????") from exc
     if expiry > 10_000_000_000:
         expiry /= 1000
     ttl = expiry - started if expiry > 1_000_000_000 else expiry
@@ -139,18 +139,18 @@ def parse_login_state(payload: Mapping[str, Any]) -> tuple[LoginState, str]:
         return LoginState.WAITING_SCAN, message
 
     hint = f"{result_marker} {message}".casefold()
-    if any(token in hint for token in ("expired", "timeout", "过期", "失效", "超时")):
+    if any(token in hint for token in ("expired", "timeout", "??", "??", "??")):
         return LoginState.EXPIRED, message
     if any(
         token in hint
         for token in (
             "scanned",
             "confirm",
-            "已扫码",
-            "已扫描",
-            "待确认",
-            "请确认",
-            "确认",
+            "???",
+            "???",
+            "???",
+            "???",
+            "??",
         )
     ):
         return LoginState.SCANNED_WAITING_CONFIRM, message
@@ -247,10 +247,10 @@ def parse_credentials(
     has_cookie_credentials = any(name.casefold() not in identity_cookie_names for name in cookies)
     has_credentials = bool(has_cookie_credentials or access_token or refresh_token)
     if not uid:
-        suffix = "（已收到凭证）" if has_credentials else "和登录凭证"
-        raise ResponseShapeError(f"登录成功响应缺少 UID{suffix}")
+        suffix = "???????" if has_credentials else "?????"
+        raise ResponseShapeError(f"???????? UID{suffix}")
     if not has_credentials:
-        raise ResponseShapeError("登录成功响应缺少登录凭证")
+        raise ResponseShapeError("????????????")
     return Credentials(
         profile_id=profile_id,
         uid=uid,
@@ -306,9 +306,9 @@ def parse_notifications(
         body = payload
         raw_items = candidate
     else:
-        raise ResponseShapeError("响应 data/result 应为对象或数组")
+        raise ResponseShapeError("?? data/result ???????")
     if not isinstance(raw_items, list):
-        raise ResponseShapeError("通知列表字段不是数组")
+        raise ResponseShapeError("??????????")
     items: list[dict[str, Any]] = []
     for raw in raw_items:
         if not isinstance(raw, Mapping):
@@ -361,11 +361,11 @@ def parse_notifications(
         # use the notification ID as a stable deduplication surrogate.
         is_post_mention = event_type is NotificationType.MENTION and message_type == "16"
         if not event_id or not post_id:
-            raise ResponseShapeError("通知项缺少稳定通知 ID 或帖子 ID")
+            raise ResponseShapeError("????????? ID ??? ID")
         if not is_post_mention and not comment_id:
-            raise ResponseShapeError("评论通知项缺少稳定评论 ID")
+            raise ResponseShapeError("??????????? ID")
         if not sender_uid:
-            raise ResponseShapeError("通知项缺少发送者 UID")
+            raise ResponseShapeError("???????? UID")
         external_comment_id = comment_id
         root_id = ""
         parent_id = ""
@@ -463,15 +463,128 @@ def _boolean(value: Any) -> bool:
     return bool(value)
 
 
+def parse_feed(payload: Mapping[str, Any], *, offset: int = 0) -> ApiPage:
+    """Normalize recommendation-feed data while preserving its topic metadata."""
+    candidate = payload.get("result", payload.get("data", payload))
+    if isinstance(candidate, Mapping):
+        if not any(field in candidate for field in ("links", "items", "list")):
+            raise ResponseShapeError("??????? links/items/list ??")
+        raw_items = _first(candidate, "links", "items", "list", default=[])
+    elif isinstance(candidate, list):
+        raw_items = candidate
+    else:
+        raise ResponseShapeError("??? data/result ???????")
+    if not isinstance(raw_items, list):
+        raise ResponseShapeError("??? links/items/list ??????")
+
+    items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        if not isinstance(raw, Mapping):
+            continue
+        author = raw.get("user", raw.get("author", {}))
+        author_obj = author if isinstance(author, Mapping) else {}
+        normalized = dict(raw)
+        normalized.update(
+            {
+                "post_id": _id(raw, "linkid", "link_id", "post_id", "id"),
+                "content": str(_first(raw, "description", "content", "text", "summary")),
+                "created_at": _feed_timestamp(
+                    _first(raw, "create_at", "created_at", "time", "timestamp", default=0)
+                ),
+                "author": {
+                    **dict(author_obj),
+                    "uid": _id(
+                        author_obj,
+                        "userid",
+                        "uid",
+                        "heybox_id",
+                        "heyboxid",
+                        "user_id",
+                        "id",
+                    ),
+                    "nickname": str(_first(author_obj, "username", "nickname", "name")),
+                },
+                "image_urls": _feed_image_urls(raw),
+                "section_names": _feed_section_names(raw),
+                "popularity_score": _feed_popularity(raw),
+            }
+        )
+        items.append(normalized)
+    next_offset = max(0, offset) + len(raw_items)
+    return ApiPage(
+        items=items,
+        next_cursor=str(next_offset) if raw_items else "",
+        has_more=bool(raw_items),
+    )
+
+
+def _feed_timestamp(value: Any) -> float:
+    if value in (None, ""):
+        return 0
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return result / 1000 if result > 10_000_000_000 else result
+
+
+def _feed_image_urls(post: Mapping[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for field in ("imgs", "thumbs", "images", "image_urls"):
+        values = post.get(field, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, Mapping):
+                url = str(_first(value, "url", "src", "original", "image_url", "large_url"))
+            else:
+                url = str(value or "")
+            if url:
+                urls.append(url)
+    return list(dict.fromkeys(urls))
+
+
+def _feed_section_names(post: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for field in ("topics", "hashtags", "content_tags", "list_content_tags", "link_tag"):
+        values = post.get(field, [])
+        if isinstance(values, (str, Mapping)):
+            values = [values]
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            name = (
+                str(_first(value, "name", "title", "text", "tag"))
+                if isinstance(value, Mapping)
+                else str(value or "")
+            )
+            if name:
+                names.append(name.strip())
+    return list(dict.fromkeys(name for name in names if name))
+
+
+def _feed_popularity(post: Mapping[str, Any]) -> int:
+    score = 0
+    for field in ("comment_num", "comments", "up", "like_num", "link_award_num"):
+        value = post.get(field, 0)
+        if isinstance(value, Mapping | list):
+            continue
+        try:
+            score += max(0, int(float(value or 0)))
+        except (TypeError, ValueError):
+            continue
+    return score
+
+
 def parse_thread_context(payload: Mapping[str, Any], post_id: str) -> ThreadContext:
     body = _data(payload)
     post = body.get("post", body.get("link", body))
-    post_obj = _mapping(post, "帖子")
+    post_obj = _mapping(post, "??")
     author = post_obj.get("author", post_obj.get("user", {}))
     author_obj = author if isinstance(author, Mapping) else {}
     raw_comments = _first(body, "comments", "comment_list", "children", default=[])
     if not isinstance(raw_comments, list):
-        raise ResponseShapeError("楼层评论字段不是数组")
+        raise ResponseShapeError("??????????")
     comments = [dict(item) for item in raw_comments if isinstance(item, Mapping)]
     post_body, embedded_images = _rich_post_content(
         _first(post_obj, "content", "text", "description")
@@ -520,10 +633,10 @@ def parse_notification_post_context(
 def parse_send_result(payload: Mapping[str, Any]) -> SendResult:
     status = str(_first(payload, "status", "stat")).casefold()
     if status and status not in {"ok", "success"}:
-        raise ResponseShapeError("评论发送响应未返回成功状态")
+        raise ResponseShapeError("?????????????")
     comment_id = _find_comment_id(payload)
     if not status and not comment_id:
-        raise ResponseShapeError("评论发送响应缺少成功状态或评论 ID")
+        raise ResponseShapeError("??????????????? ID")
     return SendResult(external_comment_id=comment_id, confirmed=True, raw=dict(payload))
 
 

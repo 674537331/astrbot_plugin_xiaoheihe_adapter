@@ -22,15 +22,15 @@ class FakeFeedClient:
             items=[
                 {
                     "id": "post-1",
-                    "title": "正常讨论",
-                    "content": "这个游戏机制应该如何理解？",
+                    "title": "????",
+                    "content": "?????????????",
                     "created_at": time.time(),
                     "author": {"uid": "author-1", "nickname": "A"},
                 },
                 {
                     "id": "post-2",
-                    "title": "抽奖广告",
-                    "content": "来参加抽奖",
+                    "title": "????",
+                    "content": "?????",
                     "created_at": time.time(),
                     "author": {"uid": "author-2"},
                 },
@@ -103,7 +103,7 @@ async def test_feed_counts_read_items_and_limits_fetch_size(repository) -> None:
     client.fetch_feed = fetch_feed
     service = FeedService("default", config, client, repository, dispatch, unused_delivery)
     assert await service.run_once() == 0
-    assert captured == {"source": "all", "limit": 3}
+    assert captured == {"offset": 0}
     assert (await repository.today_counters("default"))["proactive_count"] == 0
 
 
@@ -204,7 +204,7 @@ async def test_concurrent_candidate_approval_sends_once(repository) -> None:
     release.set()
 
     assert await first_task == "comment-sent"
-    with pytest.raises(ValueError, match="已处理"):
+    with pytest.raises(ValueError, match="???"):
         await second_task
     assert len(client.sent) == 1
 
@@ -266,7 +266,7 @@ async def test_approved_uncertain_send_is_not_approvable_twice(repository) -> No
     with pytest.raises(SendUncertainError):
         await service.approve(candidate_id)
     assert (await repository.feed_candidate(candidate_id))["status"] == "send_unknown"
-    with pytest.raises(ValueError, match="已处理"):
+    with pytest.raises(ValueError, match="???"):
         await service.approve(candidate_id)
 
 
@@ -282,20 +282,20 @@ async def test_feed_skips_self_blacklisted_and_already_replied(repository) -> No
             items=[
                 {
                     "id": "self-post",
-                    "title": "普通讨论",
-                    "content": "正文内容",
+                    "title": "????",
+                    "content": "????",
                     "author": {"uid": "bot"},
                 },
                 {
                     "id": "blocked-post",
-                    "title": "普通讨论",
-                    "content": "正文内容",
+                    "title": "????",
+                    "content": "????",
                     "author": {"uid": "blocked"},
                 },
                 {
                     "id": "replied-post",
-                    "title": "普通讨论",
-                    "content": "正文内容",
+                    "title": "????",
+                    "content": "????",
                     "author": {"uid": "author"},
                 },
             ]
@@ -318,3 +318,44 @@ async def test_feed_skips_self_blacklisted_and_already_replied(repository) -> No
     service = FeedService("default", config, client, repository, dispatch, unused_delivery)
     assert await service.run_once() == 0
     assert not dispatched
+
+
+async def test_feed_source_filters_recommendation_topics_locally(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"].update({"enabled": True, "source": "pc_game"})
+    client = FakeFeedClient()
+
+    async def fetch_feed(**kwargs):
+        assert kwargs == {"offset": 0}
+        return ApiPage(
+            items=[
+                {
+                    "post_id": "mobile-post",
+                    "title": "????",
+                    "content": "?????????",
+                    "author": {"uid": "mobile-author"},
+                    "section_names": ["????"],
+                },
+                {
+                    "post_id": "pc-post",
+                    "title": "PC ????",
+                    "content": "?????????",
+                    "author": {"uid": "pc-author", "nickname": "PCAuthor"},
+                    "section_names": ["Steam", "PC??"],
+                    "image_urls": ["https://cdn.example.com/post.jpg"],
+                },
+            ]
+        )
+
+    client.fetch_feed = fetch_feed
+    dispatched = []
+
+    async def dispatch(notification, metadata):
+        dispatched.append((notification, metadata))
+
+    service = FeedService("default", config, client, repository, dispatch, unused_delivery)
+    assert await service.run_once() == 1
+    notification, metadata = dispatched[0]
+    assert notification.post_id == "pc-post"
+    assert notification.image_urls == ["https://cdn.example.com/post.jpg"]
+    assert metadata["post_author_uid"] == "pc-author"

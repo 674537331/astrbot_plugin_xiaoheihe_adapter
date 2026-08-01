@@ -37,7 +37,7 @@ def bind_runtime(runtime: RuntimeServices) -> None:
 
 def get_runtime() -> RuntimeServices:
     if _runtime is None:
-        raise RuntimeError("小黑盒插件运行时尚未绑定")
+        raise RuntimeError("????????????")
     return _runtime
 
 
@@ -91,17 +91,17 @@ class RuntimeServices:
             if self._started:
                 return
             if self._closed:
-                raise RuntimeError("插件运行时已关闭")
+                raise RuntimeError("????????")
             await self.database.open()
             interrupted_candidates = await self.repository.recover_interrupted_feed_sends()
             self._started = True
             await self.tasks.start("xhh-cleanup", self._cleanup_loop())
             await self.tasks.start("xhh-health", self._health_loop())
-            self.logging.emit("INFO", "小黑盒插件运行时已启动")
+            self.logging.emit("INFO", "???????????")
             if interrupted_candidates:
                 self.logging.emit(
                     "WARNING",
-                    "发现更新或重启时中断的主动审核发送，已转入发送状态未知",
+                    "???????????????????????????",
                     details={"candidate_count": interrupted_candidates},
                 )
 
@@ -173,11 +173,11 @@ class RuntimeServices:
         self._alerts[key] = {
             "key": key,
             "level": "error",
-            "message": f"适配器实例 {adapter_id} 在插件更新后恢复失败：{safe_error}",
+            "message": f"????? {adapter_id} ???????????{safe_error}",
         }
         self.logging.emit(
             "ERROR",
-            f"插件更新后恢复适配器实例失败：{safe_error}",
+            f"???????????????{safe_error}",
             details={"adapter_id": adapter_id, "exception_type": type(error).__name__},
         )
 
@@ -244,7 +244,7 @@ class RuntimeServices:
                 else:
                     await self.repository.defer_event(
                         event_id,
-                        "模拟运行已生成，但按配置未标记处理完成",
+                        "???????????????????",
                         delay_seconds=float(config["polling"]["poll_interval_seconds"]),
                     )
             return {"status": EventState.DRY_RUN.value, "text": text}
@@ -257,9 +257,9 @@ class RuntimeServices:
                     await self.repository.mark_event(
                         event_id,
                         EventState.DEAD_LETTER,
-                        error="凭证不存在，已停止真实发送",
+                        error="?????????????",
                     )
-                raise CredentialInvalidError("凭证不存在，已停止真实发送")
+                raise CredentialInvalidError("?????????????")
             if event_id is not None:
                 previous = await self.repository.latest_outgoing_for_event(event_id)
                 if previous is not None:
@@ -299,20 +299,20 @@ class RuntimeServices:
                         await self.repository.mark_event(
                             event_id,
                             EventState.SEND_UNKNOWN,
-                            error="已有评论发送记录尚未确认，已阻止再次发送",
+                            error="????????????????????",
                         )
                         raise SendUncertainError(
-                            "已有评论发送记录尚未确认，已阻止再次发送",
+                            "????????????????????",
                             category="send_unknown",
                         )
                     if previous_status not in {EventState.RETRY_WAIT.value}:
                         await self.repository.mark_event(
                             event_id,
                             EventState.DEAD_LETTER,
-                            error="该事件已有失败的评论发送记录，已阻止再次发送",
+                            error="??????????????????????",
                         )
                         raise XiaoheiheApiError(
-                            "该事件已有失败的评论发送记录，已阻止再次发送",
+                            "??????????????????????",
                             category="duplicate_send_guard",
                         )
             outgoing_id = await self.repository.record_outgoing_attempt(
@@ -367,13 +367,13 @@ class RuntimeServices:
                     SET status = 'send_unknown', error = ?
                     WHERE id = ?
                     """,
-                    ("发送任务取消，服务端状态未知", outgoing_id),
+                    ("??????????????", outgoing_id),
                 )
                 if event_id is not None:
                     await self.repository.mark_event(
                         event_id,
                         EventState.SEND_UNKNOWN,
-                        error="发送任务取消，服务端状态未知",
+                        error="??????????????",
                     )
                 raise
             except XiaoheiheApiError as exc:
@@ -434,7 +434,7 @@ class RuntimeServices:
                             "confirmed_after_rejected_response": True,
                         }
                     raise SendUncertainError(
-                        "评论接口响应无法确认发送结果，已停止自动重试",
+                        "??????????????????????",
                         category="send_unknown",
                     ) from exc
                 await self.repository.db.execute(
@@ -476,7 +476,7 @@ class RuntimeServices:
             str(metadata.get("post_title", "")),
             str(metadata.get("post_author_uid", "")),
             text,
-            str(metadata.get("candidate_reason", "AI 候选回复")),
+            str(metadata.get("candidate_reason", "AI ????")),
             incoming_event_id=event_id,
         )
         await self.repository.mark_event(
@@ -496,8 +496,8 @@ class RuntimeServices:
         reply_timeout_seconds: int,
     ) -> None:
         error = (
-            f"AstrBot 原生推理耗时 {generated_ms}ms，超过本事件 "
-            f"{reply_timeout_seconds}s 回复截止时间；已抑制迟到评论以避免重复发送"
+            f"AstrBot ?????? {generated_ms}ms?????? "
+            f"{reply_timeout_seconds}s ?????????????????????"
         )
         if event_id is not None:
             await self.repository.mark_event(
@@ -607,7 +607,7 @@ class RuntimeServices:
         except Exception as exc:
             self.logging.emit(
                 "ERROR",
-                f"发送状态未知且核对失败: {exc}",
+                f"???????????: {exc}",
                 profile_id=route.profile_id,
             )
             return None
@@ -644,13 +644,13 @@ class RuntimeServices:
                 await self.repository.confirm_outgoing(outgoing_id, comment_id)
                 self.logging.emit(
                     "WARNING",
-                    "发送超时后在目标楼层核对到相同机器人评论，已确认成功",
+                    "??????????????????????????",
                     profile_id=route.profile_id,
                 )
                 return comment_id
         self.logging.emit(
             "WARNING",
-            "发送状态未知；近期列表未发现匹配项，但因接口一致性未验证，不自动重试",
+            "??????????????????????????????????",
             profile_id=route.profile_id,
         )
         return None
@@ -674,7 +674,7 @@ class RuntimeServices:
                         alerts[f"{profile_id}:response_shape"] = {
                             "key": f"{profile_id}:response_shape",
                             "level": "error",
-                            "message": f"账号 {profile_id} 的小黑盒 API 响应结构可能已变化",
+                            "message": f"?? {profile_id} ???? API ?????????",
                         }
                 state["consecutive_429"] = max(
                     int(state.get("consecutive_429") or 0),
@@ -685,20 +685,20 @@ class RuntimeServices:
                 alerts[f"{profile_id}:credential_invalid"] = {
                     "key": f"{profile_id}:credential_invalid",
                     "level": "error",
-                    "message": f"账号 {profile_id} 登录凭证已失效",
+                    "message": f"?? {profile_id} ???????",
                 }
             if int(state.get("consecutive_poll_failures") or 0) >= 3:
-                reason = str(state.get("last_error") or "请查看运行日志")
+                reason = str(state.get("last_error") or "???????")
                 alerts[f"{profile_id}:polling"] = {
                     "key": f"{profile_id}:polling",
                     "level": "error",
-                    "message": f"账号 {profile_id} 连续轮询失败：{reason[:300]}",
+                    "message": f"?? {profile_id} ???????{reason[:300]}",
                 }
             if int(state.get("consecutive_429") or 0) >= 3:
                 alerts[f"{profile_id}:429"] = {
                     "key": f"{profile_id}:429",
                     "level": "warning",
-                    "message": f"账号 {profile_id} 持续受到 HTTP 429 限流",
+                    "message": f"?? {profile_id} ???? HTTP 429 ??",
                 }
             profiles.append(
                 {
@@ -714,7 +714,7 @@ class RuntimeServices:
             alerts["background_task"] = {
                 "key": "background_task",
                 "level": "error",
-                "message": (f"后台任务退出: {latest_failure['task']} — {latest_failure['error']}"),
+                "message": (f"??????: {latest_failure['task']} ? {latest_failure['error']}"),
             }
         adapters = [
             {
@@ -735,7 +735,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.3",
+            "version": "v1.2.4",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),
@@ -760,13 +760,13 @@ class RuntimeServices:
             **{
                 field: count,
                 "circuit_open_until": time.time() + circuit_seconds,
-                "last_error": f"连续 HTTP {status_code}",
+                "last_error": f"?? HTTP {status_code}",
             },
         )
         self._alerts[f"{profile_id}:{status_code}"] = {
             "key": f"{profile_id}:{status_code}",
             "level": "error",
-            "message": f"账号 {profile_id} 连续出现 HTTP {status_code}，已停止真实发送",
+            "message": f"?? {profile_id} ???? HTTP {status_code}????????",
         }
         await self.notify_profile_changed(profile_id)
 
@@ -786,7 +786,7 @@ class RuntimeServices:
                 await client.close()
         self.logging.emit(
             "INFO",
-            "配置已保存并通知相关后台任务安全重载",
+            "??????????????????",
             details={"changed_sections": sorted(changed)},
         )
         for adapter in tuple(self._adapters):
@@ -797,14 +797,14 @@ class RuntimeServices:
         if key not in self._alerts:
             self.logging.emit(
                 "WARNING",
-                "当前模型明确未声明图片输入能力，本轮已降级为纯文本",
+                "?????????????????????????",
                 profile_id=profile_id,
                 details={"omitted_image_count": image_count},
             )
         self._alerts[key] = {
             "key": key,
             "level": "warning",
-            "message": "当前模型不支持图片输入；小黑盒事件已自动降级为纯文本",
+            "message": "??????????????????????????",
         }
 
     def clear_vision_alert(self) -> None:
@@ -815,28 +815,28 @@ class RuntimeServices:
         if key not in self._alerts:
             self.logging.emit(
                 "WARNING",
-                "检测到 AstrBot 分段回复，小黑盒已自动合并为一条评论",
+                "??? AstrBot ??????????????????",
                 profile_id=profile_id,
             )
         self._alerts[key] = {
             "key": key,
             "level": "warning",
             "message": (
-                "AstrBot 当前启用了分段回复；小黑盒已自动合并为一条评论。"
-                "可在 AstrBot 平台设置中关闭分段回复以减少等待。"
+                "AstrBot ????????????????????????"
+                "?? AstrBot ?????????????????"
             ),
         }
 
     def report_proactive_circuit(self, profile_id: str, error: BaseException) -> None:
         self.logging.emit(
             "ERROR",
-            f"主动刷帖任务失败，至少熔断 300 秒: {error}",
+            f"????????????? 300 ?: {error}",
             profile_id=profile_id,
         )
         self._alerts[f"{profile_id}:proactive_circuit"] = {
             "key": f"{profile_id}:proactive_circuit",
             "level": "error",
-            "message": f"账号 {profile_id} 的主动刷帖已进入冷却熔断",
+            "message": f"?? {profile_id} ????????????",
         }
 
     def clear_proactive_circuit(self, profile_id: str) -> None:
@@ -856,11 +856,11 @@ class RuntimeServices:
                 self._alerts["cleanup"] = {
                     "key": "cleanup",
                     "level": "warning",
-                    "message": f"自动清理失败，将在一小时后重试：{safe_error}",
+                    "message": f"????????????????{safe_error}",
                 }
                 self.logging.emit(
                     "ERROR",
-                    f"自动安全清理失败：{safe_error}",
+                    f"?????????{safe_error}",
                     details={"exception_type": type(exc).__name__},
                 )
                 with suppress(Exception):
@@ -883,7 +883,7 @@ class RuntimeServices:
         self._alerts.pop("cleanup", None)
         self.logging.emit(
             "INFO",
-            "自动安全清理完成",
+            "????????",
             details={
                 "removed": removed,
                 "pruned_bodies": pruned,
@@ -903,7 +903,7 @@ class RuntimeServices:
                     self._alerts[key] = {
                         "key": key,
                         "level": "warning",
-                        "message": f"数据库已达到 {size_mb:.1f} MB",
+                        "message": f"?????? {size_mb:.1f} MB",
                     }
                 else:
                     self._alerts.pop(key, None)
@@ -912,7 +912,7 @@ class RuntimeServices:
                     self._alerts["database_soft_limit"] = {
                         "key": "database_soft_limit",
                         "level": "error",
-                        "message": f"数据库已超过 {soft_mb:.0f} MB 软上限，将分批清理低优先级正文",
+                        "message": f"?????? {soft_mb:.0f} MB ???????????????",
                     }
                 else:
                     self._alerts.pop("database_soft_limit", None)
@@ -922,7 +922,7 @@ class RuntimeServices:
                 self._alerts["database"] = {
                     "key": "database",
                     "level": "error",
-                    "message": f"数据库不可写或健康检查失败: {exc}",
+                    "message": f"?????????????: {exc}",
                 }
             await asyncio.sleep(60)
 

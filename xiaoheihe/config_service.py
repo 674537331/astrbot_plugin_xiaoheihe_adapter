@@ -14,7 +14,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {
             "__template_key": "account",
             "profile_id": "default",
-            "display_name": "默认账号",
+            "display_name": "????",
             "enabled": True,
             "poll_mentions": True,
             "poll_replies": True,
@@ -99,15 +99,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 PROACTIVE_FEED_SOURCES = {
     "all",
-    "game",
-    "hardware",
-    "software",
-    "esports",
+    "pc_game",
+    "mobile_game",
+    "console_game",
+    "community",
+    "daily",
+    "digital_tech",
     "anime",
-    "movie",
-    "music",
-    "life",
-    "tech",
+    "film_tv",
+    "esports",
+    "guide",
+    "deals",
+    "indie_game",
+}
+
+LEGACY_FEED_SOURCES = {
+    "follow": "all",
+    "game": "pc_game",
+    "hardware": "digital_tech",
+    "software": "digital_tech",
+    "movie": "film_tv",
+    "music": "daily",
+    "life": "daily",
+    "tech": "digital_tech",
 }
 
 RestartCallback = Callable[[set[str]], Awaitable[None]]
@@ -142,9 +156,9 @@ class ConfigService:
         try:
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise ConfigValidationError(f"读取配置界面定义失败: {exc}") from exc
+            raise ConfigValidationError(f"??????????: {exc}") from exc
         if not isinstance(schema, dict):
-            raise ConfigValidationError("配置界面定义根节点必须是对象")
+            raise ConfigValidationError("??????????????")
         return schema
 
     def add_restart_callback(self, callback: RestartCallback) -> None:
@@ -155,7 +169,7 @@ class ConfigService:
         for profile in self._config.get("profiles", []):
             if str(profile.get("profile_id", "")) == profile_key:
                 return copy.deepcopy(profile)
-        raise ConfigValidationError(f"未找到账号档案: {profile_key}")
+        raise ConfigValidationError(f"???????: {profile_key}")
 
     def enabled_profiles(self) -> list[dict[str, Any]]:
         return [
@@ -175,7 +189,7 @@ class ConfigService:
             try:
                 save = getattr(self._config, "save_config", None)
                 if not callable(save):
-                    raise ConfigValidationError("AstrBotConfig 缺少 save_config()")
+                    raise ConfigValidationError("AstrBotConfig ?? save_config()")
                 save()
             except BaseException:
                 self._replace_in_place(previous)
@@ -187,22 +201,22 @@ class ConfigService:
     def validate(self, config: dict[str, Any]) -> None:
         profiles = config.get("profiles")
         if not isinstance(profiles, list) or not profiles:
-            raise ConfigValidationError("至少需要一个账号档案")
+            raise ConfigValidationError("??????????")
         seen: set[str] = set()
         for index, profile in enumerate(profiles):
             if not isinstance(profile, dict):
-                raise ConfigValidationError(f"profiles[{index}] 必须是对象")
+                raise ConfigValidationError(f"profiles[{index}] ?????")
             try:
                 profile_id = validate_profile_id(str(profile.get("profile_id", "")))
             except SecurityError as exc:
                 raise ConfigValidationError(str(exc)) from exc
             if profile_id in seen:
-                raise ConfigValidationError(f"profile_id 重复: {profile_id}")
+                raise ConfigValidationError(f"profile_id ??: {profile_id}")
             seen.add(profile_id)
             for key in ("owner_uid",):
                 value = profile.get(key, "")
                 if value is not None and not isinstance(value, (str, int)):
-                    raise ConfigValidationError(f"{profile_id}.{key} 必须是 UID 字符串")
+                    raise ConfigValidationError(f"{profile_id}.{key} ??? UID ???")
 
         polling = _object(config, "polling")
         _bounded_int(polling, "poll_interval_seconds", 30, 86400)
@@ -221,7 +235,7 @@ class ConfigService:
         _bounded_int(context, "context_cache_max_entries", 1, 4096)
         _bounded_int(context, "image_timeout_seconds", 1, 120)
         if context["max_total_image_size_mb"] < context["max_image_size_mb"]:
-            raise ConfigValidationError("图片总上限不能小于单图上限")
+            raise ConfigValidationError("?????????????")
 
         reply = _object(config, "reply")
         _bounded_int(reply, "max_reply_chars", 1, 5000)
@@ -236,17 +250,17 @@ class ConfigService:
         _bounded_int(network, "max_pending_events", 1, 1000)
         _bounded_int(network, "max_pending_per_user", 1, 100)
         if network["max_pending_per_user"] > network["max_pending_events"]:
-            raise ConfigValidationError("单用户队列上限不能大于全局队列上限")
+            raise ConfigValidationError("?????????????????")
         if not 0.2 <= float(network["min_request_interval_seconds"]) <= 60:
-            raise ConfigValidationError("最小请求间隔必须在 0.2–60 秒")
+            raise ConfigValidationError("????????? 0.2?60 ?")
 
         providers = _object(config, "providers")
         for key in ("llm_provider_id", "image_provider_id"):
             value = providers.get(key)
             if not isinstance(value, str):
-                raise ConfigValidationError(f"providers.{key} 必须是字符串")
+                raise ConfigValidationError(f"providers.{key} ??????")
             if len(value) > 256:
-                raise ConfigValidationError(f"providers.{key} 不能超过 256 字符")
+                raise ConfigValidationError(f"providers.{key} ???? 256 ??")
 
         proactive = _object(config, "proactive_feed")
         _bounded_int(proactive, "interval_seconds", 300, 86400)
@@ -256,15 +270,15 @@ class ConfigService:
         for key in ("keywords", "allowed_post_types"):
             values = proactive.get(key)
             if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
-                raise ConfigValidationError(f"proactive_feed.{key} 必须是字符串列表")
+                raise ConfigValidationError(f"proactive_feed.{key} ????????")
             if any(len(item) > 100 for item in values):
-                raise ConfigValidationError(f"proactive_feed.{key} 单项不能超过 100 字符")
+                raise ConfigValidationError(f"proactive_feed.{key} ?????? 100 ??")
         source = proactive.get("source")
         if source not in PROACTIVE_FEED_SOURCES:
-            raise ConfigValidationError("proactive_feed.source 必须是受支持的推荐流分区")
+            raise ConfigValidationError("proactive_feed.source ????????????")
         if proactive.get("enabled") and not proactive.get("review_required"):
             if not proactive.get("dry_run"):
-                raise ConfigValidationError("主动刷帖真实发送必须启用 review_required")
+                raise ConfigValidationError("???????????? review_required")
 
         permissions = _object(config, "permissions")
         for key in (
@@ -278,9 +292,9 @@ class ConfigService:
             if not isinstance(values, list) or not all(
                 isinstance(item, (str, int)) for item in values
             ):
-                raise ConfigValidationError(f"permissions.{key} 必须是字符串列表")
+                raise ConfigValidationError(f"permissions.{key} ????????")
             if any(len(str(item)) > 200 for item in values):
-                raise ConfigValidationError(f"permissions.{key} 单项不能超过 200 字符")
+                raise ConfigValidationError(f"permissions.{key} ?????? 200 ??")
 
         retention = _object(config, "retention")
         for key in (
@@ -297,11 +311,11 @@ class ConfigService:
         _bounded_int(retention, "log_total_limit_mb", 5, 2048)
         _bounded_int(retention, "image_cache_soft_limit_mb", 1, 10240)
         if retention["database_soft_limit_mb"] < retention["database_warn_mb"]:
-            raise ConfigValidationError("数据库软上限不能小于警告阈值")
+            raise ConfigValidationError("??????????????")
 
         logging = _object(config, "logging")
         if logging.get("level") not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
-            raise ConfigValidationError("logging.level 无效")
+            raise ConfigValidationError("logging.level ??")
         _bounded_int(logging, "max_memory_entries", 100, 10000)
 
     def _replace_in_place(self, value: dict[str, Any]) -> None:
@@ -311,8 +325,10 @@ class ConfigService:
     @staticmethod
     def _normalize_legacy(config: dict[str, Any]) -> None:
         proactive = config.get("proactive_feed")
-        if isinstance(proactive, dict) and proactive.get("source") == "follow":
-            proactive["source"] = "all"
+        if isinstance(proactive, dict):
+            source = proactive.get("source")
+            if source in LEGACY_FEED_SOURCES:
+                proactive["source"] = LEGACY_FEED_SOURCES[source]
 
     @classmethod
     def _merge_defaults(cls, value: Any, defaults: Any) -> Any:
@@ -330,21 +346,21 @@ class ConfigService:
 def _object(config: dict[str, Any], key: str) -> dict[str, Any]:
     value = config.get(key)
     if not isinstance(value, dict):
-        raise ConfigValidationError(f"{key} 必须是对象")
+        raise ConfigValidationError(f"{key} ?????")
     return value
 
 
 def _bounded_int(value: dict[str, Any], key: str, minimum: int, maximum: int) -> None:
     candidate = value.get(key)
     if isinstance(candidate, bool) or not isinstance(candidate, int):
-        raise ConfigValidationError(f"{key} 必须是整数")
+        raise ConfigValidationError(f"{key} ?????")
     if not minimum <= candidate <= maximum:
-        raise ConfigValidationError(f"{key} 必须在 {minimum}–{maximum} 之间")
+        raise ConfigValidationError(f"{key} ??? {minimum}?{maximum} ??")
 
 
 def _bounded_number(value: dict[str, Any], key: str, minimum: float, maximum: float) -> None:
     candidate = value.get(key)
     if isinstance(candidate, bool) or not isinstance(candidate, (int, float)):
-        raise ConfigValidationError(f"{key} 必须是数字")
+        raise ConfigValidationError(f"{key} ?????")
     if not minimum <= float(candidate) <= maximum:
-        raise ConfigValidationError(f"{key} 必须在 {minimum}–{maximum} 之间")
+        raise ConfigValidationError(f"{key} ??? {minimum}?{maximum} ??")
