@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -39,12 +40,19 @@ class FeedService:
         feed_config = self.config["proactive_feed"]
         if not feed_config.get("enabled", False):
             return 0
+        counters = await self.repository.today_counters(self.profile_id)
+        remaining = max(0, int(feed_config["max_per_day"]) - counters["proactive_count"])
+        if not remaining:
+            return 0
         page = await self.client.fetch_feed(
-            source=str(feed_config.get("source", "follow")),
-            limit=int(feed_config["max_per_run"]) * 5,
+            source=str(feed_config.get("source", "all")),
+            limit=min(int(feed_config["max_per_run"]) * 5, remaining),
         )
+        browsed_posts = page.items[:remaining]
+        if browsed_posts:
+            await self.repository.increment_counter(self.profile_id, proactive=len(browsed_posts))
         generated = 0
-        for post in page.items:
+        for post in browsed_posts:
             if generated >= int(feed_config["max_per_run"]):
                 break
             post_id = str(post.get("link_id", post.get("post_id", post.get("id", ""))))
@@ -74,7 +82,7 @@ class FeedService:
                 content=clean_untrusted_text(
                     str(post.get("content", post.get("text", ""))), max_chars=4000
                 ),
-                created_at=float(post.get("created_at", post.get("time", 0)) or 0),
+                created_at=time.time(),
                 post_author_uid=author_uid,
                 explicit_wake=True,
                 image_urls=[],
@@ -144,9 +152,6 @@ class FeedService:
                 if not changed:
                     raise ValueError("候选已处理")
                 return "dry_run"
-            counters = await self.repository.today_counters(self.profile_id)
-            if counters["proactive_count"] >= int(self.config["proactive_feed"]["max_per_day"]):
-                raise ValueError("已达到主动回复每日上限")
             claimed = await self.repository.claim_feed_candidate_for_send(
                 candidate_id,
                 text,

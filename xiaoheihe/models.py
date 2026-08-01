@@ -171,6 +171,7 @@ class ThreadContext:
     author_name: str
     comments: list[dict[str, Any]]
     image_urls: list[str] = field(default_factory=list)
+    post_created_at: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

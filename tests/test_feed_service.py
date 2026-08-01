@@ -60,6 +60,51 @@ async def test_feed_run_filters_and_dispatches(repository) -> None:
     assert await service.run_once() == 1
     assert dispatched[0][0].raw["event_type"] == "proactive_feed"
     assert dispatched[0][0].post_id == "post-1"
+    assert dispatched[0][0].created_at >= time.time() - 5
+    assert (await repository.today_counters("default"))["proactive_count"] == 2
+
+
+async def test_feed_daily_limit_blocks_fetch_before_reading(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"]["enabled"] = True
+    config["proactive_feed"]["max_per_day"] = 1
+    await repository.increment_counter("default", proactive=1)
+
+    class NoFetchClient(FakeFeedClient):
+        async def fetch_feed(self, **kwargs):
+            raise AssertionError("daily browsing quota must block feed retrieval")
+
+    service = FeedService(
+        "default",
+        config,
+        NoFetchClient(),
+        repository,
+        unused_delivery,
+        unused_delivery,
+    )
+    assert await service.run_once() == 0
+
+
+async def test_feed_counts_read_items_and_limits_fetch_size(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"]["enabled"] = True
+    config["proactive_feed"]["max_per_day"] = 3
+    config["proactive_feed"]["max_per_run"] = 5
+    client = FakeFeedClient()
+    captured = {}
+
+    async def fetch_feed(**kwargs):
+        captured.update(kwargs)
+        return ApiPage(items=FakeFeedClient().sent)
+
+    async def dispatch(*args):
+        return None
+
+    client.fetch_feed = fetch_feed
+    service = FeedService("default", config, client, repository, dispatch, unused_delivery)
+    assert await service.run_once() == 0
+    assert captured == {"source": "all", "limit": 3}
+    assert (await repository.today_counters("default"))["proactive_count"] == 0
 
 
 async def test_candidate_review_dry_run_and_reject(repository) -> None:
@@ -107,6 +152,7 @@ async def test_approved_real_send_uses_edited_text(repository) -> None:
     stored = await repository.feed_candidate(candidate_id)
     assert stored["status"] == "sent"
     assert stored["sent_comment_id"] == "comment-sent"
+    assert (await repository.today_counters("default"))["proactive_count"] == 0
 
 
 async def test_concurrent_candidate_approval_sends_once(repository) -> None:

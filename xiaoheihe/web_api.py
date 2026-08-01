@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,8 +15,13 @@ from .security import SecurityError, redact_data, redact_text, validate_profile_
 
 
 class WebApiController:
-    def __init__(self, runtime: RuntimeServices) -> None:
+    def __init__(
+        self,
+        runtime: RuntimeServices,
+        provider_supplier: Callable[[], list[dict[str, str]]] | None = None,
+    ) -> None:
         self.runtime = runtime
+        self.provider_supplier = provider_supplier or (lambda: [])
 
     def register(self, context) -> None:
         routes = (
@@ -153,7 +160,14 @@ class WebApiController:
         if response := self._unauthorized():
             return response
         try:
-            return json_response(self.runtime.config.ui_schema())
+            schema = deepcopy(self.runtime.config.ui_schema())
+            providers = self._provider_options()
+            provider_items = schema.get("providers", {}).get("items", {})
+            for field_name in ("llm_provider_id", "image_provider_id"):
+                field = provider_items.get(field_name)
+                if isinstance(field, dict):
+                    field["options"] = providers
+            return json_response(schema)
         except ConfigValidationError as exc:
             return error_response(str(exc), status_code=500)
 
@@ -336,7 +350,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.2"},
+            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.3"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),
@@ -346,6 +360,24 @@ class WebApiController:
 
     async def _unused_synthetic_dispatch(self, notification, metadata: dict[str, Any]) -> None:
         raise RuntimeError(f"审核发送不应创建合成事件: {notification.post_id} {metadata!r}")
+
+    def _provider_options(self) -> list[dict[str, str]]:
+        options = [{"value": "", "label": "跟随当前配置"}]
+        try:
+            configured = self.provider_supplier()
+        except Exception:
+            configured = []
+        seen = {""}
+        for item in configured:
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("value", "")).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            label = str(item.get("label", value)).strip() or value
+            options.append({"value": value, "label": label})
+        return options
 
 
 def _positive_int(value: str, name: str) -> int:

@@ -6,13 +6,13 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.2**
+当前版本：**v1.2.3**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.2 重点：
+v1.2.3 重点：
 
 - 多图事件按实际图片数量自动增加视觉处理时间，默认 6 图事件由 120 秒扩展为 300 秒；
 - 设置保存后显示成功提示，并注明配置是否产生变化；
@@ -24,10 +24,12 @@ v1.2.2 重点：
 - 新通知先写入 SQLite，再进入有界处理队列，拥塞事件按到期时间恢复；
 - 同一入站事件使用数据库发送记录和事件级闸门限制为一次评论提交；
 - 主动审核使用原子发送状态和账号级并发闸门；
-- 主动回复审核发送会回写原主动事件，事件记录展示最终发送状态；
-- 主动帖事件时间使用实际发现时间，并迁移修正历史原帖时间；
+- 主动回复审核发送会回写原主动事件，事件记录展示最终发送状态和实际处理完成时间；
+- 主动浏览额度在读取推荐流时消耗，达到上限后不会继续读取；
+- 回复上下文同时提供原帖发布时间、触发回复时间和当前处理时间；
+- 推荐流可选择全部或游戏、硬件、软件、电竞、动漫、影视、音乐、生活、科技分区；
 - 数据库迁移会自动补齐主动候选与原事件的关联；
-- 可为小黑盒事件固定 LLM Provider，并可单独指定图片理解 Provider；
+- 可从 AstrBot 已配置 Provider 下拉框中为小黑盒事件固定 LLM Provider，并单独指定图片理解 Provider；
 - 覆盖更新保留账号凭证、SQLite、配置和通知游标。
 
 ## 核心特性
@@ -240,10 +242,12 @@ review_required: true
 interval_seconds: 900
 max_per_run: 1
 max_per_day: 10
+source: all
 ```
 
 启用后，候选内容通过 AstrBot 原生事件链路生成并保存到“主动审核”。审核页支持编辑、批准和
-拒绝；批准后发送已审核文本，无需再次调用模型。
+拒绝；批准后发送已审核文本，无需再次调用模型。`max_per_day` 表示每日主动浏览的帖子数，不是
+每日评论发送数；达到上限后适配器不会再读取推荐流。
 
 ## 数据与安全
 

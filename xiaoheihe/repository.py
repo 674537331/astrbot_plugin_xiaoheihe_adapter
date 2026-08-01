@@ -628,10 +628,10 @@ class Repository:
             pattern = f"%{keyword[:100]}%"
             parameters.extend((pattern, pattern))
         if start_time is not None:
-            where.append("discovered_at >= ?")
+            where.append("COALESCE(completed_at, updated_at, discovered_at) >= ?")
             parameters.append(float(start_time))
         if end_time is not None:
-            where.append("discovered_at <= ?")
+            where.append("COALESCE(completed_at, updated_at, discovered_at) <= ?")
             parameters.append(float(end_time))
         safe_size = max(1, min(page_size, 100))
         safe_page = max(1, page)
@@ -646,10 +646,12 @@ class Repository:
                    notification_id, event_type, status, sender_uid,
                    sender_nickname, post_id, root_comment_id, parent_comment_id,
                    content, reply_text, error, should_filter, discovered_at,
-                   updated_at, generated_ms, retry_count, next_retry_at
+                   updated_at, completed_at,
+                   COALESCE(completed_at, updated_at, discovered_at) AS event_time,
+                   generated_ms, retry_count, next_retry_at
             FROM incoming_events
             WHERE {predicate}
-            ORDER BY discovered_at DESC
+            ORDER BY COALESCE(completed_at, updated_at, discovered_at) DESC
             LIMIT ? OFFSET ?
             """,
             (*parameters, safe_size, (safe_page - 1) * safe_size),

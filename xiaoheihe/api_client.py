@@ -352,7 +352,7 @@ class XiaoheiheApiClient:
         return [dict(item) for item in items if isinstance(item, Mapping)]
 
     async def fetch_feed(
-        self, *, source: str = "follow", cursor: str = "", limit: int = 10
+        self, *, source: str = "all", cursor: str = "", limit: int = 10
     ) -> ApiPage:
         params: dict[str, Any] = {
             "source": source,
@@ -586,6 +586,7 @@ def _merge_post_and_thread_context(
         author_name=post_context.author_name or thread_context.author_name,
         comments=thread_context.comments or post_context.comments,
         image_urls=list(dict.fromkeys(post_context.image_urls + thread_context.image_urls)),
+        post_created_at=post_context.post_created_at or thread_context.post_created_at,
     )
 
 
