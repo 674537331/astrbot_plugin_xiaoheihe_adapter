@@ -228,6 +228,12 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
           AND claimed_at > discovered_at;
         """,
     ),
+    (
+        6,
+        """
+        UPDATE daily_counters SET proactive_count = 0;
+        """,
+    ),
 )
 
 MIGRATION_MARKERS = {
@@ -236,6 +242,7 @@ MIGRATION_MARKERS = {
     3: "INSERT INTO schema_migrations(version) VALUES (3);",
     4: "INSERT INTO schema_migrations(version) VALUES (4);",
     5: "INSERT INTO schema_migrations(version) VALUES (5);",
+    6: "INSERT INTO schema_migrations(version) VALUES (6);",
 }
 
 

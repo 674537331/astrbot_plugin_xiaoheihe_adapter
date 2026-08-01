@@ -578,6 +578,32 @@ class Repository:
             (profile_id, day, reply, proactive, error),
         )
 
+    async def reserve_proactive_request(self, profile_id: str, daily_limit: int) -> bool:
+        """Atomically reserve one proactive AI-generation request for today."""
+        day = datetime.now(UTC).date().isoformat()
+        async with self.db.transaction() as connection:
+            async with connection.execute(
+                """
+                SELECT proactive_count FROM daily_counters
+                WHERE profile_id = ? AND day = ?
+                """,
+                (profile_id, day),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is not None and int(row["proactive_count"]) >= daily_limit:
+                return False
+            await connection.execute(
+                """
+                INSERT INTO daily_counters(
+                    profile_id, day, reply_count, proactive_count, error_count
+                ) VALUES (?, ?, 0, 1, 0)
+                ON CONFLICT(profile_id, day) DO UPDATE SET
+                    proactive_count = proactive_count + 1
+                """,
+                (profile_id, day),
+            )
+            return True
+
     async def today_counters(self, profile_id: str) -> dict[str, int]:
         day = datetime.now(UTC).date().isoformat()
         row = await self.db.fetchone(

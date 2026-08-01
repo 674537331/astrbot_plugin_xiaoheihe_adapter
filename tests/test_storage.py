@@ -43,6 +43,12 @@ async def test_database_upgrades_v2_to_latest(tmp_path) -> None:
     await connection.executescript(MIGRATIONS[0][1])
     await connection.executescript(MIGRATIONS[1][1])
     await connection.execute("INSERT INTO schema_migrations(version) VALUES (1), (2)")
+    await connection.execute(
+        """
+        INSERT INTO daily_counters(profile_id, day, proactive_count)
+        VALUES ('default', '2026-08-01', 20)
+        """
+    )
     await connection.commit()
     await connection.close()
 
@@ -54,4 +60,8 @@ async def test_database_upgrades_v2_to_latest(tmp_path) -> None:
     assert {"retry_count", "next_retry_at"} <= names
     tables = await database.fetchall("SELECT name FROM sqlite_master WHERE type = 'table'")
     assert "notification_cursors" in {row["name"] for row in tables}
+    counter = await database.fetchone(
+        "SELECT proactive_count FROM daily_counters WHERE profile_id = 'default'"
+    )
+    assert counter["proactive_count"] == 0
     await database.close()

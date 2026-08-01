@@ -20,7 +20,49 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const text = (value) => value === null || value === undefined || value === "" ? "—" : String(value);
-const eventStatusText = (value) => value === "dry_run" ? "模拟运行" : text(value);
+const eventTypeLabels = {
+  mention: "@ 提及",
+  reply: "评论回复",
+  proactive_feed: "主动 AI 回复",
+};
+const eventStatusLabels = {
+  discovered: "已发现",
+  claimed: "处理中",
+  context_ready: "上下文就绪",
+  dispatched: "已提交 AI",
+  generated: "已生成",
+  sent: "已发送",
+  dry_run: "模拟运行",
+  ignored: "已忽略",
+  retry_wait: "等待重试",
+  send_unknown: "发送状态未知",
+  dead_letter: "处理失败",
+};
+const eventTypeText = (value) => eventTypeLabels[value] || text(value);
+const eventStatusText = (value) => eventStatusLabels[value] || text(value);
+const shanghaiTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+const formatTime = (value) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const numeric = typeof value === "number" || /^\d+(?:\.\d+)?$/.test(String(value));
+  const number = numeric ? Number(value) : Number.NaN;
+  const date = numeric
+    ? new Date(number < 1e12 ? number * 1000 : number)
+    : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return text(value);
+  const parts = Object.fromEntries(
+    shanghaiTimeFormatter.formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+};
 const bytes = (value) => {
   const number = Number(value || 0);
   if (number < 1024) return `${number} B`;
@@ -381,14 +423,14 @@ async function loadStatus() {
     metric("登录状态", first.status || "idle"),
     metric("当前账号", first.nickname || first.profile_id),
     metric("UID", first.uid),
-    metric("最后轮询", first.last_poll_at),
-    metric("最近成功请求", first.last_success_request_at),
+    metric("最后轮询", formatTime(first.last_poll_at)),
+    metric("最近成功请求", formatTime(first.last_success_request_at)),
     metric("最近错误", first.last_error || first.last_client_error?.message),
     metric("@通知 原始/接收", notificationMetric(first, "mention")),
     metric("回复通知 原始/接收", notificationMetric(first, "reply")),
     metric("待处理队列", state.status.queue_length || 0),
     metric("今日回复", first.reply_count || 0),
-    metric("今日主动浏览", first.proactive_count || 0),
+    metric("今日主动 AI 请求", first.proactive_count || 0),
     metric("模拟运行", first.dry_run ? "开启" : "关闭"),
     metric("数据库", bytes(state.status.database_size)),
     metric("日志", bytes(state.status.log_size)),
@@ -425,8 +467,8 @@ function renderLogin(result) {
     "状态": result.state,
     "昵称": result.nickname,
     "UID": result.uid,
-    "登录时间": result.logged_in_at,
-    "最近检查": result.last_login_check_at,
+    "登录时间": formatTime(result.logged_in_at),
+    "最近检查": formatTime(result.last_login_check_at),
   };
   facts.replaceChildren();
   Object.entries(values).forEach(([key, value]) => {
@@ -485,8 +527,8 @@ async function loadEvents() {
   $("event-table").replaceChildren(table(
     ["时间", "类型", "状态", "UID", "帖子 / 楼层", "内容 / 结果"],
     result.items.map((item) => [
-      new Date((item.event_time || item.discovered_at) * 1000).toLocaleString(),
-      item.event_type,
+      formatTime(item.event_time || item.discovered_at),
+      eventTypeText(item.event_type),
       eventStatusText(item.status),
       item.sender_uid,
       `${item.post_id} / ${item.root_comment_id || "帖子"}`,
@@ -588,7 +630,7 @@ async function loadLogs() {
 
 function renderLogs() {
   $("log-output").textContent = state.logs.map((entry) =>
-    `${entry.time} ${entry.level.padEnd(7)} [${entry.profile_id || "-"}] ${entry.message} ${JSON.stringify(entry.details || {})}`
+    `${formatTime(entry.time)} ${entry.level.padEnd(7)} [${entry.profile_id || "-"}] ${entry.message} ${JSON.stringify(entry.details || {})}`
   ).join("\n");
   $("log-output").scrollTop = $("log-output").scrollHeight;
 }
@@ -658,7 +700,7 @@ async function loadStorage() {
   cards.replaceChildren(
     metric("数据库", bytes(result.database_size)),
     metric("日志总量", bytes(result.log_size)),
-    metric("上次清理", result.last_cleanup_at),
+    metric("上次清理", formatTime(result.last_cleanup_at)),
     ...Object.entries(result.counts || {}).map(([key, value]) => metric(key, value)),
   );
 }

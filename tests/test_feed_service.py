@@ -61,10 +61,10 @@ async def test_feed_run_filters_and_dispatches(repository) -> None:
     assert dispatched[0][0].raw["event_type"] == "proactive_feed"
     assert dispatched[0][0].post_id == "post-1"
     assert dispatched[0][0].created_at >= time.time() - 5
-    assert (await repository.today_counters("default"))["proactive_count"] == 2
+    assert (await repository.today_counters("default"))["proactive_count"] == 1
 
 
-async def test_feed_daily_limit_blocks_fetch_before_reading(repository) -> None:
+async def test_feed_daily_ai_request_limit_blocks_fetch(repository) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["proactive_feed"]["enabled"] = True
     config["proactive_feed"]["max_per_day"] = 1
@@ -72,7 +72,7 @@ async def test_feed_daily_limit_blocks_fetch_before_reading(repository) -> None:
 
     class NoFetchClient(FakeFeedClient):
         async def fetch_feed(self, **kwargs):
-            raise AssertionError("daily browsing quota must block feed retrieval")
+            raise AssertionError("daily AI request quota must block feed retrieval")
 
     service = FeedService(
         "default",
@@ -85,7 +85,7 @@ async def test_feed_daily_limit_blocks_fetch_before_reading(repository) -> None:
     assert await service.run_once() == 0
 
 
-async def test_feed_counts_read_items_and_limits_fetch_size(repository) -> None:
+async def test_feed_does_not_count_empty_recommendation_page(repository) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["proactive_feed"]["enabled"] = True
     config["proactive_feed"]["max_per_day"] = 3
@@ -104,6 +104,22 @@ async def test_feed_counts_read_items_and_limits_fetch_size(repository) -> None:
     service = FeedService("default", config, client, repository, dispatch, unused_delivery)
     assert await service.run_once() == 0
     assert captured == {"offset": 0}
+    assert (await repository.today_counters("default"))["proactive_count"] == 0
+
+
+async def test_feed_filters_do_not_consume_ai_request_quota(repository) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"].update({"enabled": True, "keywords": ["不会匹配"]})
+    service = FeedService(
+        "default",
+        config,
+        FakeFeedClient(),
+        repository,
+        unused_delivery,
+        unused_delivery,
+    )
+
+    assert await service.run_once() == 0
     assert (await repository.today_counters("default"))["proactive_count"] == 0
 
 

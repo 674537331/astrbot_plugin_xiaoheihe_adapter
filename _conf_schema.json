@@ -335,14 +335,15 @@
         "default": 60
       },
       "max_per_run": {
-        "description": "每轮最大候选数",
+        "description": "每轮主动 AI 请求上限",
         "type": "int",
         "default": 1
       },
       "max_per_day": {
-        "description": "每日主动浏览上限",
+        "description": "每日主动 AI 请求上限",
         "type": "int",
-        "default": 10
+        "default": 10,
+        "hint": "仅在合格帖子即将提交给 AI 生成回复时计数；本地浏览和过滤不占额度。"
       },
       "source": {
         "description": "推荐流分区",

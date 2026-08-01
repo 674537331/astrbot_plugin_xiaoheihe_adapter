@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 from xiaoheihe.models import EventState, Notification, NotificationType, RoutingTarget
@@ -85,6 +86,18 @@ async def test_event_filters_counters_and_recovery(repository) -> None:
         "proactive_count": 1,
         "error_count": 3,
     }
+    assert await repository.reserve_proactive_request("default", 2) is True
+    assert await repository.reserve_proactive_request("default", 2) is False
+    assert (await repository.today_counters("default"))["proactive_count"] == 2
+
+
+async def test_proactive_request_limit_is_reserved_atomically(repository) -> None:
+    results = await asyncio.gather(
+        *(repository.reserve_proactive_request("default", 3) for _ in range(10))
+    )
+
+    assert sum(results) == 3
+    assert (await repository.today_counters("default"))["proactive_count"] == 3
 
 
 async def test_retry_schedule_reclaims_atomically_and_dead_letters(repository) -> None:
@@ -183,7 +196,7 @@ async def test_account_error_feed_and_diagnostics(repository) -> None:
     assert await repository.review_feed_candidate(candidate_id, "approved", "edited")
     assert (await repository.feed_candidate(candidate_id))["edited_text"] == "edited"
     snapshot = await repository.diagnostic_snapshot()
-    assert snapshot["schema_version"] == 5
+    assert snapshot["schema_version"] == 6
     assert snapshot["counts"]["feed_candidates"] == 1
     assert snapshot["account_states"][0]["nickname"] == "Bot"
     assert snapshot["recent_errors"][0]["category"] == "response_shape"

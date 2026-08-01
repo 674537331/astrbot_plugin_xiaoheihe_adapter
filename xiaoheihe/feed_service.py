@@ -57,15 +57,12 @@ class FeedService:
         if not feed_config.get("enabled", False):
             return 0
         counters = await self.repository.today_counters(self.profile_id)
-        remaining = max(0, int(feed_config["max_per_day"]) - counters["proactive_count"])
-        if not remaining:
+        daily_limit = int(feed_config["max_per_day"])
+        if counters["proactive_count"] >= daily_limit:
             return 0
         page = await self.client.fetch_feed(offset=0)
-        browsed_posts = page.items[:remaining]
-        if browsed_posts:
-            await self.repository.increment_counter(self.profile_id, proactive=len(browsed_posts))
         generated = 0
-        for post in browsed_posts:
+        for post in page.items:
             if generated >= int(feed_config["max_per_run"]):
                 break
             post_id = str(post.get("link_id", post.get("post_id", post.get("id", ""))))
@@ -81,6 +78,10 @@ class FeedService:
                 continue
             if await self.repository.has_replied_to_post(self.profile_id, post_id):
                 continue
+            if await self.repository.proactive_event_id(self.profile_id, post_id) is not None:
+                continue
+            if not await self.repository.reserve_proactive_request(self.profile_id, daily_limit):
+                break
             notification = Notification(
                 profile_id=self.profile_id,
                 external_event_id=f"feed:{post_id}",

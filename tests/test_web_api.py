@@ -67,6 +67,21 @@ def test_plugin_page_defers_hidden_panel_requests_and_log_stream() -> None:
     assert "queueLogRender()" in source
 
 
+def test_plugin_page_localizes_events_and_formats_times() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "pages" / "xiaoheihe" / "app.js").read_text(encoding="utf-8")
+    html = (root / "pages" / "xiaoheihe" / "index.html").read_text(encoding="utf-8")
+
+    assert 'proactive_feed: "主动 AI 回复"' in source
+    assert 'send_unknown: "发送状态未知"' in source
+    assert 'timeZone: "Asia/Shanghai"' in source
+    assert "formatTime(first.last_poll_at)" in source
+    assert "formatTime(result.last_cleanup_at)" in source
+    assert "formatTime(entry.time)" in source
+    assert "toLocaleString()" not in source
+    assert '<option value="dead_letter">处理失败</option>' in html
+
+
 def test_registers_only_plugin_prefixed_routes(fake_config) -> None:
     controller = WebApiController(FakeRuntime(fake_config))
     context = FakeContext()

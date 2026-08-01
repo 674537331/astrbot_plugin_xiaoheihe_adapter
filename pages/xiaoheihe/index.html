@@ -81,9 +81,9 @@
           <div class="filters">
             <select id="event-status">
               <option value="">全部状态</option>
-              <option>sent</option><option value="generated">已生成</option><option value="dry_run">模拟运行</option><option>ignored</option>
-              <option>retry_wait</option><option>send_unknown</option>
-              <option>dead_letter</option><option>dispatched</option>
+              <option value="sent">已发送</option><option value="generated">已生成</option><option value="dry_run">模拟运行</option><option value="ignored">已忽略</option>
+              <option value="retry_wait">等待重试</option><option value="send_unknown">发送状态未知</option>
+              <option value="dead_letter">处理失败</option><option value="dispatched">已提交 AI</option>
             </select>
             <input id="event-uid" placeholder="用户 UID" />
             <input id="event-post" placeholder="帖子 ID" />
