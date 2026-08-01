@@ -78,7 +78,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "jitter_seconds": 60,
         "max_per_run": 1,
         "max_per_day": 10,
-        "source": "follow",
+        "source": "all",
         "keywords": [],
         "allowed_post_types": [],
     },
@@ -97,6 +97,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "logging": {"level": "INFO", "max_memory_entries": 2000},
 }
 
+PROACTIVE_FEED_SOURCES = {
+    "all",
+    "game",
+    "hardware",
+    "software",
+    "esports",
+    "anime",
+    "movie",
+    "music",
+    "life",
+    "tech",
+}
+
 RestartCallback = Callable[[set[str]], Awaitable[None]]
 
 
@@ -110,6 +123,7 @@ class ConfigService:
         self._lock = asyncio.Lock()
         self._callbacks: list[RestartCallback] = []
         merged = self._merge_defaults(dict(config), DEFAULT_CONFIG)
+        self._normalize_legacy(merged)
         self.validate(merged)
         self._replace_in_place(merged)
 
@@ -152,6 +166,7 @@ class ConfigService:
 
     async def save(self, replacement: dict[str, Any]) -> set[str]:
         candidate = self._merge_defaults(copy.deepcopy(replacement), DEFAULT_CONFIG)
+        self._normalize_legacy(candidate)
         self.validate(candidate)
         async with self._lock:
             previous = self.snapshot()
@@ -245,8 +260,8 @@ class ConfigService:
             if any(len(item) > 100 for item in values):
                 raise ConfigValidationError(f"proactive_feed.{key} 单项不能超过 100 字符")
         source = proactive.get("source")
-        if not isinstance(source, str) or not source or len(source) > 64:
-            raise ConfigValidationError("proactive_feed.source 必须是 1-64 字符字符串")
+        if source not in PROACTIVE_FEED_SOURCES:
+            raise ConfigValidationError("proactive_feed.source 必须是受支持的推荐流分区")
         if proactive.get("enabled") and not proactive.get("review_required"):
             if not proactive.get("dry_run"):
                 raise ConfigValidationError("主动刷帖真实发送必须启用 review_required")
@@ -292,6 +307,12 @@ class ConfigService:
     def _replace_in_place(self, value: dict[str, Any]) -> None:
         self._config.clear()
         self._config.update(copy.deepcopy(value))
+
+    @staticmethod
+    def _normalize_legacy(config: dict[str, Any]) -> None:
+        proactive = config.get("proactive_feed")
+        if isinstance(proactive, dict) and proactive.get("source") == "follow":
+            proactive["source"] = "all"
 
     @classmethod
     def _merge_defaults(cls, value: Any, defaults: Any) -> Any:

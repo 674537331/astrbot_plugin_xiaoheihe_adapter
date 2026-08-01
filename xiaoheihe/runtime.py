@@ -351,9 +351,7 @@ class RuntimeServices:
                             EventState.SENT,
                             reply_text=text,
                         )
-                    if proactive:
-                        await self.repository.increment_counter(route.profile_id, proactive=1)
-                    else:
+                    if not proactive:
                         await self.repository.increment_counter(route.profile_id, reply=1)
                     return {
                         "status": EventState.SENT.value,
@@ -424,12 +422,7 @@ class RuntimeServices:
                                 EventState.SENT,
                                 reply_text=text,
                             )
-                        if proactive:
-                            await self.repository.increment_counter(
-                                route.profile_id,
-                                proactive=1,
-                            )
-                        else:
+                        if not proactive:
                             await self.repository.increment_counter(
                                 route.profile_id,
                                 reply=1,
@@ -458,9 +451,7 @@ class RuntimeServices:
             await self.repository.confirm_outgoing(outgoing_id, result.external_comment_id)
             if event_id is not None:
                 await self.repository.mark_event(event_id, EventState.SENT, reply_text=text)
-            if proactive:
-                await self.repository.increment_counter(route.profile_id, proactive=1)
-            else:
+            if not proactive:
                 await self.repository.increment_counter(route.profile_id, reply=1)
             return {
                 "status": EventState.SENT.value,
@@ -744,7 +735,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.2",
+            "version": "v1.2.3",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),

@@ -36,7 +36,10 @@ async def test_context_is_clean_bounded_and_cached() -> None:
     assert "第一条" in result.dynamic_context
     assert len(result.image_urls) == 2
     assert client.calls == 1
-    assert result_again.dynamic_context == result.dynamic_context
+    assert "帖子发布时间:" in result.dynamic_context
+    assert "触发回复时间:" in result.dynamic_context
+    assert "当前回复处理时间:" in result.dynamic_context
+    assert result_again.thread.post_id == result.thread.post_id
 
 
 async def test_comment_mention_includes_comment_and_original_post_media() -> None:

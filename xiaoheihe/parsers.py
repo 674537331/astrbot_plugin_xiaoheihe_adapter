@@ -501,6 +501,9 @@ def parse_thread_context(payload: Mapping[str, Any], post_id: str) -> ThreadCont
         author_name=str(_first(author_obj, "nickname", "username", "name")),
         comments=comments,
         image_urls=list(dict.fromkeys(url for url in images if url)),
+        post_created_at=_timestamp(
+            _first(post_obj, "created_at", "create_at", "timestamp", "time", default=0)
+        ),
     )
 
 

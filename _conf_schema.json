@@ -340,14 +340,27 @@
         "default": 1
       },
       "max_per_day": {
-        "description": "每日真实发送上限",
+        "description": "每日主动浏览上限",
         "type": "int",
         "default": 10
       },
       "source": {
-        "description": "帖子来源",
+        "description": "推荐流分区",
         "type": "string",
-        "default": "follow"
+        "default": "all",
+        "options": ["all", "game", "hardware", "software", "esports", "anime", "movie", "music", "life", "tech"],
+        "option_labels": {
+          "all": "全部",
+          "game": "游戏",
+          "hardware": "硬件",
+          "software": "软件",
+          "esports": "电竞",
+          "anime": "动漫",
+          "movie": "影视",
+          "music": "音乐",
+          "life": "生活",
+          "tech": "科技"
+        }
       },
       "keywords": {
         "description": "允许关键词",

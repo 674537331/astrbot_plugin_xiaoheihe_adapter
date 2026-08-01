@@ -209,8 +209,13 @@ function createScalarField(key, descriptor, value, update) {
     control = document.createElement("select");
     descriptor.options.forEach((optionValue) => {
       const option = document.createElement("option");
-      option.value = String(optionValue);
-      option.textContent = String(optionValue);
+      const value = typeof optionValue === "object" ? optionValue.value : optionValue;
+      option.value = String(value);
+      option.textContent = String(
+        (typeof optionValue === "object" && optionValue.label)
+          || descriptor.option_labels?.[value]
+          || value,
+      );
       control.append(option);
     });
     control.value = String(value ?? descriptor.default ?? "");
@@ -381,7 +386,7 @@ async function loadStatus() {
     metric("回复通知 原始/接收", notificationMetric(first, "reply")),
     metric("待处理队列", state.status.queue_length || 0),
     metric("今日回复", first.reply_count || 0),
-    metric("今日主动回复", first.proactive_count || 0),
+    metric("今日主动浏览", first.proactive_count || 0),
     metric("模拟运行", first.dry_run ? "开启" : "关闭"),
     metric("数据库", bytes(state.status.database_size)),
     metric("日志", bytes(state.status.log_size)),
@@ -478,7 +483,7 @@ async function loadEvents() {
   $("event-table").replaceChildren(table(
     ["时间", "类型", "状态", "UID", "帖子 / 楼层", "内容 / 结果"],
     result.items.map((item) => [
-      new Date(item.discovered_at * 1000).toLocaleString(),
+      new Date((item.event_time || item.discovered_at) * 1000).toLocaleString(),
       item.event_type,
       eventStatusText(item.status),
       item.sender_uid,

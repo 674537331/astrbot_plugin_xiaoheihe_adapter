@@ -28,7 +28,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.2",
+    "1.2.3",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -37,7 +37,11 @@ class XiaoheiheAdapterPlugin(Star):
         data_dir = StarTools.get_data_dir(PLUGIN_NAME)
         self.runtime = RuntimeServices(config, data_dir)
         bind_runtime(self.runtime)
-        self.web = WebApiController(self.runtime) if WebApiController is not None else None
+        self.web = (
+            WebApiController(self.runtime, provider_supplier=self._provider_options)
+            if WebApiController is not None
+            else None
+        )
         if self.web is not None:
             self.web.register(context)
         self.runtime.set_configured_adapters(self._platform_configs())
@@ -52,6 +56,37 @@ class XiaoheiheAdapterPlugin(Star):
             for config in configs
             if isinstance(config, dict) and config.get("type") == "xiaoheihe"
         ]
+
+    def _provider_options(self) -> list[dict[str, str]]:
+        get_all_providers = getattr(self.context, "get_all_providers", None)
+        if not callable(get_all_providers):
+            return []
+        try:
+            providers = get_all_providers()
+        except Exception:
+            return []
+        options: list[dict[str, str]] = []
+        for provider in providers if isinstance(providers, (list, tuple)) else ():
+            config = getattr(provider, "provider_config", {})
+            if not isinstance(config, dict):
+                continue
+            provider_id = str(config.get("id", "")).strip()
+            if not provider_id:
+                continue
+            model = ""
+            get_model = getattr(provider, "get_model", None)
+            if callable(get_model):
+                try:
+                    model = str(get_model() or "").strip()
+                except Exception:
+                    model = ""
+            options.append(
+                {
+                    "value": provider_id,
+                    "label": f"{provider_id} · {model}" if model else provider_id,
+                }
+            )
+        return options
 
     async def initialize(self) -> None:
         """Restore enabled adapter instances after AstrBot hot-reloads the plugin."""

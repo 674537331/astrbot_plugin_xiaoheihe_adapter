@@ -88,6 +88,24 @@ async def test_config_schema_api_exposes_structured_form_metadata(fake_config) -
     ]
 
 
+async def test_config_schema_includes_configured_provider_choices(fake_config) -> None:
+    controller = WebApiController(
+        FakeRuntime(fake_config),
+        provider_supplier=lambda: [
+            {"value": "provider-a", "label": "provider-a · test-model"},
+            {"value": "provider-b", "label": "provider-b"},
+        ],
+    )
+    REQUEST.username = "admin"
+    schema = (await controller.config_schema())["json"]
+    options = schema["providers"]["items"]["llm_provider_id"]["options"]
+    assert options == [
+        {"value": "", "label": "跟随当前配置"},
+        {"value": "provider-a", "label": "provider-a · test-model"},
+        {"value": "provider-b", "label": "provider-b"},
+    ]
+
+
 async def test_config_api_rejects_unknown_group(fake_config) -> None:
     controller = WebApiController(FakeRuntime(fake_config))
     REQUEST.username = "admin"
