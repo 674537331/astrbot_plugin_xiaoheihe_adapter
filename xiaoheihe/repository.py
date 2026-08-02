@@ -25,8 +25,14 @@ class Repository:
 
     async def claim_event(self, notification: Notification) -> int | None:
         now = time.time()
+        observed_at = notification.observed_at or now
+        raw = dict(notification.raw)
+        raw["_adapter_timing"] = {
+            "source_created_at": notification.created_at,
+            "observed_at": observed_at,
+        }
         raw_json = json.dumps(
-            redact_data(notification.raw),
+            redact_data(raw),
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -54,7 +60,7 @@ class Repository:
                     notification.parent_comment_id,
                     notification.content,
                     raw_json,
-                    now,
+                    observed_at,
                     now,
                     now,
                 ),

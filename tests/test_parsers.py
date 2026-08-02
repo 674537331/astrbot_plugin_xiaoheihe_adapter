@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tests.helpers import load_fixture
@@ -244,6 +246,7 @@ def test_response_shape_change_is_explicit() -> None:
 
 
 def test_millisecond_notification_timestamp_is_normalized() -> None:
+    before = time.time()
     page = parse_notifications(
         "default",
         {
@@ -261,4 +264,31 @@ def test_millisecond_notification_timestamp_is_normalized() -> None:
         },
         NotificationType.MENTION,
     )
+    assert page.items[0]["notification"].created_at == 1_700_000_000
+    assert before <= page.items[0]["notification"].observed_at <= time.time()
+
+
+def test_comment_source_time_takes_precedence_over_notification_time() -> None:
+    page = parse_notifications(
+        "default",
+        {
+            "result": {
+                "items": [
+                    {
+                        "id": "event",
+                        "post_id": "post",
+                        "created_at": 1_700_000_120,
+                        "sender": {"uid": "user"},
+                        "comment": {
+                            "id": "comment",
+                            "content": "hello",
+                            "created_at": 1_700_000_000,
+                        },
+                    }
+                ]
+            }
+        },
+        NotificationType.MENTION,
+    )
+
     assert page.items[0]["notification"].created_at == 1_700_000_000

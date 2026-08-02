@@ -298,6 +298,7 @@ def parse_notifications(
     page_size: int = 20,
     offset: int = 0,
 ) -> ApiPage:
+    observed_at = time.time()
     candidate = payload.get("result", payload.get("data", payload))
     if isinstance(candidate, Mapping):
         body = candidate
@@ -422,8 +423,22 @@ def parse_notifications(
                 )
             ),
             created_at=_timestamp(
-                _first(raw, "created_at", "timestamp", "time", default=time.time())
+                _first(
+                    content_obj,
+                    "created_at",
+                    "create_at",
+                    "timestamp",
+                    "time",
+                    default=_first(
+                        raw,
+                        "created_at",
+                        "timestamp",
+                        "time",
+                        default=observed_at,
+                    ),
+                )
             ),
+            observed_at=observed_at,
             post_author_uid=(
                 _id(raw, "post_author_uid")
                 or _id(post_obj, "author_uid", "user_id", "userid", "uid")

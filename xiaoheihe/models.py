@@ -139,6 +139,7 @@ class Notification:
     parent_comment_id: str
     content: str
     created_at: float
+    observed_at: float = 0.0
     post_author_uid: str = ""
     explicit_wake: bool = True
     image_urls: list[str] = field(default_factory=list)

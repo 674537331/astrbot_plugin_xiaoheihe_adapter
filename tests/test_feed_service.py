@@ -61,6 +61,7 @@ async def test_feed_run_filters_and_dispatches(repository) -> None:
     assert dispatched[0][0].raw["event_type"] == "proactive_feed"
     assert dispatched[0][0].post_id == "post-1"
     assert dispatched[0][0].created_at >= time.time() - 5
+    assert dispatched[0][0].observed_at >= dispatched[0][0].created_at
     assert (await repository.today_counters("default"))["proactive_count"] == 1
 
 

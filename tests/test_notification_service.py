@@ -11,7 +11,7 @@ from tests.helpers import load_fixture
 from xiaoheihe.config_service import DEFAULT_CONFIG
 from xiaoheihe.context_builder import BuiltContext
 from xiaoheihe.models import ApiPage, EventState, Notification, NotificationType, ThreadContext
-from xiaoheihe.notification_service import NotificationService
+from xiaoheihe.notification_service import NotificationService, _notification_from_row
 from xiaoheihe.parsers import parse_notifications
 from xiaoheihe.permission_service import PermissionService
 from xiaoheihe.task_manager import TaskManager
@@ -394,6 +394,19 @@ async def test_restart_quarantines_dispatched_event_instead_of_redispatching(rep
     assert row["status"] == EventState.DEAD_LETTER.value
     assert "停止重复分发" in row["error"]
     assert not dispatched
+
+
+async def test_recovered_notification_preserves_source_and_observed_times(repository) -> None:
+    source = notice("timed", 1_700_000_000)
+    source.observed_at = 1_700_000_120
+    event_id = await repository.claim_event(source)
+    assert event_id is not None
+    row = await repository.db.fetchone("SELECT * FROM incoming_events WHERE id = ?", (event_id,))
+
+    recovered = _notification_from_row(dict(row), "default")
+
+    assert recovered.created_at == 1_700_000_000
+    assert recovered.observed_at == 1_700_000_120
 
 
 async def test_restart_does_not_retry_event_with_failed_send_attempt(repository) -> None:

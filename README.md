@@ -6,13 +6,13 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.6**
+当前版本：**v1.2.7**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.6 重点：
+v1.2.7 重点：
 
 - 多图事件按实际图片数量自动增加视觉处理时间，默认 6 图事件由 120 秒扩展为 300 秒；
 - 设置保存后显示成功提示，并注明配置是否产生变化；
@@ -27,6 +27,8 @@ v1.2.6 重点：
 - 主动回复审核发送会回写原主动事件，事件记录展示最终发送状态和实际处理完成时间；
 - 主动额度只在合格帖子提交给 AI 生成回复时消耗，浏览和本地过滤不计数；
 - 管理页事件类型、状态和筛选项使用中文，所有时间统一显示为上海时区的正常日期时间；
+- LLM 上下文严格区分作者内容时间、插件发现时间和 AI 处理时间，并禁止将系统时间归因给作者；
+- 主动浏览明确标注没有新评论触发，楼层历史评论逐条携带发布时间；
 - 回复上下文同时提供原帖发布时间、触发回复时间和当前处理时间；
 - 修复主动推荐流错误传递 `source` 参数导致的 `pull 参数不正确 (0/1)`；
 - 推荐流可选择全部、PC 游戏、手机游戏、主机游戏、数码科技、动漫二次元等中文分区；

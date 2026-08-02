@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from tests.helpers import load_fixture
 from xiaoheihe.context_builder import ContextBuilder
-from xiaoheihe.models import NotificationType, ThreadContext
+from xiaoheihe.models import Notification, NotificationType, ThreadContext
 from xiaoheihe.parsers import parse_notifications
 from xiaoheihe.security import clean_untrusted_text
 
@@ -36,9 +36,13 @@ async def test_context_is_clean_bounded_and_cached() -> None:
     assert "第一条" in result.dynamic_context
     assert len(result.image_urls) == 2
     assert client.calls == 1
-    assert "帖子发布时间:" in result.dynamic_context
-    assert "触发回复时间:" in result.dynamic_context
-    assert "当前回复处理时间:" in result.dynamic_context
+    assert '<xiaoheihe_runtime_metadata trust="trusted">' in result.dynamic_context
+    assert "作者发帖时间:" in result.dynamic_context
+    assert "本轮触发内容发布时间:" in result.dynamic_context
+    assert "触发评论发布时间:" in result.dynamic_context
+    assert "插件发现并读取时间:" in result.dynamic_context
+    assert "AI 开始生成回复时间:" in result.dynamic_context
+    assert "不得把系统处理时间归因给作者" in result.dynamic_context
     assert result_again.thread.post_id == result.thread.post_id
 
 
@@ -106,6 +110,59 @@ async def test_comment_mention_includes_comment_and_original_post_media() -> Non
         "https://cdn.example.com/comment-1.png",
         "https://cdn.example.com/post-1.png",
     ]
+
+
+async def test_proactive_context_strictly_separates_author_and_system_times(
+    monkeypatch,
+) -> None:
+    post_created_at = 1_754_035_200  # 2025-08-01 16:00:00+08:00
+    observed_at = post_created_at + 11 * 3600 + 20 * 60
+    reply_started_at = observed_at + 60
+    monkeypatch.setattr("xiaoheihe.context_builder.time.time", lambda: reply_started_at)
+
+    notification = Notification(
+        profile_id="default",
+        external_event_id="feed:post-time",
+        external_comment_id="feed:post-time",
+        notification_id="feed:post-time",
+        event_type=NotificationType.PROACTIVE_FEED,
+        sender_uid="author",
+        sender_nickname="作者",
+        post_id="post-time",
+        root_comment_id="",
+        parent_comment_id="",
+        content="教程正文",
+        created_at=post_created_at,
+        observed_at=observed_at,
+    )
+
+    class TimedClient:
+        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+            return ThreadContext(
+                post_id=post_id,
+                title="教程",
+                body="正文",
+                author_uid="author",
+                author_name="作者",
+                comments=[
+                    {
+                        "content": "历史评论",
+                        "created_at": post_created_at + 3600,
+                        "user": {"uid": "commenter", "nickname": "评论者"},
+                    }
+                ],
+                post_created_at=post_created_at,
+            )
+
+    result = await ContextBuilder(host_resolver=public_resolver).build(notification, TimedClient())
+
+    assert "插件主动浏览推荐流（没有作者新评论触发）" in result.dynamic_context
+    assert "触发评论发布时间: 不适用（本轮没有作者评论触发）" in result.dynamic_context
+    assert "作者发帖时间: 2025-08-01T16:00:00+08:00" in result.dynamic_context
+    assert "插件发现并读取时间: 2025-08-02T03:20:00+08:00" in result.dynamic_context
+    assert "AI 开始生成回复时间: 2025-08-02T03:21:00+08:00" in result.dynamic_context
+    assert "帖子在插件读取时已发布: 11小时20分钟" in result.dynamic_context
+    assert "1. [2025-08-01T17:00:00+08:00] 评论者" in result.dynamic_context
 
 
 def test_html_emoji_duplicate_and_tracking_cleanup() -> None:

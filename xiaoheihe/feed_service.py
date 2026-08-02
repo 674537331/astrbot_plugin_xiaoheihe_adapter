@@ -82,6 +82,8 @@ class FeedService:
                 continue
             if not await self.repository.reserve_proactive_request(self.profile_id, daily_limit):
                 break
+            observed_at = time.time()
+            post_created_at = float(post.get("created_at") or 0)
             notification = Notification(
                 profile_id=self.profile_id,
                 external_event_id=f"feed:{post_id}",
@@ -97,7 +99,8 @@ class FeedService:
                     str(post.get("content", post.get("description", post.get("text", "")))),
                     max_chars=4000,
                 ),
-                created_at=time.time(),
+                created_at=post_created_at or observed_at,
+                observed_at=observed_at,
                 post_author_uid=author_uid,
                 explicit_wake=True,
                 image_urls=[

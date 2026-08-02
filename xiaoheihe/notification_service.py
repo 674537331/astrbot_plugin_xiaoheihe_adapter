@@ -532,6 +532,9 @@ def _notification_from_row(row: dict[str, Any], profile_id: str) -> Notification
         raw = {}
     if not isinstance(raw, dict):
         raw = {}
+    timing = raw.get("_adapter_timing", {})
+    timing = timing if isinstance(timing, dict) else {}
+    discovered_at = float(row["discovered_at"])
     return Notification(
         profile_id=profile_id,
         external_event_id=str(row["external_event_id"]),
@@ -544,12 +547,21 @@ def _notification_from_row(row: dict[str, Any], profile_id: str) -> Notification
         root_comment_id=str(row["root_comment_id"]),
         parent_comment_id=str(row["parent_comment_id"]),
         content=str(row.get("content") or ""),
-        created_at=float(row["discovered_at"]),
+        created_at=_safe_time(timing.get("source_created_at"), discovered_at),
+        observed_at=_safe_time(timing.get("observed_at"), discovered_at),
         post_author_uid=str(raw.get("post_author_uid", "")),
         explicit_wake=True,
         image_urls=[str(value) for value in raw.get("image_urls", []) if isinstance(value, str)],
         raw=raw,
     )
+
+
+def _safe_time(value: Any, fallback: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
 
 
 def _iso_now() -> str:

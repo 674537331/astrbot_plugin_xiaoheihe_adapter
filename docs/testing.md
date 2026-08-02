@@ -39,9 +39,9 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
-## 2026-08-02 v1.2.6 本地结果
+## 2026-08-02 v1.2.7 本地结果
 
-- Pytest：`169 passed`；
+- Pytest：`172 passed`；
 - Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
 - Ruff Check：通过；
 - Ruff Format Check：通过；
