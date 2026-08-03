@@ -744,7 +744,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.7",
+            "version": "v1.2.8",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),

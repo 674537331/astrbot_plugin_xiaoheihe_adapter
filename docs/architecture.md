@@ -13,7 +13,7 @@
   → Platform.commit_event()
   → AstrBot 原生会话 / 人格 / 记忆 / Agent / MCP / Skills / Tools
   → XiaoheiheMessageEvent.send()
-  → 模拟运行 / feed candidate / 单条真实评论
+  → 模拟运行 / feed candidate / 无审核直发 / 单条真实评论
 ```
 
 插件只负责平台输入输出。模型、人格、会话历史、长期记忆、Agent Runner 和工具执行全部由
@@ -29,7 +29,7 @@ AstrBot 原生管线负责。
 - `notification_service.py`：`message_id` 分页边界、有界优先队列、首次基线和到期重试恢复。
 - `context_builder.py`：帖子/楼层缓存、内容清洗、图片 URL 校验、临时上下文。
 - `permission_service.py`：自身、黑名单、主人、白名单、普通触发的固定优先级。
-- `feed_service.py`：高风险主动刷帖筛选、候选与人工审核。
+- `feed_service.py`：高风险主动刷帖筛选、候选、人工审核与无审核直发入口。
 - `database.py` / `repository.py`：迁移、事务、索引、幂等、保留和诊断。
 - `config_service.py`：同一个 `AstrBotConfig` 的校验、保存和热重载通知。
 
@@ -108,3 +108,4 @@ claimed → ignored
 - 主动候选批准先原子转换为 `sending`，账号级审核锁限制并发；更新或重启遗留的
   `sending` 转为 `send_unknown`；
 - 主动候选真实发送复用与普通回复相同的楼层锁、发送记录、自身评论记录和超时核对链路。
+- 无审核主动回复跳过候选表，但继续复用事件级发送记录、楼层锁、重复发送闸门和超时核对链路。

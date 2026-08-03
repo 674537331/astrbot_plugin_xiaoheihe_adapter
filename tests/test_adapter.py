@@ -13,6 +13,7 @@ from tests.astrbot_stubs import (
 from xiaoheihe.adapter import (
     XiaoheihePlatformAdapter,
     effective_reply_timeout_seconds,
+    proactive_delivery_settings,
 )
 from xiaoheihe.context_builder import BuiltContext
 from xiaoheihe.event import XiaoheiheMessageEvent
@@ -27,8 +28,16 @@ from xiaoheihe.runtime import bind_runtime, unbind_runtime
 
 
 class FakeConfigService:
-    def __init__(self, llm_provider_id: str = "") -> None:
+    def __init__(
+        self,
+        llm_provider_id: str = "",
+        *,
+        proactive_dry_run: bool = True,
+        proactive_review_required: bool = True,
+    ) -> None:
         self.llm_provider_id = llm_provider_id
+        self.proactive_dry_run = proactive_dry_run
+        self.proactive_review_required = proactive_review_required
 
     def profile(self, profile_id):
         return {"profile_id": profile_id, "dry_run": True}
@@ -41,6 +50,10 @@ class FakeConfigService:
                 "image_timeout_seconds": 15,
             },
             "reply": {"reply_timeout_seconds": 120},
+            "proactive_feed": {
+                "dry_run": self.proactive_dry_run,
+                "review_required": self.proactive_review_required,
+            },
         }
 
 
@@ -55,8 +68,18 @@ class FakeCredentials:
 
 
 class FakeRuntime:
-    def __init__(self, llm_provider_id: str = "") -> None:
-        self.config = FakeConfigService(llm_provider_id)
+    def __init__(
+        self,
+        llm_provider_id: str = "",
+        *,
+        proactive_dry_run: bool = True,
+        proactive_review_required: bool = True,
+    ) -> None:
+        self.config = FakeConfigService(
+            llm_provider_id,
+            proactive_dry_run=proactive_dry_run,
+            proactive_review_required=proactive_review_required,
+        )
         self.credentials = FakeCredentials()
         self.deliveries = []
 
@@ -98,6 +121,22 @@ def test_image_events_receive_bounded_vision_processing_grace() -> None:
             image_timeout_seconds=120,
         )
         == 900
+    )
+
+
+def test_proactive_delivery_settings_keep_dry_run_and_review_independent() -> None:
+    assert proactive_delivery_settings({}) == (True, True)
+    assert proactive_delivery_settings({"dry_run": True, "review_required": False}) == (
+        True,
+        False,
+    )
+    assert proactive_delivery_settings({"dry_run": False, "review_required": True}) == (
+        False,
+        True,
+    )
+    assert proactive_delivery_settings({"dry_run": False, "review_required": False}) == (
+        False,
+        False,
     )
 
 
@@ -169,10 +208,93 @@ async def test_dispatch_sets_fixed_llm_provider_before_commit(monkeypatch) -> No
             notification,
             context,
             PermissionDecision(True, "测试"),
+            dry_run_override=False,
+            proactive=True,
         )
         event = queue.get_nowait()
         assert event.get_extra("selected_provider") == "provider-fixed"
         assert event.message_obj.timestamp == 123
+        assert event.dry_run is False
+        assert event.proactive is True
+    finally:
+        unbind_runtime(runtime)
+
+
+async def test_synthetic_dispatch_routes_unreviewed_mode_to_real_delivery() -> None:
+    runtime = FakeRuntime(
+        proactive_dry_run=False,
+        proactive_review_required=False,
+    )
+
+    class Repository:
+        async def claim_event(self, notification):
+            return 7
+
+        async def mark_event(self, *args):
+            return None
+
+        async def record_session(self, route):
+            return None
+
+    async def get_client(profile_id):
+        return object()
+
+    runtime.repository = Repository()
+    runtime.get_client = get_client
+    bind_runtime(runtime)
+    queue = asyncio.Queue()
+    adapter = XiaoheihePlatformAdapter(
+        {"id": "xhh-1", "profile_id": "default"},
+        {},
+        queue,
+    )
+    context = BuiltContext(
+        user_text="主动内容",
+        dynamic_context="背景",
+        image_urls=[],
+        warnings=[],
+        thread=ThreadContext(
+            post_id="post-direct",
+            title="标题",
+            body="正文",
+            author_uid="author-1",
+            author_name="author",
+            comments=[],
+        ),
+    )
+
+    class ContextBuilder:
+        async def build(self, notification, client):
+            return context
+
+    adapter._context_builder = ContextBuilder()
+    captured = {}
+
+    async def capture_dispatch(*args, **kwargs):
+        captured.update(kwargs)
+
+    adapter._dispatch = capture_dispatch
+    notification = Notification(
+        profile_id="default",
+        external_event_id="feed:post-direct",
+        external_comment_id="feed:post-direct",
+        notification_id="feed:post-direct",
+        event_type=NotificationType.PROACTIVE_FEED,
+        sender_uid="author-1",
+        sender_nickname="author",
+        post_id="post-direct",
+        root_comment_id="",
+        parent_comment_id="",
+        content="主动内容",
+        created_at=123.0,
+        post_author_uid="author-1",
+    )
+    try:
+        await adapter._dispatch_synthetic(notification, {"post_title": "标题"})
+        assert captured["capture_candidate"] is False
+        assert captured["dry_run_override"] is False
+        assert captured["proactive"] is True
+        assert captured["candidate_metadata"]["post_author_uid"] == "author-1"
     finally:
         unbind_runtime(runtime)
 
