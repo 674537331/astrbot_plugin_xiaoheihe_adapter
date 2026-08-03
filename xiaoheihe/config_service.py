@@ -276,9 +276,6 @@ class ConfigService:
         source = proactive.get("source")
         if source not in PROACTIVE_FEED_SOURCES:
             raise ConfigValidationError("proactive_feed.source 必须是受支持的推荐流分区")
-        if proactive.get("enabled") and not proactive.get("review_required"):
-            if not proactive.get("dry_run"):
-                raise ConfigValidationError("主动刷帖真实发送必须启用 review_required")
 
         permissions = _object(config, "permissions")
         for key in (

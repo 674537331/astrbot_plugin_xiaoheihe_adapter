@@ -315,14 +315,16 @@
         "default": false
       },
       "dry_run": {
-        "description": "主动帖子模拟运行",
+        "description": "主动帖子模拟运行（仅生成，不发送）",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "关闭后进入真实发送流程；是否需要人工确认由 review_required 决定。"
       },
       "review_required": {
         "description": "真实发送前要求人工审核",
         "type": "bool",
-        "default": true
+        "default": true,
+        "hint": "高风险：与模拟运行同时关闭时，AI 生成的主动回复会直接发布到小黑盒。"
       },
       "interval_seconds": {
         "description": "运行间隔",

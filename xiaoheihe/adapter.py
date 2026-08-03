@@ -56,6 +56,14 @@ def effective_reply_timeout_seconds(
     )
 
 
+def proactive_delivery_settings(config: dict[str, Any]) -> tuple[bool, bool]:
+    """Return the dry-run and review gates for one proactive event."""
+    return (
+        bool(config.get("dry_run", True)),
+        bool(config.get("review_required", True)),
+    )
+
+
 DEFAULT_PLATFORM_CONFIG = {
     "id": "xiaoheihe",
     "enable": False,
@@ -202,14 +210,22 @@ class XiaoheihePlatformAdapter(Platform):
             self._dispatch,
         )
         await runtime.tasks.start_profile_poller(profile_id, self._service.run())
-        if config["proactive_feed"].get("enabled", False):
+        proactive_config = config["proactive_feed"]
+        if proactive_config.get("enabled", False):
+            dry_run, review_required = proactive_delivery_settings(proactive_config)
+            if not dry_run and not review_required:
+                runtime.logging.emit(
+                    "WARNING",
+                    "主动刷帖无审核真实发送已启用，AI 回复将直接发表评论",
+                    profile_id=profile_id,
+                )
             feed = runtime.feed_service(profile_id, client, self._dispatch_synthetic)
             self._feed_task = await runtime.tasks.start(
                 f"xhh-feed-{profile_id}",
                 self._feed_loop(
                     feed,
-                    int(config["proactive_feed"]["interval_seconds"]),
-                    int(config["proactive_feed"]["jitter_seconds"]),
+                    int(proactive_config["interval_seconds"]),
+                    int(proactive_config["jitter_seconds"]),
                 ),
                 replace=True,
             )
@@ -257,6 +273,8 @@ class XiaoheihePlatformAdapter(Platform):
         *,
         capture_candidate: bool = False,
         candidate_metadata: dict[str, Any] | None = None,
+        dry_run_override: bool | None = None,
+        proactive: bool = False,
     ) -> None:
         runtime = get_runtime()
         runtime_config = runtime.config.snapshot()
@@ -299,6 +317,11 @@ class XiaoheihePlatformAdapter(Platform):
             "reply_timeout_effective_seconds": effective_reply_timeout,
         }
         profile = runtime.config.profile(notification.profile_id)
+        dry_run = (
+            bool(profile.get("dry_run", True))
+            if dry_run_override is None
+            else bool(dry_run_override)
+        )
         event = XiaoheiheMessageEvent(
             message_str=message.message_str,
             message_obj=message,
@@ -307,7 +330,8 @@ class XiaoheihePlatformAdapter(Platform):
             runtime=runtime,
             route=notification.route,
             event_id=event_id,
-            dry_run=bool(profile.get("dry_run", True)),
+            dry_run=dry_run,
+            proactive=proactive,
             capture_candidate=capture_candidate,
             candidate_metadata=candidate_metadata,
             reply_timeout_seconds=effective_reply_timeout,
@@ -344,16 +368,20 @@ class XiaoheihePlatformAdapter(Platform):
         await runtime.repository.mark_event(event_id, EventState.CONTEXT_READY)
         await runtime.repository.record_session(notification.route)
         await runtime.repository.mark_event(event_id, EventState.DISPATCHED)
+        feed_config = runtime.config.snapshot()["proactive_feed"]
+        dry_run, review_required = proactive_delivery_settings(feed_config)
         await self._dispatch(
             event_id,
             notification,
             context,
             PermissionDecision(True, "主动帖子合成事件"),
-            capture_candidate=True,
+            capture_candidate=review_required,
             candidate_metadata={
                 **metadata,
                 "post_author_uid": notification.post_author_uid,
             },
+            dry_run_override=dry_run,
+            proactive=True,
         )
 
     async def send_by_session(self, session: MessageSession, message_chain: MessageChain) -> None:

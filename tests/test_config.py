@@ -42,14 +42,15 @@ async def test_config_save_uses_same_object_and_callback(fake_config) -> None:
 
 
 @pytest.mark.asyncio
-async def test_config_rejects_unsafe_proactive_send(fake_config) -> None:
+async def test_config_allows_explicit_unreviewed_proactive_send(fake_config) -> None:
     service = ConfigService(fake_config)
     candidate = copy.deepcopy(DEFAULT_CONFIG)
     candidate["proactive_feed"].update(
         {"enabled": True, "dry_run": False, "review_required": False}
     )
-    with pytest.raises(ConfigValidationError, match="review_required"):
-        await service.save(candidate)
+    changed = await service.save(candidate)
+    assert changed == {"proactive_feed"}
+    assert service.snapshot()["proactive_feed"] == candidate["proactive_feed"]
 
 
 def test_config_rejects_duplicate_profile(fake_config) -> None:

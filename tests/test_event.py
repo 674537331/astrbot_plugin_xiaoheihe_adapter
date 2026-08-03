@@ -45,7 +45,7 @@ class FakeRuntime:
         self.segmented_profiles.append(profile_id)
 
 
-def make_event(runtime, *, candidate=False):
+def make_event(runtime, *, candidate=False, dry_run=True, proactive=False):
     message = AstrBotMessage()
     message.sender = type("Sender", (), {"user_id": "1", "nickname": "u"})()
     return XiaoheiheMessageEvent(
@@ -56,7 +56,8 @@ def make_event(runtime, *, candidate=False):
         runtime=runtime,
         route=RoutingTarget("default", "1", "2", "2"),
         event_id=1,
-        dry_run=True,
+        dry_run=dry_run,
+        proactive=proactive,
         capture_candidate=candidate,
     )
 
@@ -123,6 +124,15 @@ async def test_proactive_event_captures_candidate() -> None:
     await event.send(MessageChain([Plain("candidate")]))
     assert runtime.candidates[0]["content"] == "candidate"
     assert not runtime.deliveries
+
+
+async def test_unreviewed_proactive_event_uses_real_proactive_delivery() -> None:
+    runtime = FakeRuntime()
+    event = make_event(runtime, dry_run=False, proactive=True)
+    await event.send(MessageChain([Plain("direct")]))
+    assert not runtime.candidates
+    assert runtime.deliveries[0]["dry_run"] is False
+    assert runtime.deliveries[0]["proactive"] is True
 
 
 async def test_reply_after_deadline_is_suppressed() -> None:

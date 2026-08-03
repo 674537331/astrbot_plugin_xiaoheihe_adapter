@@ -37,6 +37,7 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
         route: RoutingTarget,
         event_id: int | None,
         dry_run: bool,
+        proactive: bool = False,
         capture_candidate: bool = False,
         candidate_metadata: dict[str, Any] | None = None,
         reply_timeout_seconds: int = 120,
@@ -46,6 +47,7 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
         self.route = route
         self.event_id = event_id
         self.dry_run = dry_run
+        self.proactive = proactive
         self.capture_candidate = capture_candidate
         self.candidate_metadata = candidate_metadata or {}
         self.reply_timeout_seconds = max(5, int(reply_timeout_seconds))
@@ -106,6 +108,7 @@ class XiaoheiheMessageEvent(AstrMessageEvent):
                         content=text,
                         dry_run=self.dry_run,
                         generated_ms=generated_ms,
+                        proactive=self.proactive,
                     )
                 await super().send(final_message)
             except asyncio.CancelledError as exc:

@@ -39,6 +39,23 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
+## 2026-08-03 v1.2.8 本地结果
+
+- Pytest：`175 passed`；
+- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
+- Ruff Check：通过；
+- Ruff Format Check：通过；
+- Python compileall：通过；
+- `node --check pages/xiaoheihe/app.js`：通过；
+- 仓库 JSON/YAML/静态文件/敏感运行文件检查：通过；
+- 主动刷帖允许 `dry_run=false / review_required=false`，配置保存和插件构造不再抛出安全组合异常；
+- 主动模式组合、合成事件分流和事件最终发送参数均有回归测试，无审核模式明确调用
+  `deliver(..., dry_run=False, proactive=True)`；
+- 默认主动刷帖关闭、模拟运行开启、人工审核开启，现有候选批准并发闸门保持不变；
+- AstrBot 4.24.2：12 个核心契约文件检查通过；
+- AstrBot 4.26.2：13 个完整契约文件检查通过；
+- 当前稳定版 AstrBot 4.27.1：13 个完整契约文件检查通过。
+
 ## 2026-08-02 v1.2.7 本地结果
 
 - Pytest：`172 passed`；
