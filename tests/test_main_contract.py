@@ -95,6 +95,50 @@ async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_im
     await plugin.terminate()
 
 
+async def test_plugin_tracks_agent_lifecycle_for_xiaoheihe(isolated_smoke_import) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+    class Event:
+        started = False
+        done_text = ""
+
+        def get_platform_name(self):
+            return "xiaoheihe"
+
+        def mark_agent_started(self):
+            self.started = True
+
+        def mark_agent_done(self, final_text):
+            self.done_text = final_text
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = Event()
+
+    await plugin.mark_xiaoheihe_agent_started(event, object())
+    await plugin.mark_xiaoheihe_agent_done(
+        event,
+        object(),
+        LLMResponse(completion_text="最终回复"),
+    )
+
+    assert event.started is True
+    assert event.done_text == "最终回复"
+    await plugin.terminate()
+
+
 async def test_plugin_uses_fixed_image_provider_and_keeps_caption_temporary(
     isolated_smoke_import,
 ) -> None:

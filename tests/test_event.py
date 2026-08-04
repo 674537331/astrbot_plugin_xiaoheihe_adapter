@@ -74,6 +74,80 @@ async def test_once_only_send_and_parent_state() -> None:
     assert runtime.logging.entries[0][0][0] == "DEBUG"
 
 
+async def test_agent_without_tools_delivers_the_final_reply() -> None:
+    runtime = FakeRuntime()
+    event = make_event(runtime)
+    event.mark_agent_started()
+    event.mark_agent_done("普通模型最终回复")
+
+    await event.send(MessageChain([Plain("普通模型最终回复")]))
+
+    assert [item["content"] for item in runtime.deliveries] == ["普通模型最终回复"]
+    assert event.parent_send_count == 1
+
+
+async def test_tool_status_and_agent_intermediate_text_wait_for_final_reply() -> None:
+    runtime = FakeRuntime()
+    event = make_event(runtime)
+    event.mark_agent_started()
+
+    await event.send(MessageChain([Plain("🔨 调用工具: grok_web_search")], type="tool_call"))
+    await event.send(MessageChain([Plain("我先查询一下")]))
+
+    assert not runtime.deliveries
+    assert not event._completion.is_set()
+
+    event.mark_agent_done("这是最终搜索结果")
+    await event.send(MessageChain([Plain("这是最终搜索结果")]))
+
+    assert [item["content"] for item in runtime.deliveries] == ["这是最终搜索结果"]
+    assert event.parent_send_count == 1
+
+
+async def test_agent_done_hook_output_cannot_preempt_the_final_response() -> None:
+    runtime = FakeRuntime()
+    event = make_event(runtime)
+    event.mark_agent_started()
+    event.mark_agent_done("最终回答")
+
+    await event.send(MessageChain([Plain("完成后的附加提示")]))
+    assert not runtime.deliveries
+
+    await event.send(MessageChain([Plain("最终回答")]))
+
+    assert runtime.deliveries[0]["content"] == "最终回答\n\n完成后的附加提示"
+    assert len(runtime.deliveries) == 1
+
+
+async def test_direct_plugin_result_waits_when_the_event_will_call_llm() -> None:
+    runtime = FakeRuntime()
+    event = make_event(runtime)
+    event.should_call_llm(True)
+
+    await event.send(MessageChain([Plain("Grok 原始搜索结果")]))
+    assert not runtime.deliveries
+
+    event.mark_agent_started()
+    event.mark_agent_done("模型整理后的结论")
+    await event.send(MessageChain([Plain("模型整理后的结论")]))
+
+    assert runtime.deliveries[0]["content"] == ("模型整理后的结论\n\nGrok 原始搜索结果")
+    assert len(runtime.deliveries) == 1
+
+
+async def test_direct_plugin_result_is_deduplicated_against_final_reply() -> None:
+    runtime = FakeRuntime()
+    event = make_event(runtime)
+    event.should_call_llm(True)
+
+    await event.send(MessageChain([Plain("搜索结果正文")]))
+    event.mark_agent_done("根据检索，搜索结果正文")
+    await event.send(MessageChain([Plain("根据检索，搜索结果正文")]))
+
+    assert runtime.deliveries[0]["content"] == "根据检索，搜索结果正文"
+    assert len(runtime.deliveries) == 1
+
+
 async def test_streaming_is_aggregated_to_one_comment() -> None:
     runtime = FakeRuntime()
     event = make_event(runtime)

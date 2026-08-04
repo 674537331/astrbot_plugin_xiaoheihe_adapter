@@ -28,7 +28,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.8",
+    "1.2.9",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -242,6 +242,32 @@ class XiaoheiheAdapterPlugin(Star):
         text = str(response.completion_text or "").strip()
         if text:
             event.set_extra("xiaoheihe_complete_reply_text", text)
+
+    @filter.on_agent_begin(priority=1000)
+    async def mark_xiaoheihe_agent_started(
+        self,
+        event: AstrMessageEvent,
+        run_context: object,
+    ) -> None:
+        if event.get_platform_name() != "xiaoheihe":
+            return
+        mark_started = getattr(event, "mark_agent_started", None)
+        if callable(mark_started):
+            mark_started()
+
+    @filter.on_agent_done(priority=-1000)
+    async def mark_xiaoheihe_agent_done(
+        self,
+        event: AstrMessageEvent,
+        run_context: object,
+        response: LLMResponse,
+    ) -> None:
+        if event.get_platform_name() != "xiaoheihe":
+            return
+        final_text = str(getattr(response, "completion_text", "") or "").strip()
+        mark_done = getattr(event, "mark_agent_done", None)
+        if callable(mark_done):
+            mark_done(final_text)
 
     async def terminate(self) -> None:
         await self.runtime.close()
