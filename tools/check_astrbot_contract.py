@@ -14,7 +14,12 @@ CONTRACT: dict[str, tuple[str, ...]] = {
         "register_platform_adapter",
     ),
     "api/event/__init__.py": ("AstrMessageEvent", "MessageChain"),
-    "api/event/filter/__init__.py": ("on_llm_request", "on_llm_response"),
+    "api/event/filter/__init__.py": (
+        "on_agent_begin",
+        "on_agent_done",
+        "on_llm_request",
+        "on_llm_response",
+    ),
     "api/message_components.py": ("astrbot.core.message.components",),
     "core/message/components.py": ("class Plain", "class Image"),
     "api/provider/__init__.py": ("LLMResponse", "ProviderRequest"),

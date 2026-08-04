@@ -39,6 +39,18 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
+## 2026-08-04 v1.2.9 本地结果
+
+- Pytest：`181 passed`；
+- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
+- Ruff Check 与 Ruff Format Check：通过；
+- Python compileall、前端 `node --check` 和仓库静态校验：通过；
+- 无工具调用的普通 Agent 回复、Grok 式工具状态/中间文本/最终回复、插件直发后继续 LLM、直接结果去重均有回归测试；
+- AstrBot 自带任意段数回复、流式回复、一次事件一次真实发送、主动候选和无审核直发回归保持通过；
+- AstrBot 4.24.2：12 个核心契约文件检查通过；
+- AstrBot 4.26.2：13 个完整契约文件检查通过；
+- 当前稳定版 AstrBot 4.27.1：13 个完整契约文件检查通过。
+
 ## 2026-08-03 v1.2.8 本地结果
 
 - Pytest：`175 passed`；

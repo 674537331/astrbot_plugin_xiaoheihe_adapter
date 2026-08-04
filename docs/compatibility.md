@@ -1,20 +1,20 @@
-# AstrBot 兼容性说明（v1.2.8）
+# AstrBot 兼容性说明（v1.2.9）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.2.8 保持覆盖更新后的平台实例协调、评论与原帖上下文合并，并允许主动
-事件按配置进入模拟、人工审核或无审核真实发送。2026-08-03 发布 v1.2.8 前再次核对：
+AstrBot 4.26.8。v1.2.9 在既有平台实例协调、上下文合并和主动发送分流上，新增 Agent 生命周期
+回复聚合。2026-08-04 发布 v1.2.9 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
-- PyPI 已发布的最低版本 4.24.2、重点版本 4.26.2，以及 2026-08-03 的当前稳定版
+- PyPI 已发布的最低版本 4.24.2、重点版本 4.26.2，以及 2026-08-04 的当前稳定版
   4.27.1 wheel；
 - AstrBot 当前官方插件开发、平台适配器和 Plugin Pages 文档；
 - `Platform`、`PlatformMetadata`、`register_platform_adapter`、`AstrBotMessage`、
   `AstrMessageEvent`、`MessageSession`、`commit_event()`、`send_by_session()`；
 - `AstrBotConfig.save_config()`、`StarTools.get_data_dir()`、插件 `terminate()`；
-- `Image` 消息组件、`on_llm_request`、`extra_user_content_parts` 与
+- `Image` 消息组件、`on_agent_begin`、`on_agent_done`、`on_llm_request`、`extra_user_content_parts` 与
   `TextPart.mark_as_temp()`；
 - Plugin Page 的 `window.AstrBotPluginPage`、`context.register_web_api()` 和
   `astrbot.api.web`。
@@ -31,7 +31,8 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 元数据 | `PlatformMetadata` | 声明内部名、实例 ID、展示名、默认配置和非流式能力 |
 | 入站消息 | `AstrBotMessage` + `MessageMember` + `Plain/Image` | 设置稳定消息 ID、会话、群组、发送者、自身 UID 和结构化 `raw_message` |
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
-| 分段回复 | `on_llm_response()` + `AstrMessageEvent.get_result()` + 非流式平台 `send()` | 分段清理前保存完整文本，任意数量的分段只提交一条小黑盒评论 |
+| Agent 回复聚合 | `on_agent_begin()` + `on_agent_done()` + `on_llm_response()` + `AstrMessageEvent.get_result()` | 无工具的普通回复直接完成；有工具时忽略 `tool_call` 控制消息、暂存中间文本，最终只提交一条小黑盒评论 |
+| 分段/流式回复 | 非流式平台 `send()` + `send_streaming()` | 分段清理前恢复完整文本，任意数量的分段或流式片段只提交一条小黑盒评论 |
 | 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；模型调用由 AstrBot 核心负责 |
 | 固定 LLM Provider | 事件入队前设置 `selected_provider` extra | 兼容 4.24.2 与 4.26.2 的主 Agent Provider 选择时序；留空时继续使用会话或全局 Provider |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
@@ -52,12 +53,13 @@ AstrBot 4.24.2、4.26.2 和 4.26.8 均在插件加载完成后调用可选的 `S
 管理器，并调用当前源码提供的 `PlatformManager.reload(config)` 重建所有已启用的
 `xiaoheihe` 实例；冷启动时实例列表为空，平台仍由 AstrBot 的正常初始化流程创建。
 
-AstrBot 4.26.2/4.26.8 的 `RespondStage` 在全局“分段回复”开启时，会按组件多次调用平台
-事件的 `send()`，即使平台元数据声明 `support_streaming_message=False`。v1.1.2 在首次
-`on_llm_response(priority=-1000)` 保存最终模型文本，再在首次 `send()` 时优先恢复该文本；
-若插件链未提供最终文本，则回退到同一事件的完整 `MessageEventResult.chain`。三段、五段
-或更多分段均只产生一条评论，分段词清理前的标点和换行也得到保留。管理页会显示兼容提醒，
-关闭 AstrBot 分段回复可减少等待，插件配置和数据目录保持原样。
+AstrBot 4.24.2–4.27.1 的本地 Agent 在工具执行前可通过独立 `event.send()` 输出工具状态，
+`RespondStage` 在全局“分段回复”开启时也会按组件多次调用平台事件的 `send()`，即使平台元数据
+声明 `support_streaming_message=False`。v1.2.9 使用 `on_agent_begin/on_agent_done` 区分 Agent
+中间输出和最终输出：`tool_call`、推理与分段控制消息不会完成小黑盒事件；无工具调用时同样由
+Agent 完成信号放行普通最终回复。最终发送仍优先恢复 `on_llm_response(priority=-1000)` 保存的
+完整模型文本，缺失时回退同一事件的完整 `MessageEventResult.chain`。插件直接业务结果若发生在
+继续调用 LLM 之前，会暂存、去重并放在最终模型回复之后，确保小黑盒字符截断时优先保留最终答案。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -102,7 +104,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.8 的最新迁移版本仍为 v6；除旧版
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.9 的最新迁移版本仍为 v6；除旧版
 按浏览量统计的 `proactive_count` 会清零并切换为主动 AI 请求口径外，其余已有记录原位保留。
 卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据边界；更新前备份
 插件数据目录可用于回滚。

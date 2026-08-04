@@ -12,7 +12,7 @@
   → AstrBotMessage + XiaoheiheMessageEvent
   → Platform.commit_event()
   → AstrBot 原生会话 / 人格 / 记忆 / Agent / MCP / Skills / Tools
-  → XiaoheiheMessageEvent.send()
+  → Agent 生命周期跟踪 + XiaoheiheMessageEvent 回复聚合
   → 模拟运行 / feed candidate / 无审核直发 / 单条真实评论
 ```
 
@@ -22,7 +22,7 @@ AstrBot 原生管线负责。
 ## 模块职责
 
 - `adapter.py`：平台注册、生命周期、原生消息转换、事件提交、主动会话发送。
-- `event.py`：结构化路由、一次发送保护、任意数量的流式与 AstrBot 分段文本聚合。
+- `event.py`：结构化路由、Agent 中间/控制消息分类、一次发送保护、插件直接结果去重，以及任意数量的流式与 AstrBot 分段文本聚合。
 - `api_client.py`：单账号长生命周期异步客户端和结构化错误。
 - `endpoints.py` / `parsers.py` / `request_signing.py`：隔离不稳定的外部契约。
 - `auth.py`：二维码状态机与原子凭证存储。

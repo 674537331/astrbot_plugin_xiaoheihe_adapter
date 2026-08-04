@@ -19,8 +19,9 @@ class Image:
 
 
 class MessageChain:
-    def __init__(self, chain=None) -> None:
+    def __init__(self, chain=None, *, type: str = "") -> None:
         self.chain = list(chain or [])
+        self.type = type
 
 
 class MessageType(StrEnum):
@@ -75,6 +76,7 @@ class AstrMessageEvent:
         self.is_at_or_wake_command = False
         self.role = "member"
         self._extras: dict[str, Any] = {}
+        self.call_llm = False
         self.parent_send_count = 0
         self.parent_stream_count = 0
 
@@ -92,6 +94,9 @@ class AstrMessageEvent:
 
     def get_platform_name(self) -> str:
         return self.platform_meta.name
+
+    def should_call_llm(self, call_llm: bool) -> None:
+        self.call_llm = call_llm
 
 
 class Platform:
@@ -184,6 +189,8 @@ def install() -> None:
         return lambda function: function
 
     event.filter = types.SimpleNamespace(
+        on_agent_begin=passthrough_filter,
+        on_agent_done=passthrough_filter,
         on_llm_request=passthrough_filter,
         on_llm_response=passthrough_filter,
     )
