@@ -35,6 +35,7 @@ CONTRACT: dict[str, tuple[str, ...]] = {
     "core/platform/astr_message_event.py": (
         "MessageSession",
         "AstrMessageEvent",
+        "def get_sender_id(",
         "def get_messages(",
         "def get_result(",
     ),

@@ -103,6 +103,7 @@ class ContextBuilder:
                 f"本轮触发内容发布时间: {_format_shanghai_time(notification.created_at)}",
                 f"插件发现并读取时间: {_format_shanghai_time(observed_at)}",
                 f"AI 开始生成回复时间: {_format_shanghai_time(reply_started_at)}",
+                f"当前触发发言人 UID: {notification.sender_uid}",
                 f"帖子在插件读取时已发布: {_format_elapsed(post_created_at, observed_at)}",
                 (
                     "触发内容在插件读取时已发布: "
@@ -117,6 +118,10 @@ class ContextBuilder:
                 (
                     "3. 不得把系统处理时间归因给作者；涉及早晚、时效和过期程度时"
                     "必须依据作者内容发布时间。"
+                ),
+                (
+                    "4. 同一楼层会话可能有多个不同 UID 的发言人；每条消息中的第一人称"
+                    "只属于该条消息标注的发言人，不得因共享会话历史把不同 UID 当成同一人。"
                 ),
                 "</xiaoheihe_runtime_metadata>",
             ]

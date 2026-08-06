@@ -44,6 +44,7 @@ GROK_QUERY_REQUIREMENT = (
     "请直接围绕原始查询检索并返回能回答问题的实时事实；若检索不到可靠结果，请明确说明。"
     "不要只描述随事件附带的图片，也不要返回‘稍后再查’之类的占位回答。"
 )
+SENDER_IDENTITY_TAG = "xiaoheihe_sender_identity"
 
 try:
     from .xiaoheihe.web_api import WebApiController
@@ -57,7 +58,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.10",
+    "1.2.11",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -163,6 +164,24 @@ class XiaoheiheAdapterPlugin(Star):
     ) -> None:
         if event.get_platform_name() != "xiaoheihe":
             return
+        sender_uid = str(event.get_sender_id() or "").strip()
+        if sender_uid:
+            # Keep the floor as one shared AstrBot conversation while persisting
+            # the real author of every user turn.  Unlike the large dynamic
+            # thread context below this part is intentionally NOT temporary, so
+            # later turns cannot collapse different users into one anonymous
+            # ``role=user`` history stream.
+            request.extra_user_content_parts.append(
+                TextPart(
+                    text=(
+                        f'<{SENDER_IDENTITY_TAG} uid="{sender_uid}">\n'
+                        "This UID is the author of this user turn in a shared "
+                        "Xiaoheihe thread. First-person references in this turn "
+                        "belong only to this UID.\n"
+                        f"</{SENDER_IDENTITY_TAG}>"
+                    )
+                )
+            )
         dynamic_context = event.get_extra("xiaoheihe_dynamic_context", "")
         if dynamic_context:
             request.extra_user_content_parts.append(

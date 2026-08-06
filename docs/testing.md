@@ -24,6 +24,7 @@ python -m compileall -q .
 - 当前评论/原帖/楼层上下文、HTML 清洗、临时上下文、双方图片 URL、固定图片 Provider 与视觉降级提示；
 - SSRF 基础防护、路径穿越、日志/响应脱敏、回复清理与长度；
 - 确定性 session/message ID、唤醒标记、父类发送状态；
+- 同楼层不同发送者共享 session 但保留各自 `MessageMember.user_id`，每轮 UID 身份块持久化而楼层背景保持临时；
 - 模拟运行、流式聚合、一次事件一次真实发送；
 - 成功发送、发送状态未知、近期评论确认、不盲重试；
 - 明确 `status=failed` 终态、已有发送记录闸门和重启后 `dispatched` 隔离；
@@ -38,6 +39,16 @@ python -m compileall -q .
 Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web API 由专门的契约测试覆盖，
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
+
+## 2026-08-06 v1.2.11 本地结果
+
+- Pytest：186 passed；
+- Coverage：81%；
+- AstrBot 包级契约：4.24.2、4.26.2、4.27.2 全部通过；
+- 同一 `xhh_thread_*` 中 A/B 事件保持同一 session，但 `MessageMember.user_id` 分别保留真实 UID；
+- `on_llm_request` 为每轮小黑盒用户输入追加非临时 UID 身份块，楼层动态上下文继续标记为 temp；
+- 当前可信运行时元数据明确提供触发 UID，并约束不同 UID 的第一人称不得串人；
+- 非小黑盒平台不注入 UID 身份块，v1.2.10 Grok 图片隔离和 Agent 最终回复聚合继续回归。
 
 ## 2026-08-06 v1.2.10 本地结果
 

@@ -220,6 +220,74 @@ async def test_dispatch_sets_fixed_llm_provider_before_commit(monkeypatch) -> No
         unbind_runtime(runtime)
 
 
+async def test_dispatch_keeps_shared_floor_session_but_distinct_senders(monkeypatch) -> None:
+    async def finish_immediately(self):
+        return None
+
+    monkeypatch.setattr(XiaoheiheMessageEvent, "wait_finished", finish_immediately)
+    runtime = FakeRuntime()
+    bind_runtime(runtime)
+    queue = asyncio.Queue()
+    adapter = XiaoheihePlatformAdapter(
+        {"id": "xhh-1", "profile_id": "default"},
+        {},
+        queue,
+    )
+    context = BuiltContext(
+        user_text="测试",
+        dynamic_context="背景",
+        image_urls=[],
+        warnings=[],
+        thread=ThreadContext(
+            post_id="post-1",
+            title="标题",
+            body="正文",
+            author_uid="author-1",
+            author_name="author",
+            comments=[],
+        ),
+    )
+
+    def notification(uid: str, nickname: str, suffix: str) -> Notification:
+        return Notification(
+            profile_id="default",
+            external_event_id=f"event-{suffix}",
+            external_comment_id=f"comment-{suffix}",
+            notification_id=f"notification-{suffix}",
+            event_type=NotificationType.REPLY,
+            sender_uid=uid,
+            sender_nickname=nickname,
+            post_id="post-1",
+            root_comment_id="root-1",
+            parent_comment_id=f"comment-{suffix}",
+            content="测试",
+            created_at=123.0,
+        )
+
+    try:
+        await adapter._dispatch(
+            1,
+            notification("111", "A", "a"),
+            context,
+            PermissionDecision(True, "测试"),
+        )
+        await adapter._dispatch(
+            2,
+            notification("222", "B", "b"),
+            context,
+            PermissionDecision(True, "测试"),
+        )
+        event_a = queue.get_nowait()
+        event_b = queue.get_nowait()
+        assert event_a.session_id == event_b.session_id == "xhh_thread_post-1_root-1"
+        assert event_a.message_obj.sender.user_id == "111"
+        assert event_b.message_obj.sender.user_id == "222"
+        assert event_a.message_obj.sender.nickname == "A"
+        assert event_b.message_obj.sender.nickname == "B"
+    finally:
+        unbind_runtime(runtime)
+
+
 async def test_synthetic_dispatch_routes_unreviewed_mode_to_real_delivery() -> None:
     runtime = FakeRuntime(
         proactive_dry_run=False,
