@@ -1,21 +1,21 @@
-# AstrBot 兼容性说明（v1.2.9）
+# AstrBot 兼容性说明（v1.2.10）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.2.9 在既有平台实例协调、上下文合并和主动发送分流上，新增 Agent 生命周期
-回复聚合。2026-08-04 发布 v1.2.9 前再次核对：
+AstrBot 4.26.8。v1.2.10 在 v1.2.9 Agent 生命周期回复聚合基础上，新增 LLM 工具调用前后钩子，
+用于隔离带图事件中会干扰普通 Grok 网页查询的原始图片。2026-08-06 发布 v1.2.10 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
-- PyPI 已发布的最低版本 4.24.2、重点版本 4.26.2，以及 2026-08-04 的当前稳定版
-  4.27.1 wheel；
+- PyPI 已发布的最低版本 4.24.2、重点版本 4.26.2，以及 2026-08-06 的当前稳定版
+  4.27.2 wheel；
 - AstrBot 当前官方插件开发、平台适配器和 Plugin Pages 文档；
 - `Platform`、`PlatformMetadata`、`register_platform_adapter`、`AstrBotMessage`、
   `AstrMessageEvent`、`MessageSession`、`commit_event()`、`send_by_session()`；
 - `AstrBotConfig.save_config()`、`StarTools.get_data_dir()`、插件 `terminate()`；
-- `Image` 消息组件、`on_agent_begin`、`on_agent_done`、`on_llm_request`、`extra_user_content_parts` 与
-  `TextPart.mark_as_temp()`；
+- `Image` 消息组件、`on_agent_begin`、`on_agent_done`、`on_using_llm_tool`、
+  `on_llm_tool_respond`、`on_llm_request`、`extra_user_content_parts` 与 `TextPart.mark_as_temp()`；
 - Plugin Page 的 `window.AstrBotPluginPage`、`context.register_web_api()` 和
   `astrbot.api.web`。
 
@@ -32,6 +32,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 入站消息 | `AstrBotMessage` + `MessageMember` + `Plain/Image` | 设置稳定消息 ID、会话、群组、发送者、自身 UID 和结构化 `raw_message` |
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
 | Agent 回复聚合 | `on_agent_begin()` + `on_agent_done()` + `on_llm_response()` + `AstrMessageEvent.get_result()` | 无工具的普通回复直接完成；有工具时忽略 `tool_call` 控制消息、暂存中间文本，最终只提交一条小黑盒评论 |
+| Grok 带图查询兼容 | `on_using_llm_tool()` + `on_llm_tool_respond()` + `AstrMessageEvent.get_messages()` | 仅 `xiaoheihe + grok_web_search` 普通网页查询临时隔离顶层 `Image` 并恢复；明确搜图和其他工具保持原行为 |
 | 分段/流式回复 | 非流式平台 `send()` + `send_streaming()` | 分段清理前恢复完整文本，任意数量的分段或流式片段只提交一条小黑盒评论 |
 | 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；模型调用由 AstrBot 核心负责 |
 | 固定 LLM Provider | 事件入队前设置 `selected_provider` extra | 兼容 4.24.2 与 4.26.2 的主 Agent Provider 选择时序；留空时继续使用会话或全局 Provider |
@@ -53,13 +54,19 @@ AstrBot 4.24.2、4.26.2 和 4.26.8 均在插件加载完成后调用可选的 `S
 管理器，并调用当前源码提供的 `PlatformManager.reload(config)` 重建所有已启用的
 `xiaoheihe` 实例；冷启动时实例列表为空，平台仍由 AstrBot 的正常初始化流程创建。
 
-AstrBot 4.24.2–4.27.1 的本地 Agent 在工具执行前可通过独立 `event.send()` 输出工具状态，
+AstrBot 4.24.2–4.27.2 的本地 Agent 在工具执行前可通过独立 `event.send()` 输出工具状态，
 `RespondStage` 在全局“分段回复”开启时也会按组件多次调用平台事件的 `send()`，即使平台元数据
 声明 `support_streaming_message=False`。v1.2.9 使用 `on_agent_begin/on_agent_done` 区分 Agent
 中间输出和最终输出：`tool_call`、推理与分段控制消息不会完成小黑盒事件；无工具调用时同样由
 Agent 完成信号放行普通最终回复。最终发送仍优先恢复 `on_llm_response(priority=-1000)` 保存的
 完整模型文本，缺失时回退同一事件的完整 `MessageEventResult.chain`。插件直接业务结果若发生在
 继续调用 LLM 之前，会暂存、去重并放在最终模型回复之后，确保小黑盒字符截断时优先保留最终答案。
+
+`grok_web_search` 会从 `AstrMessageEvent.get_messages()` 再次自动提取顶层图片，即使主 Agent 已经
+通过固定图片 Provider 得到了图片文字描述。v1.2.10 在普通网页查询调用前暂时移出这些顶层
+`Image`，调用完成后按原位置恢复；明确包含搜图/识图意图的查询不做隔离，显式 `image_urls`
+仍由 Grok 工具自身处理。查询约束也只在工具名实际匹配 `grok_web_search` 时追加。该兼容逻辑
+不修改 Grok 插件配置；没有安装或没有调用 Grok、使用其他工具及 QQ 等其他平台均保持原行为。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -89,7 +96,7 @@ Plugin Pages 使用当前官方文档描述的新桥接 API。平台适配器行
 
 最低版本 4.24.2 的本机端到端验证状态为“待验证”；仓库通过 CI 的 `astrbot-compat`
 矩阵持续检查 4.24.2 和 4.26.2，并由
-`astrbot-latest-stable` 任务动态安装 `<5` 的最新稳定包。当前 4.27.1 wheel 的 13 项
+`astrbot-latest-stable` 任务动态安装 `<5` 的最新稳定包。当前 4.27.2 wheel 的 13 项
 文件/符号契约也已在本机离线检查通过。发布前仍需在 4.24.2、4.26.2 和当前稳定版各完成
 一次插件加载、适配器创建和模拟运行人工验收。
 
@@ -104,7 +111,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.9 的最新迁移版本仍为 v6；除旧版
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.10 的最新迁移版本仍为 v6；除旧版
 按浏览量统计的 `proactive_count` 会清零并切换为主动 AI 请求口径外，其余已有记录原位保留。
 卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据边界；更新前备份
 插件数据目录可用于回滚。

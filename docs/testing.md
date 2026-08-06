@@ -39,6 +39,17 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
+## 2026-08-06 v1.2.10 本地结果
+
+- Pytest：`184 passed`；
+- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
+- Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、仓库静态校验与 `git diff --check`：通过；
+- 带图普通 Grok 网页查询会临时隔离原图并在工具结果后恢复，明确图片搜索与其他工具保持原图；
+- 工具结果回调缺失时由 `on_agent_done` 兜底恢复图片，避免异常路径污染事件消息链；
+- Grok 查询约束只在实际 `grok_web_search` 调用中修改该工具参数，其他工具参数保持原值；
+- 包级契约新增 `on_using_llm_tool` / `on_llm_tool_respond`；
+- AstrBot 4.24.2、4.26.2 和当前稳定版 4.27.2 的契约检查纳入发布验证。
+
 ## 2026-08-04 v1.2.9 本地结果
 
 - Pytest：`181 passed`；
