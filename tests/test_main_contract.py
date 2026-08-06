@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from astrbot.api import AstrBotConfig
+from astrbot.api.message_components import Image, Plain
 from astrbot.api.provider import LLMResponse, ProviderRequest
 
 from tests.astrbot_stubs import REGISTERED_ADAPTERS
@@ -136,6 +137,207 @@ async def test_plugin_tracks_agent_lifecycle_for_xiaoheihe(isolated_smoke_import
 
     assert event.started is True
     assert event.done_text == "最终回复"
+    await plugin.terminate()
+
+
+async def test_plugin_isolates_images_only_during_grok_web_search(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+    class Event:
+        def __init__(self) -> None:
+            self.extras = {}
+            self.message_obj = type(
+                "Message",
+                (),
+                {
+                    "message": [
+                        Image(url="https://images.example.test/context.png"),
+                        Plain("猎鹰最近一次比赛是什么时候"),
+                        Image(url="https://images.example.test/m0nesy.png"),
+                    ]
+                },
+            )()
+
+        def get_platform_name(self):
+            return "xiaoheihe"
+
+        def get_messages(self):
+            return self.message_obj.message
+
+        def get_extra(self, key, default=None):
+            return self.extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = Event()
+    grok_tool = type("Tool", (), {"name": "grok_web_search"})()
+    original_messages = list(event.get_messages())
+
+    await plugin.isolate_xiaoheihe_images_for_grok(
+        event,
+        grok_tool,
+        (tool_args := {"query": "Falcons CS2 latest match date August 2026"}),
+    )
+    assert [type(component) for component in event.get_messages()] == [Plain]
+    assert module.GROK_QUERY_REQUIREMENT in tool_args["query"]
+
+    await plugin.restore_xiaoheihe_images_after_grok(event, grok_tool, None, None)
+    assert event.get_messages() == original_messages
+    assert event.get_extra(module.GROK_IMAGE_ISOLATION_EXTRA) is None
+
+    await plugin.isolate_xiaoheihe_images_for_grok(
+        event,
+        grok_tool,
+        {
+            "query": "搜索这张图",
+            "image_urls": "https://images.example.test/explicit.png",
+        },
+    )
+    assert [type(component) for component in event.get_messages()] == [Plain]
+    await plugin.restore_xiaoheihe_images_after_grok(event, grok_tool, None, None)
+    assert event.get_messages() == original_messages
+    await plugin.terminate()
+
+
+async def test_plugin_preserves_images_for_explicit_grok_image_search_and_other_tools(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+    class Event:
+        def __init__(self) -> None:
+            self.extras = {}
+            self.message_obj = type(
+                "Message",
+                (),
+                {"message": [Plain("帮我搜图"), Image(url="https://images.example.test/a.png")]},
+            )()
+
+        def get_platform_name(self):
+            return "xiaoheihe"
+
+        def get_messages(self):
+            return self.message_obj.message
+
+        def get_extra(self, key, default=None):
+            return self.extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = Event()
+    grok_tool = type("Tool", (), {"name": "grok_web_search"})()
+    other_tool = type("Tool", (), {"name": "other_tool"})()
+    original_messages = list(event.get_messages())
+
+    image_query_args = {"query": "搜索这张图的出处"}
+    await plugin.isolate_xiaoheihe_images_for_grok(
+        event,
+        grok_tool,
+        image_query_args,
+    )
+    assert event.get_messages() == original_messages
+    assert module.GROK_QUERY_REQUIREMENT in image_query_args["query"]
+
+    other_tool_args = {"query": "普通查询"}
+    await plugin.isolate_xiaoheihe_images_for_grok(
+        event,
+        other_tool,
+        other_tool_args,
+    )
+    assert event.get_messages() == original_messages
+    assert other_tool_args == {"query": "普通查询"}
+    await plugin.terminate()
+
+
+async def test_plugin_restores_grok_images_on_agent_done_fallback(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+    class Event:
+        def __init__(self) -> None:
+            self.extras = {}
+            self.message_obj = type(
+                "Message",
+                (),
+                {"message": [Plain("查比赛"), Image(url="https://images.example.test/a.png")]},
+            )()
+
+        def get_platform_name(self):
+            return "xiaoheihe"
+
+        def get_messages(self):
+            return self.message_obj.message
+
+        def get_extra(self, key, default=None):
+            return self.extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = Event()
+    grok_tool = type("Tool", (), {"name": "grok_web_search"})()
+    original_messages = list(event.get_messages())
+
+    await plugin.isolate_xiaoheihe_images_for_grok(
+        event,
+        grok_tool,
+        {"query": "Falcons latest match"},
+    )
+    assert len(event.get_messages()) == 1
+
+    await plugin.restore_xiaoheihe_images_on_agent_done(
+        event,
+        object(),
+        LLMResponse(completion_text="最终结果"),
+    )
+    assert event.get_messages() == original_messages
     await plugin.terminate()
 
 

@@ -12,6 +12,7 @@
   → AstrBotMessage + XiaoheiheMessageEvent
   → Platform.commit_event()
   → AstrBot 原生会话 / 人格 / 记忆 / Agent / MCP / Skills / Tools
+  → 指定工具兼容层（Grok 普通网页查询临时隔离事件原图并在调用后恢复）
   → Agent 生命周期跟踪 + XiaoheiheMessageEvent 回复聚合
   → 模拟运行 / feed candidate / 无审核直发 / 单条真实评论
 ```
@@ -32,6 +33,10 @@ AstrBot 原生管线负责。
 - `feed_service.py`：高风险主动刷帖筛选、候选、人工审核与无审核直发入口。
 - `database.py` / `repository.py`：迁移、事务、索引、幂等、保留和诊断。
 - `config_service.py`：同一个 `AstrBotConfig` 的校验、保存和热重载通知。
+
+主插件的工具钩子只在平台为 `xiaoheihe` 且工具名为 `grok_web_search` 时介入。普通网页查询
+暂时从事件消息链移出顶层 `Image`，避免第三方 Grok 插件再次自动提取原图；工具返回后恢复原
+位置，Agent 完成阶段还有异常兜底。查询明确要求搜图/识图时不隔离原图，其他工具不修改消息链。
 
 插件覆盖更新时，AstrBot 会先结束旧插件运行时。新插件实例在 `Star.initialize()` 阶段
 检查平台管理器：冷启动保持 AstrBot 原生创建顺序；热重载阶段则重建已启用的

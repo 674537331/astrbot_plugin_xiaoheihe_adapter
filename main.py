@@ -4,6 +4,7 @@ import uuid
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.message_components import Image
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.message import TextPart
@@ -14,6 +15,34 @@ from .xiaoheihe.runtime import PLUGIN_NAME, RuntimeServices, bind_runtime
 IMAGE_PROVIDER_PROMPT = (
     "请逐张准确描述这些图片的可见内容，并完整提取与用户问题相关的文字和关键数据。"
     "只提供图片描述，不回答用户问题；多张图片请按顺序区分。"
+)
+GROK_WEB_SEARCH_TOOL = "grok_web_search"
+GROK_IMAGE_ISOLATION_EXTRA = "xiaoheihe_grok_image_isolation"
+IMAGE_SEARCH_INTENT_MARKERS = (
+    "这张图",
+    "这幅图",
+    "图中",
+    "图里",
+    "图片中",
+    "图片里",
+    "图片出处",
+    "图片来源",
+    "照片",
+    "截图",
+    "搜图",
+    "识图",
+    "以图搜",
+    "image",
+    "photo",
+    "picture",
+    "screenshot",
+    "meme",
+    "reverse image",
+)
+GROK_QUERY_REQUIREMENT = (
+    "[Xiaoheihe search requirement] "
+    "请直接围绕原始查询检索并返回能回答问题的实时事实；若检索不到可靠结果，请明确说明。"
+    "不要只描述随事件附带的图片，也不要返回‘稍后再查’之类的占位回答。"
 )
 
 try:
@@ -28,7 +57,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.9",
+    "1.2.10",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -228,6 +257,129 @@ class XiaoheiheAdapterPlugin(Star):
         )
         request.image_urls.clear()
         return True
+
+    @staticmethod
+    def _grok_query_needs_event_images(tool_args: dict | None) -> bool:
+        args = tool_args if isinstance(tool_args, dict) else {}
+        explicit_images = str(args.get("image_urls", "") or "").strip()
+        if explicit_images:
+            return False
+        query = str(args.get("query", "") or "").casefold()
+        return any(marker.casefold() in query for marker in IMAGE_SEARCH_INTENT_MARKERS)
+
+    @staticmethod
+    def _grok_tool_name(tool: object) -> str:
+        return str(getattr(tool, "name", "") or "").strip()
+
+    def _restore_grok_event_images(self, event: AstrMessageEvent, *, force: bool) -> int:
+        state = event.get_extra(GROK_IMAGE_ISOLATION_EXTRA, None)
+        if not isinstance(state, dict):
+            return 0
+        active_calls = max(1, int(state.get("active_calls", 1)))
+        if not force and active_calls > 1:
+            state["active_calls"] = active_calls - 1
+            return 0
+
+        messages = event.get_messages()
+        hidden = state.get("hidden", [])
+        restored = 0
+        if isinstance(messages, list) and isinstance(hidden, list):
+            for item in hidden:
+                if not isinstance(item, tuple) or len(item) != 2:
+                    continue
+                index, component = item
+                if any(component is current for current in messages):
+                    continue
+                try:
+                    position = max(0, min(int(index), len(messages)))
+                except (TypeError, ValueError):
+                    position = len(messages)
+                messages.insert(position, component)
+                restored += 1
+        event.set_extra(GROK_IMAGE_ISOLATION_EXTRA, None)
+        return restored
+
+    @filter.on_using_llm_tool(priority=-1000)
+    async def isolate_xiaoheihe_images_for_grok(
+        self,
+        event: AstrMessageEvent,
+        tool: object,
+        tool_args: dict | None,
+    ) -> None:
+        if event.get_platform_name() != "xiaoheihe":
+            return
+        if self._grok_tool_name(tool) != GROK_WEB_SEARCH_TOOL:
+            return
+        needs_event_images = self._grok_query_needs_event_images(tool_args)
+        if isinstance(tool_args, dict):
+            query = str(tool_args.get("query", "") or "").strip()
+            if query and GROK_QUERY_REQUIREMENT not in query:
+                tool_args["query"] = f"{query}\n\n{GROK_QUERY_REQUIREMENT}"
+        if needs_event_images:
+            return
+
+        state = event.get_extra(GROK_IMAGE_ISOLATION_EXTRA, None)
+        if isinstance(state, dict):
+            state["active_calls"] = max(1, int(state.get("active_calls", 1))) + 1
+            return
+
+        messages = event.get_messages()
+        if not isinstance(messages, list):
+            return
+        hidden = [
+            (index, component)
+            for index, component in enumerate(messages)
+            if isinstance(component, Image)
+        ]
+        if not hidden:
+            return
+        messages[:] = [component for component in messages if not isinstance(component, Image)]
+        event.set_extra(
+            GROK_IMAGE_ISOLATION_EXTRA,
+            {"hidden": hidden, "active_calls": 1},
+        )
+        self.runtime.logging.emit(
+            "DEBUG",
+            "Grok 网页查询期间已临时隔离小黑盒原图",
+            details={"image_count": len(hidden)},
+        )
+
+    @filter.on_llm_tool_respond(priority=1000)
+    async def restore_xiaoheihe_images_after_grok(
+        self,
+        event: AstrMessageEvent,
+        tool: object,
+        tool_args: dict | None,
+        tool_result: object | None,
+    ) -> None:
+        if event.get_platform_name() != "xiaoheihe":
+            return
+        if self._grok_tool_name(tool) != GROK_WEB_SEARCH_TOOL:
+            return
+        restored = self._restore_grok_event_images(event, force=False)
+        if restored:
+            self.runtime.logging.emit(
+                "DEBUG",
+                "Grok 网页查询完成后已恢复小黑盒原图",
+                details={"image_count": restored},
+            )
+
+    @filter.on_agent_done(priority=1000)
+    async def restore_xiaoheihe_images_on_agent_done(
+        self,
+        event: AstrMessageEvent,
+        run_context: object,
+        response: LLMResponse,
+    ) -> None:
+        if event.get_platform_name() != "xiaoheihe":
+            return
+        restored = self._restore_grok_event_images(event, force=True)
+        if restored:
+            self.runtime.logging.emit(
+                "WARNING",
+                "Agent 完成时兜底恢复了 Grok 调用期间隔离的小黑盒原图",
+                details={"image_count": restored},
+            )
 
     @filter.on_llm_response(priority=-1000)
     async def capture_xiaoheihe_complete_reply(

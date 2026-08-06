@@ -18,7 +18,9 @@ CONTRACT: dict[str, tuple[str, ...]] = {
         "on_agent_begin",
         "on_agent_done",
         "on_llm_request",
+        "on_llm_tool_respond",
         "on_llm_response",
+        "on_using_llm_tool",
     ),
     "api/message_components.py": ("astrbot.core.message.components",),
     "core/message/components.py": ("class Plain", "class Image"),
@@ -33,6 +35,7 @@ CONTRACT: dict[str, tuple[str, ...]] = {
     "core/platform/astr_message_event.py": (
         "MessageSession",
         "AstrMessageEvent",
+        "def get_messages(",
         "def get_result(",
     ),
     "core/agent/message.py": ("TextPart", "mark_as_temp"),

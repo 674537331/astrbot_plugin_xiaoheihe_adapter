@@ -6,14 +6,18 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.9**
+当前版本：**v1.2.10**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.9 重点：
+v1.2.10 重点：
 
+- 带图小黑盒消息调用 `grok_web_search` 进行普通网页查询时，不再让 Grok 插件自动重复抓取原图而把搜索带偏成识图；
+- Grok 查询期间只临时隔离事件原图，返回后立即恢复；QQ 等其他平台、其他 AstrBot 工具均不受影响；
+- 明确“搜这张图”“识图”“图片出处”等图片搜索仍保留原图能力，避免修复普通搜索时破坏图片搜索；
+- 仅在真正调用 `grok_web_search` 时给该次查询追加直接回答约束；未安装 Grok、未调用 Grok 或使用其他工具时不修改 Prompt、图片和回复流程；
 - 跟踪 AstrBot Agent 的完整运行周期，工具状态和“正在查询”等中间消息不会提前结束小黑盒回复；
 - 无论本轮是否调用工具，均等待 Agent 最终结果后一次性提交评论；
 - Grok 等多步工具调用、AstrBot 自带分段回复和流式回复统一聚合，最终答案不会只剩第一段；
@@ -294,7 +298,7 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.2.9 数据库迁移版本仍为 **v6**；
+- v1.2.10 数据库迁移版本仍为 **v6**；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
 
@@ -324,6 +328,7 @@ SQLite、去重记录、通知游标、审核候选和日志；插件配置继�
 | 历史 @ 进入事件记录 | 升级 v1.2.2，等待“通知历史基线已建立”后再发送新 @ |
 | 同一消息出现多条回复 | 升级 v1.2.2，检查事件状态和 `outgoing_replies`；`send_unknown` 交由人工核对 |
 | 实际评论只显示工具状态、第一段或“正在查询” | 升级 v1.2.9；适配器会等待 Agent 完成，并兼容 AstrBot 分段和流式回复后一次性提交最终内容 |
+| 带图问题调用 Grok 后只返回图片描述或“等着我查” | 升级 v1.2.10；普通 `grok_web_search` 查询会在工具执行期间临时隔离事件原图，明确搜图时仍保留原图 |
 | 多图总结在 120 秒进入 `dead_letter` | 升级 v1.2.2；基础超时保持原配置，适配器按图片数量自动增加视觉处理时间，6 图默认截止时间为 300 秒 |
 | @ 数量增加但事件为空 | 检查 `message_type`、接收条数、权限过滤和基线日志 |
 | `status=failed / code 1000` | 该发送尝试记录为失败终态；结合 API 契约核对评论请求字段 |

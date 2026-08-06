@@ -95,6 +95,9 @@ class AstrMessageEvent:
     def get_platform_name(self) -> str:
         return self.platform_meta.name
 
+    def get_messages(self):
+        return self.message_obj.message
+
     def should_call_llm(self, call_llm: bool) -> None:
         self.call_llm = call_llm
 
@@ -192,7 +195,9 @@ def install() -> None:
         on_agent_begin=passthrough_filter,
         on_agent_done=passthrough_filter,
         on_llm_request=passthrough_filter,
+        on_llm_tool_respond=passthrough_filter,
         on_llm_response=passthrough_filter,
+        on_using_llm_tool=passthrough_filter,
     )
     components.Plain = Plain
     components.Image = Image
