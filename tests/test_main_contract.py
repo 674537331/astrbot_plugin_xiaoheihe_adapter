@@ -74,6 +74,7 @@ async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_im
                 {"raw_message": {"route": {"profile_id": "default"}}},
             )(),
             "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "speaker-1",
             "get_extra": lambda self, key, default="": (
                 '<xiaoheihe_context trust="untrusted">背景</xiaoheihe_context>'
                 if key == "xiaoheihe_dynamic_context"
@@ -86,13 +87,83 @@ async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_im
     request.image_urls = ["https://images.example.test/a.png"]
     await plugin.inject_xiaoheihe_context(event, request)
     assert request.image_urls == []
-    assert request.extra_user_content_parts[0].temp is True
+    assert request.extra_user_content_parts[0].temp is False
+    assert 'uid="speaker-1"' in request.extra_user_content_parts[0].text
+    assert request.extra_user_content_parts[1].temp is True
     assert plugin.runtime._alerts["vision_unsupported"]["level"] == "warning"
     await plugin.capture_xiaoheihe_complete_reply(
         event,
         LLMResponse(completion_text="完整回复，保留标点。\n\n第二段。"),
     )
     assert event.captured["xiaoheihe_complete_reply_text"] == ("完整回复，保留标点。\n\n第二段。")
+    await plugin.terminate()
+
+
+async def test_xiaoheihe_sender_identity_persists_per_turn_in_shared_floor(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_using_provider(self, umo=None):
+            return type("Provider", (), {"provider_config": {"modalities": ["text"]}})()
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    shared_umo = "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1"
+
+    def make_event(uid: str, *, platform: str = "xiaoheihe"):
+        return type(
+            "Event",
+            (),
+            {
+                "unified_msg_origin": shared_umo,
+                "message_obj": type(
+                    "Message",
+                    (),
+                    {"raw_message": {"route": {"profile_id": "default"}}},
+                )(),
+                "get_platform_name": lambda self: platform,
+                "get_sender_id": lambda self: uid,
+                "get_extra": lambda self, key, default="": (
+                    f'<xiaoheihe_context trust="untrusted">当前发言人 UID {uid}</xiaoheihe_context>'
+                    if key == "xiaoheihe_dynamic_context"
+                    else default
+                ),
+            },
+        )()
+
+    request_a = ProviderRequest()
+    request_b = ProviderRequest()
+    await plugin.inject_xiaoheihe_context(make_event("111"), request_a)
+    await plugin.inject_xiaoheihe_context(make_event("222"), request_b)
+
+    assert len(request_a.extra_user_content_parts) == 2
+    assert len(request_b.extra_user_content_parts) == 2
+    assert request_a.extra_user_content_parts[0].temp is False
+    assert request_b.extra_user_content_parts[0].temp is False
+    assert 'uid="111"' in request_a.extra_user_content_parts[0].text
+    assert 'uid="222"' in request_b.extra_user_content_parts[0].text
+    assert request_a.extra_user_content_parts[1].temp is True
+    assert request_b.extra_user_content_parts[1].temp is True
+
+    non_xiaoheihe = ProviderRequest()
+    await plugin.inject_xiaoheihe_context(
+        make_event("333", platform="aiocqhttp"),
+        non_xiaoheihe,
+    )
+    assert non_xiaoheihe.extra_user_content_parts == []
     await plugin.terminate()
 
 
@@ -401,6 +472,7 @@ async def test_plugin_uses_fixed_image_provider_and_keeps_caption_temporary(
                 {"raw_message": {"route": {"profile_id": "default"}}},
             )(),
             "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "speaker-1",
             "get_extra": lambda self, key, default="": default,
             "set_extra": lambda self, key, value: self.captured.__setitem__(key, value),
         },
@@ -477,6 +549,7 @@ async def test_plugin_falls_back_to_main_images_when_fixed_image_provider_fails(
                 {"raw_message": {"route": {"profile_id": "default"}}},
             )(),
             "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "speaker-1",
             "get_extra": lambda self, key, default="": default,
             "set_extra": lambda self, key, value: None,
         },
@@ -486,7 +559,9 @@ async def test_plugin_falls_back_to_main_images_when_fixed_image_provider_fails(
     await plugin.inject_xiaoheihe_context(event, request)
 
     assert request.image_urls == ["https://images.example.test/a.png"]
-    assert request.extra_user_content_parts == []
+    assert len(request.extra_user_content_parts) == 1
+    assert request.extra_user_content_parts[0].temp is False
+    assert 'uid="speaker-1"' in request.extra_user_content_parts[0].text
     await plugin.terminate()
 
 

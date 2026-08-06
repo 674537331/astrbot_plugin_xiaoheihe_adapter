@@ -42,6 +42,8 @@ async def test_context_is_clean_bounded_and_cached() -> None:
     assert "触发评论发布时间:" in result.dynamic_context
     assert "插件发现并读取时间:" in result.dynamic_context
     assert "AI 开始生成回复时间:" in result.dynamic_context
+    assert f"当前触发发言人 UID: {notification.sender_uid}" in result.dynamic_context
+    assert "不得因共享会话历史把不同 UID 当成同一人" in result.dynamic_context
     assert "不得把系统处理时间归因给作者" in result.dynamic_context
     assert result_again.thread.post_id == result.thread.post_id
 

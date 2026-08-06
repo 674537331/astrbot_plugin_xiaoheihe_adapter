@@ -1,10 +1,11 @@
-# AstrBot 兼容性说明（v1.2.10）
+# AstrBot 兼容性说明（v1.2.11）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.2.10 在 v1.2.9 Agent 生命周期回复聚合基础上，新增 LLM 工具调用前后钩子，
-用于隔离带图事件中会干扰普通 Grok 网页查询的原始图片。2026-08-06 发布 v1.2.10 前再次核对：
+AstrBot 4.26.8。v1.2.11 在 v1.2.10 Grok 图片隔离基础上，为同楼层多人会话增加持久化发送者
+UID 标记：共享 session 不变，但不同用户的 `role=user` 历史不再失去身份。2026-08-06 发布
+v1.2.11 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -15,7 +16,8 @@ AstrBot 4.26.8。v1.2.10 在 v1.2.9 Agent 生命周期回复聚合基础上，�
   `AstrMessageEvent`、`MessageSession`、`commit_event()`、`send_by_session()`；
 - `AstrBotConfig.save_config()`、`StarTools.get_data_dir()`、插件 `terminate()`；
 - `Image` 消息组件、`on_agent_begin`、`on_agent_done`、`on_using_llm_tool`、
-  `on_llm_tool_respond`、`on_llm_request`、`extra_user_content_parts` 与 `TextPart.mark_as_temp()`；
+  `on_llm_tool_respond`、`on_llm_request`、`AstrMessageEvent.get_sender_id()`、
+  `extra_user_content_parts` 与 `TextPart.mark_as_temp()`；
 - Plugin Page 的 `window.AstrBotPluginPage`、`context.register_web_api()` 和
   `astrbot.api.web`。
 
@@ -31,6 +33,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 元数据 | `PlatformMetadata` | 声明内部名、实例 ID、展示名、默认配置和非流式能力 |
 | 入站消息 | `AstrBotMessage` + `MessageMember` + `Plain/Image` | 设置稳定消息 ID、会话、群组、发送者、自身 UID 和结构化 `raw_message` |
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
+| 多人楼层身份 | `MessageMember.user_id` + `AstrMessageEvent.get_sender_id()` + 非临时 `extra_user_content_parts` | session 仍按楼层共享；每轮真实 UID 随 `role=user` 历史持久化，避免不同参与者被压成同一匿名用户 |
 | Agent 回复聚合 | `on_agent_begin()` + `on_agent_done()` + `on_llm_response()` + `AstrMessageEvent.get_result()` | 无工具的普通回复直接完成；有工具时忽略 `tool_call` 控制消息、暂存中间文本，最终只提交一条小黑盒评论 |
 | Grok 带图查询兼容 | `on_using_llm_tool()` + `on_llm_tool_respond()` + `AstrMessageEvent.get_messages()` | 仅 `xiaoheihe + grok_web_search` 普通网页查询临时隔离顶层 `Image` 并恢复；明确搜图和其他工具保持原行为 |
 | 分段/流式回复 | 非流式平台 `send()` + `send_streaming()` | 分段清理前恢复完整文本，任意数量的分段或流式片段只提交一条小黑盒评论 |
@@ -38,7 +41,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 固定 LLM Provider | 事件入队前设置 `selected_provider` extra | 兼容 4.24.2 与 4.26.2 的主 Agent Provider 选择时序；留空时继续使用会话或全局 Provider |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
-| 临时上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` + `TextPart(...).mark_as_temp()` | 背景仅注入本轮用户侧内容，不改 system prompt，不永久污染会话 |
+| 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；完整帖子/楼层背景使用 `TextPart(...).mark_as_temp()`，不改 system prompt、不重复持久化动态社区内容 |
 | 图片 | `astrbot.api.message_components.Image(file=url, url=url)` | v1.0.0 只传经过安全校验的公开 HTTPS URL，交给 AstrBot 媒体链路 |
 | 固定图片 Provider | `Context.get_provider_by_id()` + `Provider.text_chat()` | 成功时注入临时图片描述；失败或空结果时保留原图并回退主 Provider 与 AstrBot 原生图片流程 |
 | 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 按固定或当前主 Provider 检查能力；仅在明确不含 `image` 时移除图片并保留文本 |
@@ -67,6 +70,13 @@ Agent 完成信号放行普通最终回复。最终发送仍优先恢复 `on_llm
 `Image`，调用完成后按原位置恢复；明确包含搜图/识图意图的查询不做隔离，显式 `image_urls`
 仍由 Grok 工具自身处理。查询约束也只在工具名实际匹配 `grok_web_search` 时追加。该兼容逻辑
 不修改 Grok 插件配置；没有安装或没有调用 Grok、使用其他工具及 QQ 等其他平台均保持原行为。
+
+AstrBot 的 Conversation 以 `unified_msg_origin` 作为会话键，而本适配器的楼层 UMO 只包含
+`xhh_thread_<post_id>_<root_comment_id>`，因此同楼层不同 UID 会共享上下文。AstrBot 的历史
+`UserMessageSegment` 本身不保存平台 sender 字段。v1.2.11 不改变这一会话模型，而是在小黑盒
+`on_llm_request` 中把 `event.get_sender_id()` 生成的短 UID 身份块作为普通（非 temp）
+`extra_user_content_parts` 追加到每轮用户输入；按 AstrBot 4.24+ 的官方语义，普通内容块会进入
+会话历史，只有 `mark_as_temp()` 才不持久化。QQ 和其他平台在钩子入口即返回，不添加该身份块。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -111,7 +121,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.10 的最新迁移版本仍为 v6；除旧版
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.11 的最新迁移版本仍为 v6；除旧版
 按浏览量统计的 `proactive_count` 会清零并切换为主动 AI 请求口径外，其余已有记录原位保留。
 卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据边界；更新前备份
 插件数据目录可用于回滚。

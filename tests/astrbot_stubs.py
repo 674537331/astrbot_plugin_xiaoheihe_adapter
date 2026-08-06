@@ -95,6 +95,14 @@ class AstrMessageEvent:
     def get_platform_name(self) -> str:
         return self.platform_meta.name
 
+    def get_sender_id(self) -> str:
+        sender = getattr(self.message_obj, "sender", None)
+        return str(getattr(sender, "user_id", "") or "")
+
+    def get_sender_name(self) -> str:
+        sender = getattr(self.message_obj, "sender", None)
+        return str(getattr(sender, "nickname", "") or "")
+
     def get_messages(self):
         return self.message_obj.message
 

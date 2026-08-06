@@ -11,6 +11,7 @@
   → XiaoheihePlatformAdapter
   → AstrBotMessage + XiaoheiheMessageEvent
   → Platform.commit_event()
+  → 楼层共享 session + 每轮发送者 UID 持久化到 LLM 用户历史
   → AstrBot 原生会话 / 人格 / 记忆 / Agent / MCP / Skills / Tools
   → 指定工具兼容层（Grok 普通网页查询临时隔离事件原图并在调用后恢复）
   → Agent 生命周期跟踪 + XiaoheiheMessageEvent 回复聚合
@@ -63,6 +64,14 @@ profile_id / post_id / root_comment_id / parent_comment_id / notification_id
 `send_by_session()` 只接受上述格式；完整恢复帖子和楼层后才进入发送，目标信息缺失时直接
 返回明确错误。
 
+同一楼层中的不同用户刻意共享同一个 `xhh_thread_*`，以保留公开讨论的连续语境；发送者身份
+不进入 session ID。每个 `AstrBotMessage.sender.user_id` 始终使用当前通知的真实小黑盒 UID，
+并在 `on_llm_request` 中额外追加非临时 `<xiaoheihe_sender_identity uid="...">` 内容块。
+AstrBot 会将普通 `extra_user_content_parts` 持久化到该轮 `role=user` 历史，因此后续即使 A、B、C
+共用一个 Conversation，每一轮历史仍带有各自 UID。帖子、楼层全文和实时状态继续使用
+`mark_as_temp()`，只参与当前请求，不重复写入历史。可信运行时元数据也会指出当前触发 UID，
+要求模型按 UID 区分不同发言人的第一人称。
+
 ## 事件状态
 
 ```text
@@ -108,6 +117,7 @@ claimed → ignored
 - v1.1.3 按进入 AstrBot 的图片数量为基础回复超时增加视觉处理宽限，单图宽限受限于 15–60 秒，事件总截止时间最高 900 秒；
 - 评论区 @ 分别读取原帖详情与指定楼层，合并通知内原帖快照；评论图和原帖图交替进入图片上限；
 - 外部内容置于 `<xiaoheihe_context trust="untrusted">` 用户侧临时片段中；
+- 当前触发 UID 由通知解析结果写入可信运行时元数据；持久化历史只记录结构化 UID 身份标签，昵称和社区正文仍按外部内容处理；
 - POST 评论超时进入 `send_unknown`，核对结果不明确时保持人工检查状态；
 - 评论接口明确返回 `status=failed` 时进入失败终态，事件级发送闸门拦截第二次 POST；
 - 主动候选批准先原子转换为 `sending`，账号级审核锁限制并发；更新或重启遗留的
