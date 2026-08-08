@@ -32,12 +32,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "providers": {
         "llm_provider_id": "",
         "image_provider_id": "",
+        "context_provider_id": "",
     },
     "context": {
         "max_post_chars": 6000,
         "max_thread_comments": 40,
         "thread_reply_post_chars": 1600,
         "thread_reply_recent_comments": 12,
+        "enable_thread_reply_compression": True,
+        "thread_reply_compression_trigger_chars": 2400,
+        "thread_reply_compressed_post_chars": 700,
+        "thread_reply_compressed_comments_chars": 1400,
+        "thread_reply_compressed_image_chars": 800,
+        "thread_reply_compression_timeout_seconds": 30,
         "context_cache_ttl_seconds": 300,
         "context_cache_max_entries": 256,
         "enable_image_understanding": True,
@@ -232,6 +239,11 @@ class ConfigService:
         _bounded_int(context, "max_thread_comments", 1, 200)
         _bounded_int(context, "thread_reply_post_chars", 200, 10000)
         _bounded_int(context, "thread_reply_recent_comments", 1, 50)
+        _bounded_int(context, "thread_reply_compression_trigger_chars", 500, 50000)
+        _bounded_int(context, "thread_reply_compressed_post_chars", 200, 3000)
+        _bounded_int(context, "thread_reply_compressed_comments_chars", 300, 6000)
+        _bounded_int(context, "thread_reply_compressed_image_chars", 200, 4000)
+        _bounded_int(context, "thread_reply_compression_timeout_seconds", 3, 120)
         _bounded_int(context, "max_images_per_event", 0, 20)
         _bounded_int(context, "max_image_size_mb", 1, 32)
         _bounded_int(context, "max_total_image_size_mb", 1, 128)
@@ -259,7 +271,7 @@ class ConfigService:
             raise ConfigValidationError("最小请求间隔必须在 0.2–60 秒")
 
         providers = _object(config, "providers")
-        for key in ("llm_provider_id", "image_provider_id"):
+        for key in ("llm_provider_id", "image_provider_id", "context_provider_id"):
             value = providers.get(key)
             if not isinstance(value, str):
                 raise ConfigValidationError(f"providers.{key} 必须是字符串")

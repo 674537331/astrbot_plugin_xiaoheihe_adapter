@@ -115,6 +115,13 @@
         "default": "",
         "_special": "select_provider",
         "hint": "指定小黑盒图片理解使用的 Provider ID；留空则由当前 LLM Provider 和 AstrBot 原生图片流程处理。"
+      },
+      "context_provider_id": {
+        "description": "上下文压缩 Provider",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "hint": "用于长楼层的正文/评论语义压缩；留空时复用固定 LLM Provider，固定 LLM 也留空时跟随当前会话 Provider。压缩失败会自动回退 v1.2.12 的硬截断上下文。"
       }
     }
   },
@@ -136,13 +143,47 @@
         "description": "楼层回复时原帖正文字符预算",
         "type": "int",
         "default": 1600,
-        "hint": "仅用于评论回复/@ 的原帖低优先级背景，实际不会超过帖子正文最大字符数；主动刷帖仍使用完整帖子预算。"
+        "hint": "长楼层语义压缩未触发或失败时的 v1.2.12 兜底预算；主动刷帖仍使用完整帖子预算。"
       },
       "thread_reply_recent_comments": {
         "description": "楼层回复时最近对话条数",
         "type": "int",
         "default": 12,
-        "hint": "仅用于评论回复/@ 的局部对话窗口，实际不会超过楼层最大评论数；直接回复对象会另行保留。"
+        "hint": "长楼层语义压缩未触发或失败时的 v1.2.12 兜底窗口；直接回复对象始终另行保留原文。"
+      },
+      "enable_thread_reply_compression": {
+        "description": "启用长楼层 LLM 语义压缩",
+        "type": "bool",
+        "default": true,
+        "hint": "仅压缩被动评论回复/@ 的低、中优先级背景；当前消息和直接回复对象保留原文，主动刷帖不使用。失败自动回退 v1.2.12 的硬截断上下文。"
+      },
+      "thread_reply_compression_trigger_chars": {
+        "description": "楼层压缩触发字符数",
+        "type": "int",
+        "default": 2400,
+        "hint": "原帖标题/正文与最近楼层合计超过此值才额外调用上下文 Provider，短对话不增加一次 LLM 请求。"
+      },
+      "thread_reply_compressed_post_chars": {
+        "description": "压缩后原帖摘要字符上限",
+        "type": "int",
+        "default": 700
+      },
+      "thread_reply_compressed_comments_chars": {
+        "description": "压缩后最近楼层摘要字符上限",
+        "type": "int",
+        "default": 1400
+      },
+      "thread_reply_compressed_image_chars": {
+        "description": "被动回复原帖图片描述字符上限",
+        "type": "int",
+        "default": 800,
+        "hint": "配置固定图片 Provider 时，原帖图片会按来源压成该长度以内的低优先级视觉描述；当前评论自己的图片使用更高预算。"
+      },
+      "thread_reply_compression_timeout_seconds": {
+        "description": "上下文压缩超时秒数",
+        "type": "int",
+        "default": 30,
+        "hint": "超时或 Provider 异常不会中断回复，将回退 v1.2.12 的硬截断上下文。"
       },
       "context_cache_ttl_seconds": {
         "description": "上下文缓存 TTL",

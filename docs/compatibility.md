@@ -1,11 +1,12 @@
-# AstrBot 兼容性说明（v1.2.12）
+# AstrBot 兼容性说明（v1.2.13）
 
 ## 调查范围
 
-项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.2.12 在 v1.2.11 多人 UID 身份修复基础上调整小黑盒被动楼层回复的临时
-上下文形状：当前消息和直接回复对象优先，原帖及普通楼层背景受独立预算限制；主动浏览仍以原帖
-为主要话题。该版本没有新增 AstrBot API 依赖。2026-08-08 发布 v1.2.12 前再次核对：
+项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测日志来自
+AstrBot 4.27.2。v1.2.13 在 v1.2.12 焦点路由上增加被动长楼层的来源感知语义压缩和图片来源
+路由：当前消息/直接回复对象保持原文，原帖与楼层分开压缩，主动浏览仍以原帖为主要话题。
+该版本复用已有的 Provider 与 `on_llm_request` 接口，没有新增 AstrBot API 依赖。2026-08-08
+发布 v1.2.13 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -39,11 +40,12 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 分段/流式回复 | 非流式平台 `send()` + `send_streaming()` | 分段清理前恢复完整文本，任意数量的分段或流式片段只提交一条小黑盒评论 |
 | 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；模型调用由 AstrBot 核心负责 |
 | 固定 LLM Provider | 事件入队前设置 `selected_provider` extra | 兼容 4.24.2 与 4.26.2 的主 Agent Provider 选择时序；留空时继续使用会话或全局 Provider |
+| 上下文压缩 Provider | `Context.get_provider_by_id()` / `get_using_provider()` + `Provider.text_chat(persist=False)` | 仅长被动楼层额外调用；独立 Provider 留空时复用固定 LLM 或会话 Provider，任何异常回退 v1.2.12 临时背景 |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
-| 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；动态帖子/楼层背景保持临时；被动楼层回复按“当前消息 → 直接回复对象 → 最近楼层 → 原帖”聚焦并限制低优先级背景预算 |
+| 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；动态帖子/楼层背景保持临时；长被动楼层可先按来源语义压缩，最终焦点仍按“当前消息 → 直接回复对象 → 最近楼层 → 原帖” |
 | 图片 | `astrbot.api.message_components.Image(file=url, url=url)` | v1.0.0 只传经过安全校验的公开 HTTPS URL，交给 AstrBot 媒体链路 |
-| 固定图片 Provider | `Context.get_provider_by_id()` + `Provider.text_chat()` | 成功时注入临时图片描述；失败或空结果时保留原图并回退主 Provider 与 AstrBot 原生图片流程 |
+| 固定图片 Provider | `Context.get_provider_by_id()` + `Provider.text_chat()` | 当前评论图/原帖图分组生成临时描述并保留来源优先级；任一分组失败时保留全部原图并回退主 Provider 与 AstrBot 原生图片流程 |
 | 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 按固定或当前主 Provider 检查能力；仅在明确不含 `image` 时移除图片并保留文本 |
 | 配置 | 构造参数中的 `AstrBotConfig` + `save_config()` | 原生设置和 Plugin Page 共用同一个对象，不写核心配置文件 |
 | 数据目录 | `StarTools.get_data_dir(plugin_name)` | 凭证与 SQLite 位于插件专属数据目录，覆盖更新后继续读取 |
@@ -85,6 +87,15 @@ prompt。对于带 `root_comment_id` 的小黑盒被动回复，动态临时背�
 临时背景末尾出现一个仅用于模型定位的副本，但只有原生用户消息进入会话历史。主动浏览不应用
 这些被动预算，继续使用全局原帖/评论上限并明确把原帖作为主要话题。因此改动只改变本插件提交
 给现有 AstrBot API 的临时内容，不增加运行时契约。
+
+v1.2.13 仍使用同一接口，但将 v1.2.12 的 1600 字 / 12 条背景降为短上下文和故障兜底。超过
+默认 2400 字的被动楼层先通过 `Provider.text_chat(persist=False)` 生成分离的原帖摘要、楼层摘要
+和局部话题关系；输入与输出均由插件本地代码设置硬上限，当前消息和直接回复对象不被摘要替换。
+上下文 Provider 缺失、超时、异常或返回无效 JSON 时直接回退 v1.2.12 临时背景，不改变 AstrBot
+Agent 调用。固定图片 Provider 同样复用 v1.2.2 起已有的 `Provider.text_chat()` 能力，只是把当前
+评论图与原帖图分组；没有固定图片 Provider 时原图仍由 AstrBot 原生多模态链路处理。最终可信
+焦点块在这些背景之后注入，因此这仍是插件侧临时输入整形，不修改 AstrBot system prompt、
+Conversation、工具注册或其他平台事件。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -129,7 +140,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.12 的最新迁移版本仍为 v6；除旧版
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.13 的最新迁移版本仍为 v6；除旧版
 按浏览量统计的 `proactive_count` 会清零并切换为主动 AI 请求口径外，其余已有记录原位保留。
 卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据边界；更新前备份
 插件数据目录可用于回滚。

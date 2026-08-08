@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from astrbot.api import AstrBotConfig
@@ -10,12 +11,17 @@ from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.message import TextPart
 
 from .xiaoheihe.adapter import XiaoheihePlatformAdapter  # noqa: F401
-from .xiaoheihe.runtime import PLUGIN_NAME, RuntimeServices, bind_runtime
-
-IMAGE_PROVIDER_PROMPT = (
-    "请逐张准确描述这些图片的可见内容，并完整提取与用户问题相关的文字和关键数据。"
-    "只提供图片描述，不回答用户问题；多张图片请按顺序区分。"
+from .xiaoheihe.context_compression import (
+    ThreadCompressionSource,
+    build_image_compression_prompt,
+    build_thread_compression_prompt,
+    parse_thread_compression,
+    render_compressed_thread_context,
+    render_image_context,
 )
+from .xiaoheihe.runtime import PLUGIN_NAME, RuntimeServices, bind_runtime
+from .xiaoheihe.security import clean_untrusted_text
+
 GROK_WEB_SEARCH_TOOL = "grok_web_search"
 GROK_IMAGE_ISOLATION_EXTRA = "xiaoheihe_grok_image_isolation"
 IMAGE_SEARCH_INTENT_MARKERS = (
@@ -58,7 +64,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.12",
+    "1.2.13",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -182,55 +188,168 @@ class XiaoheiheAdapterPlugin(Star):
                     )
                 )
             )
-        dynamic_context = event.get_extra("xiaoheihe_dynamic_context", "")
-        if dynamic_context:
-            request.extra_user_content_parts.append(
-                TextPart(text=str(dynamic_context)).mark_as_temp()
-            )
         config = self.runtime.config.snapshot()
         provider_settings = config["providers"]
+        context_settings = config["context"]
         profile_id = str(event.message_obj.raw_message.get("route", {}).get("profile_id", ""))
+
+        dynamic_context = str(event.get_extra("xiaoheihe_dynamic_context", "") or "")
+        runtime_context = str(event.get_extra("xiaoheihe_runtime_context", "") or "")
+        community_context = str(event.get_extra("xiaoheihe_community_context", "") or "")
+        focus_context = str(event.get_extra("xiaoheihe_focus_context", "") or "")
+        compression_source = self._coerce_compression_source(
+            event.get_extra("xiaoheihe_compression_source", None)
+        )
+        has_split_context = bool(runtime_context or community_context or focus_context)
+        if has_split_context:
+            selected_community = community_context
+            if compression_source is not None:
+                compressed = await self._compress_thread_context(
+                    event,
+                    compression_source,
+                    provider_settings=provider_settings,
+                    context_settings=context_settings,
+                    profile_id=profile_id,
+                )
+                if compressed:
+                    selected_community = compressed
+            dynamic_context = "\n".join(
+                part for part in (runtime_context, selected_community) if part
+            )
+        if dynamic_context:
+            request.extra_user_content_parts.append(TextPart(text=dynamic_context).mark_as_temp())
+
+        captioned = False
         image_provider_id = str(provider_settings["image_provider_id"]).strip()
         if request.image_urls and image_provider_id:
             captioned = await self._caption_images(
+                event,
                 request,
                 provider_id=image_provider_id,
                 profile_id=profile_id,
+                context_settings=context_settings,
             )
             if captioned:
                 self.runtime.clear_vision_alert()
-                return
 
-        llm_provider_id = str(provider_settings["llm_provider_id"]).strip()
-        if llm_provider_id:
-            provider = self.context.get_provider_by_id(llm_provider_id)
+        if not captioned:
+            llm_provider_id = str(provider_settings["llm_provider_id"]).strip()
+            if llm_provider_id:
+                provider = self.context.get_provider_by_id(llm_provider_id)
+            else:
+                provider = self.context.get_using_provider(umo=event.unified_msg_origin)
+            provider_config = getattr(provider, "provider_config", {}) if provider else {}
+            modalities = (
+                provider_config.get("modalities") if isinstance(provider_config, dict) else None
+            )
+            if (
+                request.image_urls
+                and isinstance(modalities, list)
+                and modalities
+                and "image" not in modalities
+            ):
+                image_count = len(request.image_urls)
+                request.image_urls.clear()
+                self.runtime.report_vision_degraded(
+                    profile_id,
+                    image_count,
+                )
+            else:
+                self.runtime.clear_vision_alert()
+            image_source_map = self._render_image_source_map(event, request)
+            if image_source_map:
+                request.extra_user_content_parts.append(
+                    TextPart(text=image_source_map).mark_as_temp()
+                )
+
+        if has_split_context and focus_context:
+            # Keep the trusted routing rule after both text compression and image
+            # descriptions so low-capability chat models see the priority rule last.
+            request.extra_user_content_parts.append(TextPart(text=focus_context).mark_as_temp())
+
+    async def _compress_thread_context(
+        self,
+        event: AstrMessageEvent,
+        source: ThreadCompressionSource,
+        *,
+        provider_settings: dict,
+        context_settings: dict,
+        profile_id: str,
+    ) -> str | None:
+        if not bool(context_settings.get("enable_thread_reply_compression", True)):
+            return None
+        trigger_chars = int(context_settings["thread_reply_compression_trigger_chars"])
+        if source.compressible_chars <= trigger_chars:
+            return None
+
+        configured_provider_id = str(provider_settings.get("context_provider_id", "")).strip()
+        fallback_provider_id = str(provider_settings.get("llm_provider_id", "")).strip()
+        provider_id = configured_provider_id or fallback_provider_id
+        if provider_id:
+            provider = self.context.get_provider_by_id(provider_id)
         else:
             provider = self.context.get_using_provider(umo=event.unified_msg_origin)
-        provider_config = getattr(provider, "provider_config", {}) if provider else {}
-        modalities = (
-            provider_config.get("modalities") if isinstance(provider_config, dict) else None
-        )
-        if (
-            request.image_urls
-            and isinstance(modalities, list)
-            and modalities
-            and "image" not in modalities
-        ):
-            image_count = len(request.image_urls)
-            request.image_urls.clear()
-            self.runtime.report_vision_degraded(
-                profile_id,
-                image_count,
+        if provider is None:
+            self.runtime.logging.emit(
+                "WARNING",
+                "楼层上下文压缩 Provider 不存在，回退 v1.2.12 硬截断上下文",
+                profile_id=profile_id,
+                details={"provider_id": provider_id or "current-session"},
             )
-        else:
-            self.runtime.clear_vision_alert()
+            return None
+
+        post_chars = int(context_settings["thread_reply_compressed_post_chars"])
+        comments_chars = int(context_settings["thread_reply_compressed_comments_chars"])
+        prompt = build_thread_compression_prompt(
+            source,
+            post_chars=post_chars,
+            comments_chars=comments_chars,
+        )
+        timeout = int(context_settings["thread_reply_compression_timeout_seconds"])
+        try:
+            response = await asyncio.wait_for(
+                provider.text_chat(
+                    prompt=prompt,
+                    session_id=f"xiaoheihe-context-{uuid.uuid4().hex}",
+                    persist=False,
+                ),
+                timeout=timeout,
+            )
+            result = parse_thread_compression(
+                str(getattr(response, "completion_text", "") or ""),
+                post_chars=post_chars,
+                comments_chars=comments_chars,
+            )
+        except Exception as exc:
+            self.runtime.logging.emit(
+                "WARNING",
+                f"楼层上下文 LLM 压缩失败，回退 v1.2.12 硬截断上下文: {exc}",
+                profile_id=profile_id,
+                details={"provider_id": provider_id or "current-session"},
+            )
+            return None
+        rendered = render_compressed_thread_context(source, result)
+        self.runtime.logging.emit(
+            "DEBUG",
+            "楼层上下文已按来源完成 LLM 语义压缩",
+            profile_id=profile_id,
+            details={
+                "provider_id": provider_id or "current-session",
+                "input_chars": source.compressible_chars,
+                "output_chars": len(rendered),
+                "relation_to_post": result.relation_to_post,
+            },
+        )
+        return rendered
 
     async def _caption_images(
         self,
+        event: AstrMessageEvent,
         request: ProviderRequest,
         *,
         provider_id: str,
         profile_id: str,
+        context_settings: dict,
     ) -> bool:
         provider = self.context.get_provider_by_id(provider_id)
         if provider is None:
@@ -241,13 +360,63 @@ class XiaoheiheAdapterPlugin(Star):
                 details={"provider_id": provider_id},
             )
             return False
+        sources = event.get_extra("xiaoheihe_image_sources", [])
+        if not isinstance(sources, list) or len(sources) != len(request.image_urls):
+            sources = ["event_image"] * len(request.image_urls)
+        else:
+            sources = [
+                source if source in {"current_comment", "original_post"} else "event_image"
+                for source in sources
+            ]
+        is_thread_reply = (
+            self._coerce_compression_source(event.get_extra("xiaoheihe_compression_source", None))
+            is not None
+        )
+        groups: list[tuple[str, list[str]]] = []
+        for source in ("current_comment", "original_post", "event_image"):
+            urls = [
+                url
+                for url, image_source in zip(request.image_urls, sources, strict=True)
+                if image_source == source
+            ]
+            if urls:
+                groups.append((source, urls))
+
+        rendered: list[str] = []
+        compressed_image_chars = int(context_settings["thread_reply_compressed_image_chars"])
         try:
-            response = await provider.text_chat(
-                prompt=IMAGE_PROVIDER_PROMPT,
-                session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
-                image_urls=list(request.image_urls),
-                persist=False,
-            )
+            for source, urls in groups:
+                if is_thread_reply and source == "original_post":
+                    max_chars = compressed_image_chars
+                    priority = "low"
+                elif is_thread_reply and source == "current_comment":
+                    max_chars = max(1600, compressed_image_chars)
+                    priority = "highest"
+                else:
+                    max_chars = max(2400, compressed_image_chars)
+                    priority = "primary"
+                response = await provider.text_chat(
+                    prompt=build_image_compression_prompt(
+                        source=source,
+                        max_chars=max_chars,
+                    ),
+                    session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
+                    image_urls=urls,
+                    persist=False,
+                )
+                caption = clean_untrusted_text(
+                    str(getattr(response, "completion_text", "") or ""),
+                    max_chars=max_chars,
+                )
+                if not caption:
+                    raise ValueError("固定图片 Provider 返回空描述")
+                rendered.append(
+                    render_image_context(
+                        source=source,
+                        caption=caption,
+                        priority=priority,
+                    )
+                )
         except Exception as exc:
             self.runtime.logging.emit(
                 "WARNING",
@@ -256,26 +425,60 @@ class XiaoheiheAdapterPlugin(Star):
                 details={"provider_id": provider_id},
             )
             return False
-        caption = str(getattr(response, "completion_text", "") or "").strip()
-        if not caption:
-            self.runtime.logging.emit(
-                "WARNING",
-                "固定图片 Provider 返回空描述，回退当前 LLM 图片流程",
-                profile_id=profile_id,
-                details={"provider_id": provider_id},
-            )
-            return False
-        request.extra_user_content_parts.append(
-            TextPart(
-                text=(
-                    '<xiaoheihe_image_context trust="untrusted">\n'
-                    f"{caption}\n"
-                    "</xiaoheihe_image_context>"
-                )
-            ).mark_as_temp()
-        )
+        for block in rendered:
+            request.extra_user_content_parts.append(TextPart(text=block).mark_as_temp())
         request.image_urls.clear()
         return True
+
+    @staticmethod
+    def _render_image_source_map(event: AstrMessageEvent, request: ProviderRequest) -> str:
+        if not request.image_urls:
+            return ""
+        sources = event.get_extra("xiaoheihe_image_sources", [])
+        if not isinstance(sources, list) or len(sources) != len(request.image_urls):
+            return ""
+        is_thread_reply = (
+            XiaoheiheAdapterPlugin._coerce_compression_source(
+                event.get_extra("xiaoheihe_compression_source", None)
+            )
+            is not None
+        )
+        lines = [
+            '<xiaoheihe_image_source_map trust="trusted">',
+            "以下仅标记图片来源和相关性，不包含社区内容:",
+        ]
+        for index, source in enumerate(sources, start=1):
+            if source == "current_comment":
+                label = "当前评论图片；与当前消息同为最高优先级"
+            elif source == "original_post" and is_thread_reply:
+                label = "原帖图片；低优先级背景，不得单独决定当前话题"
+            elif source == "original_post":
+                label = "原帖图片；当前事件的主要背景"
+            else:
+                label = "事件图片；按当前消息语义判断是否需要"
+            lines.append(f"图片 {index}: {label}")
+        lines.append("</xiaoheihe_image_source_map>")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _coerce_compression_source(value: object) -> ThreadCompressionSource | None:
+        if value is None:
+            return None
+        fields = (
+            "post_id",
+            "post_author",
+            "post_title",
+            "post_body",
+            "recent_comments",
+            "reply_target",
+            "current_sender",
+            "current_message",
+        )
+        try:
+            values = {field: str(getattr(value, field)) for field in fields}
+        except (AttributeError, TypeError, ValueError):
+            return None
+        return ThreadCompressionSource(**values)
 
     @staticmethod
     def _grok_query_needs_event_images(tool_args: dict | None) -> bool:

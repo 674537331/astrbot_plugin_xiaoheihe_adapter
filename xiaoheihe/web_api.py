@@ -163,7 +163,7 @@ class WebApiController:
             schema = deepcopy(self.runtime.config.ui_schema())
             providers = self._provider_options()
             provider_items = schema.get("providers", {}).get("items", {})
-            for field_name in ("llm_provider_id", "image_provider_id"):
+            for field_name in ("llm_provider_id", "image_provider_id", "context_provider_id"):
                 field = provider_items.get(field_name)
                 if isinstance(field, dict):
                     field["options"] = providers
@@ -350,7 +350,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.12"},
+            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.13"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),

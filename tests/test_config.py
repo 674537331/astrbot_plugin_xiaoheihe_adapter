@@ -20,9 +20,15 @@ def test_config_defaults_and_profile(fake_config) -> None:
     assert service.snapshot()["providers"] == {
         "llm_provider_id": "",
         "image_provider_id": "",
+        "context_provider_id": "",
     }
     assert service.snapshot()["context"]["thread_reply_post_chars"] == 1600
     assert service.snapshot()["context"]["thread_reply_recent_comments"] == 12
+    assert service.snapshot()["context"]["enable_thread_reply_compression"] is True
+    assert service.snapshot()["context"]["thread_reply_compression_trigger_chars"] == 2400
+    assert service.snapshot()["context"]["thread_reply_compressed_post_chars"] == 700
+    assert service.snapshot()["context"]["thread_reply_compressed_comments_chars"] == 1400
+    assert service.snapshot()["context"]["thread_reply_compressed_image_chars"] == 800
 
 
 @pytest.mark.asyncio
@@ -77,6 +83,11 @@ def test_config_rejects_unsafe_storage_and_timeout_values(fake_config) -> None:
     with pytest.raises(ConfigValidationError, match="thread_reply_recent_comments"):
         ConfigService(invalid_context)
 
+    invalid_compression = copy.deepcopy(DEFAULT_CONFIG)
+    invalid_compression["context"]["thread_reply_compressed_post_chars"] = 100
+    with pytest.raises(ConfigValidationError, match="thread_reply_compressed_post_chars"):
+        ConfigService(invalid_compression)
+
 
 def test_config_rejects_invalid_provider_ids() -> None:
     invalid_type = copy.deepcopy(DEFAULT_CONFIG)
@@ -88,3 +99,8 @@ def test_config_rejects_invalid_provider_ids() -> None:
     too_long["providers"]["image_provider_id"] = "x" * 257
     with pytest.raises(ConfigValidationError, match="image_provider_id"):
         ConfigService(too_long)
+
+    invalid_compressor = copy.deepcopy(DEFAULT_CONFIG)
+    invalid_compressor["providers"]["context_provider_id"] = 123
+    with pytest.raises(ConfigValidationError, match="context_provider_id"):
+        ConfigService(invalid_compressor)
