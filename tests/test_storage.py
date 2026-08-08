@@ -26,6 +26,7 @@ async def test_database_migrations_and_pragmas(tmp_path) -> None:
         "runtime_errors",
         "daily_counters",
         "notification_cursors",
+        "notification_backfills",
     } <= names
     await database.close()
 
@@ -60,6 +61,7 @@ async def test_database_upgrades_v2_to_latest(tmp_path) -> None:
     assert {"retry_count", "next_retry_at"} <= names
     tables = await database.fetchall("SELECT name FROM sqlite_master WHERE type = 'table'")
     assert "notification_cursors" in {row["name"] for row in tables}
+    assert "notification_backfills" in {row["name"] for row in tables}
     counter = await database.fetchone(
         "SELECT proactive_count FROM daily_counters WHERE profile_id = 'default'"
     )

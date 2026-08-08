@@ -66,7 +66,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.13",
+    "1.2.14",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:

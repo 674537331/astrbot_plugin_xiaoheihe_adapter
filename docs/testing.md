@@ -40,6 +40,17 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
+## 2026-08-08 v1.2.14 本地结果
+
+- Pytest：`207 passed`；
+- Coverage：`82%`（启用 branch，达到 `fail_under = 80`）；
+- Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、JSON/YAML、仓库静态校验、AstrBot stub import 与 `git diff --check`：通过；
+- 通知超过单轮分页上限时会原子推进实时 cursor 并持久化旧区间 backfill；后续轮询在处理最新消息后继续消化旧区间，重建 `NotificationService` 后仍可从 SQLite offset 恢复；
+- 回填期间再次出现超过单轮窗口的新消息时会回退 backfill offset、保留最旧边界；回归测试确认中间通知最终全部进入既有幂等入站记录；
+- 长楼层压缩输入携带程序提取的昵称/UID 只读身份列表，压缩完成后身份锚点由本地代码重新附回；当前消息和直接回复对象仍保留原文；
+- 无压缩/短楼层、无图片、Grok 可选集成、Agent 最终回复聚合与原有数据库升级路径继续通过全量测试；
+- AstrBot 包级契约：4.24.2、4.26.2、4.27.2 全部通过。
+
 ## 2026-08-08 v1.2.13 本地结果
 
 - Pytest：`202 passed`；

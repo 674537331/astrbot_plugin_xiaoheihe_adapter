@@ -343,6 +343,140 @@ async def test_poll_uses_pages_and_skips_duplicate_claim(repository) -> None:
     assert len(dispatched) == 1
 
 
+async def test_poll_persists_and_drains_notification_backfill(repository) -> None:
+    def numeric_notice(identifier: int) -> Notification:
+        return replace(
+            notice(str(identifier), time.time()),
+            external_event_id=str(identifier),
+            external_comment_id=f"comment-{identifier}",
+            notification_id=str(identifier),
+            event_type=NotificationType.REPLY,
+            sender_uid=f"user-{identifier}",
+        )
+
+    class OffsetClient:
+        def __init__(self, notifications: list[Notification]) -> None:
+            self.notifications = notifications
+
+        async def fetch_notifications(self, event_type, *, cursor, page, page_size):
+            offset = int(cursor) if cursor else (page - 1) * page_size
+            selected = self.notifications[offset : offset + page_size]
+            next_offset = offset + len(selected)
+            return ApiPage(
+                items=[{"notification": item} for item in selected],
+                next_cursor=str(next_offset),
+                has_more=next_offset < len(self.notifications),
+            )
+
+    async def dispatch(*args):
+        return None
+
+    service = make_service(repository, [], dispatch)
+    service.config["polling"]["page_size"] = 2
+    service.config["polling"]["max_pages_per_poll"] = 2
+    client = OffsetClient([numeric_notice(identifier) for identifier in range(106, 99, -1)])
+    service.client = client
+    await repository.initialize_notification_cursor(
+        "default",
+        NotificationType.REPLY.value,
+        "100",
+    )
+
+    await service._poll_event_type(NotificationType.REPLY)
+
+    assert await repository.notification_cursor("default", NotificationType.REPLY.value) == "106"
+    backfill = await repository.notification_backfill("default", NotificationType.REPLY.value)
+    assert backfill is not None
+    assert backfill["boundary_event_id"] == "100"
+    assert backfill["next_offset"] == 4
+
+    await service._poll_event_type(NotificationType.REPLY)
+    backfill = await repository.notification_backfill("default", NotificationType.REPLY.value)
+    assert backfill is not None
+    assert backfill["next_offset"] == 6
+
+    # The backfill state is SQLite-backed, so a fresh service instance resumes
+    # from the saved offset instead of restarting at the newest page forever.
+    restarted = make_service(repository, [], dispatch)
+    restarted.config["polling"]["page_size"] = 2
+    restarted.config["polling"]["max_pages_per_poll"] = 2
+    restarted.client = client
+    await restarted._poll_event_type(NotificationType.REPLY)
+
+    assert await repository.notification_backfill("default", NotificationType.REPLY.value) is None
+    for identifier in range(101, 107):
+        assert await repository.event_exists("default", str(identifier))
+
+
+async def test_new_notification_burst_rewinds_existing_backfill_without_losing_gap(
+    repository,
+) -> None:
+    def numeric_notice(identifier: int) -> Notification:
+        return replace(
+            notice(str(identifier), time.time()),
+            external_event_id=str(identifier),
+            external_comment_id=f"comment-{identifier}",
+            notification_id=str(identifier),
+            event_type=NotificationType.REPLY,
+            sender_uid=f"user-{identifier}",
+        )
+
+    class OffsetClient:
+        def __init__(self, notifications: list[Notification]) -> None:
+            self.notifications = notifications
+
+        async def fetch_notifications(self, event_type, *, cursor, page, page_size):
+            offset = int(cursor) if cursor else (page - 1) * page_size
+            selected = self.notifications[offset : offset + page_size]
+            next_offset = offset + len(selected)
+            return ApiPage(
+                items=[{"notification": item} for item in selected],
+                next_cursor=str(next_offset),
+                has_more=next_offset < len(self.notifications),
+            )
+
+    async def dispatch(*args):
+        return None
+
+    service = make_service(repository, [], dispatch)
+    service.config["polling"]["page_size"] = 2
+    service.config["polling"]["max_pages_per_poll"] = 2
+    original = [numeric_notice(identifier) for identifier in range(106, 99, -1)]
+    client = OffsetClient(original)
+    service.client = client
+    await repository.initialize_notification_cursor(
+        "default",
+        NotificationType.REPLY.value,
+        "100",
+    )
+
+    await service._poll_event_type(NotificationType.REPLY)
+    await service._poll_event_type(NotificationType.REPLY)
+    progressed = await repository.notification_backfill("default", NotificationType.REPLY.value)
+    assert progressed is not None
+    assert progressed["next_offset"] == 6
+
+    client.notifications = [
+        numeric_notice(identifier) for identifier in range(110, 106, -1)
+    ] + original
+    await service._poll_event_type(NotificationType.REPLY)
+
+    assert await repository.notification_cursor("default", NotificationType.REPLY.value) == "110"
+    rewound = await repository.notification_backfill("default", NotificationType.REPLY.value)
+    assert rewound is not None
+    assert rewound["boundary_event_id"] == "100"
+    assert rewound["next_offset"] == 4
+
+    for _ in range(8):
+        if await repository.notification_backfill("default", NotificationType.REPLY.value) is None:
+            break
+        await service._poll_event_type(NotificationType.REPLY)
+
+    assert await repository.notification_backfill("default", NotificationType.REPLY.value) is None
+    for identifier in range(101, 111):
+        assert await repository.event_exists("default", str(identifier))
+
+
 async def test_message_id_baseline_blocks_history_with_missing_timestamp(repository) -> None:
     old = replace(
         notice("100", time.time()),

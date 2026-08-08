@@ -40,6 +40,12 @@ class BuiltContext:
     image_sources: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class _RenderedComments:
+    text: str
+    participants: tuple[str, ...]
+
+
 class ContextBuilder:
     def __init__(
         self,
@@ -125,11 +131,12 @@ class ContextBuilder:
             exclude_ids=excluded_comment_ids if is_thread_reply else set(),
         )
         compression_comments = comments
+        compression_participants: tuple[str, ...] = ()
         if is_thread_reply:
             # v1.2.12's small recent window remains the deterministic fallback,
             # but the semantic compressor gets a wider, still hard-bounded view
             # so it can observe topic drift that began outside the last 12 turns.
-            compression_comments = self._render_comments(
+            rendered_compression_comments = self._render_comment_context(
                 thread.comments,
                 bot_names,
                 limit=self.max_thread_comments,
@@ -137,6 +144,8 @@ class ContextBuilder:
                 exclude_ids=excluded_comment_ids,
                 total_chars=MAX_COMPRESSION_COMMENT_INPUT_CHARS,
             )
+            compression_comments = rendered_compression_comments.text
+            compression_participants = rendered_compression_comments.participants
         post_created_at = thread.post_created_at or (
             notification.created_at
             if notification.event_type is NotificationType.PROACTIVE_FEED
@@ -239,6 +248,7 @@ class ContextBuilder:
                 reply_target=reply_target,
                 current_sender=(f"{notification.sender_nickname} (UID {notification.sender_uid})"),
                 current_message=user_text,
+                recent_participants=compression_participants,
             )
         notification_image_source = "current_comment" if is_thread_reply else "original_post"
         image_urls, image_sources, warnings = await self._collect_images(
@@ -297,23 +307,52 @@ class ContextBuilder:
         exclude_ids: set[str],
         total_chars: int | None = None,
     ) -> str:
+        return self._render_comment_context(
+            comments,
+            bot_names,
+            limit=limit,
+            max_chars=max_chars,
+            exclude_ids=exclude_ids,
+            total_chars=total_chars,
+        ).text
+
+    def _render_comment_context(
+        self,
+        comments: list[dict[str, Any]],
+        bot_names: tuple[str, ...],
+        *,
+        limit: int,
+        max_chars: int,
+        exclude_ids: set[str],
+        total_chars: int | None = None,
+    ) -> _RenderedComments:
         candidates = [item for item in comments if _comment_id(item) not in exclude_ids]
         selected = candidates[-limit:] if limit > 0 else []
-        lines: list[str] = []
+        rows: list[tuple[str, str]] = []
         for index, item in enumerate(selected, start=1):
             user = item.get("user", item.get("sender", {}))
             if not isinstance(user, dict):
                 user = {}
-            nickname = str(user.get("nickname", user.get("username", user.get("name", "未知用户"))))
-            uid = str(
-                user.get(
-                    "uid",
-                    user.get(
-                        "heybox_id",
-                        user.get("user_id", user.get("userid", user.get("id", ""))),
-                    ),
-                )
+            nickname = (
+                clean_untrusted_text(
+                    str(user.get("nickname", user.get("username", user.get("name", "未知用户")))),
+                    max_chars=80,
+                ).replace("\n", " ")
+                or "未知用户"
             )
+            uid = clean_untrusted_text(
+                str(
+                    user.get(
+                        "uid",
+                        user.get(
+                            "heybox_id",
+                            user.get("user_id", user.get("userid", user.get("id", ""))),
+                        ),
+                    )
+                ),
+                max_chars=80,
+            ).replace("\n", " ")
+            identity = f"{nickname} (UID {uid or '未知'})"
             content = clean_untrusted_text(
                 str(item.get("content", item.get("text", ""))),
                 bot_names=bot_names,
@@ -327,22 +366,32 @@ class ContextBuilder:
             )
             relation = f" 回复评论 {parent}" if parent else ""
             comment_time = _comment_created_at(item)
-            lines.append(
-                f"{index}. [{_format_shanghai_time(comment_time)}] "
-                f"{nickname} (UID {uid}){relation}: {content}"
+            rows.append(
+                (
+                    f"{index}. [{_format_shanghai_time(comment_time)}] "
+                    f"{identity}{relation}: {content}",
+                    identity,
+                )
             )
-        if total_chars is not None and lines:
+        if total_chars is not None and rows:
             budget = max(1, int(total_chars))
-            kept_reversed: list[str] = []
+            kept_reversed: list[tuple[str, str]] = []
             used = 0
-            for line in reversed(lines):
+            for row in reversed(rows):
+                line = row[0]
                 separator = 1 if kept_reversed else 0
                 if used + separator + len(line) > budget:
                     break
-                kept_reversed.append(line)
+                kept_reversed.append(row)
                 used += separator + len(line)
-            lines = list(reversed(kept_reversed))
-        return "\n".join(lines) if lines else "[无可用楼层上下文]"
+            rows = list(reversed(kept_reversed))
+        if not rows:
+            return _RenderedComments("[无可用楼层上下文]", ())
+        participants = tuple(dict.fromkeys(identity for _, identity in rows))
+        return _RenderedComments(
+            "\n".join(line for line, _ in rows),
+            participants,
+        )
 
     def _render_reply_target(
         self,

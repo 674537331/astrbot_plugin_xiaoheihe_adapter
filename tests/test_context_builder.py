@@ -242,6 +242,10 @@ async def test_thread_reply_focus_bounds_post_and_recent_comments_around_direct_
     assert "post-0100" in result.compression_source.post_body
     assert "topic-00" in result.compression_source.recent_comments
     assert "topic-16" in result.compression_source.recent_comments
+    assert "用户00 (UID user-00)" in result.compression_source.recent_participants
+    assert "用户19 (UID user-19)" in result.compression_source.recent_participants
+    assert "用户03 (UID user-03)" not in result.compression_source.recent_participants
+    assert "当前用户 (UID speaker)" not in result.compression_source.recent_participants
     assert result.compression_source.current_message == "电影第二部到底怎么样？"
     assert result.compression_source.reply_target.endswith("我们已经歪楼聊到电影了")
 
