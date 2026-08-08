@@ -231,6 +231,7 @@ async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
         reply_target="B (UID b): 第二部挺好",
         current_sender="C (UID c)",
         current_message="那第一部呢？",
+        recent_participants=("A (UID a)", "B (UID b)"),
     )
     extras = {
         "xiaoheihe_dynamic_context": "LEGACY-FALLBACK",
@@ -262,11 +263,18 @@ async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
     assert compressor.calls[0]["persist"] is False
     assert "不可信社区数据" in compressor.calls[0]["prompt"]
     assert "那第一部呢？" in compressor.calls[0]["prompt"]
+    assert (
+        '"recent_thread_participants_read_only":["A (UID a)","B (UID b)"]'
+        in (compressor.calls[0]["prompt"])
+    )
     assert len(request.extra_user_content_parts) == 3
     assert request.extra_user_content_parts[0].temp is False
     compressed = request.extra_user_content_parts[1].text
     assert 'compression="llm"' in compressed
     assert "A 和 B 已经转而讨论电影续作" in compressed
+    assert "最近楼层参与者身份锚点（程序保留，昵称/UID 未经过 LLM 改写）" in compressed
+    assert "- A (UID a)" in compressed
+    assert "- B (UID b)" in compressed
     assert "已明显偏离原帖" in compressed
     assert "FALLBACK-SHOULD-BE-REPLACED" not in compressed
     assert request.extra_user_content_parts[-1].text == "<focus>FINAL-FOCUS</focus>"
@@ -411,6 +419,84 @@ async def test_plugin_short_thread_skips_context_compressor(isolated_smoke_impor
 
     assert selected is None
     assert compressor.calls == []
+    await plugin.terminate()
+
+
+async def test_failed_context_provider_enters_cooldown_and_is_not_retried_each_event(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Compressor:
+        def __init__(self) -> None:
+            self.provider_config = {"id": "compress-fixed", "modalities": ["text"]}
+            self.calls = 0
+
+        async def text_chat(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("provider offline")
+
+    compressor = Compressor()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return compressor if provider_id == "compress-fixed" else None
+
+        def get_using_provider(self, umo=None):
+            return None
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {"context_provider_id": "compress-fixed"},
+                "context": {"thread_reply_compression_trigger_chars": 500},
+            }
+        ),
+    )
+    source = ThreadCompressionSource(
+        "post-1",
+        "楼主",
+        "标题",
+        "正文" * 300,
+        "最近评论",
+        "直接回复",
+        "用户",
+        "当前消息",
+    )
+    event = type("Event", (), {"unified_msg_origin": "xiaoheihe:test"})()
+    settings = plugin.runtime.config.snapshot()
+
+    first = await plugin._compress_thread_context(
+        event,
+        source,
+        provider_settings=settings["providers"],
+        context_settings=settings["context"],
+        profile_id="default",
+    )
+    second = await plugin._compress_thread_context(
+        event,
+        source,
+        provider_settings=settings["providers"],
+        context_settings=settings["context"],
+        profile_id="default",
+    )
+
+    assert first is None and second is None
+    assert compressor.calls == 1
+    assert plugin.runtime._aux_provider_cooldowns
     await plugin.terminate()
 
 
@@ -886,6 +972,18 @@ async def test_thread_reply_image_provider_compresses_sources_before_final_focus
     assert 'source="original_post" priority="low"' in post_block
     assert len(post_block.splitlines()[2]) == 800
     assert request.extra_user_content_parts[-1].text == "FINAL-FOCUS"
+
+    second_request = ProviderRequest()
+    second_request.image_urls = [
+        "https://images.example.test/current.png",
+        "https://images.example.test/post.png",
+    ]
+    await plugin.inject_xiaoheihe_context(event, second_request)
+
+    assert len(image_provider.calls) == 3
+    assert [call["image_urls"] for call in image_provider.calls].count(
+        ["https://images.example.test/post.png"]
+    ) == 1
     await plugin.terminate()
 
 
@@ -1176,7 +1274,9 @@ async def test_thread_reply_image_preprocess_fail_closed_for_post_but_keeps_curr
 
     assert request.image_urls == ["https://images.example.test/current.png"]
     assert extras["xiaoheihe_image_sources"] == ["current_comment"]
-    assert len(main_provider.calls) == 2
+    # The first failed auxiliary call cools this provider immediately, so the
+    # original-post group does not pay for a second known-bad request.
+    assert len(main_provider.calls) == 1
     assert any(
         "原帖图片 1 张的视觉预处理失败，原图已从最终回答模型输入中移除" in part.text
         for part in request.extra_user_content_parts

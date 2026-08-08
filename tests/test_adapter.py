@@ -83,6 +83,9 @@ class FakeRuntime:
         self.credentials = FakeCredentials()
         self.deliveries = []
 
+    async def get_client(self, profile_id):
+        return type("Client", (), {"credentials": self.credentials.load(profile_id)})()
+
     async def deliver(self, **kwargs):
         self.deliveries.append(kwargs)
 

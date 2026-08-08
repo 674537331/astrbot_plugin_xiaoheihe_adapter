@@ -435,6 +435,7 @@ async function loadStatus() {
     metric("数据库", bytes(state.status.database_size)),
     metric("日志", bytes(state.status.log_size)),
     metric("后台任务", (state.status.tasks || []).length),
+    metric("辅助模型冷却", (state.status.provider_cooldowns || []).length),
     metric(
       "熔断状态",
       Number(first.circuit_open_until || 0) > Date.now() / 1000 ? "已打开" : "正常",
@@ -446,6 +447,7 @@ async function loadStatus() {
     ["实例 ID", "profile_id", "运行状态"],
     adapters.map((item) => [item.id, item.profile_id, item.running ? "运行中" : "停止"]),
   ));
+  renderProviderCooldowns();
   const alerts = $("alerts");
   alerts.replaceChildren();
   (state.status.alerts || []).forEach((item) => {
@@ -454,6 +456,59 @@ async function loadStatus() {
     node.textContent = item.message;
     alerts.append(node);
   });
+}
+
+function renderProviderCooldowns() {
+  const host = $("provider-cooldown-list");
+  const cooldowns = state.status.provider_cooldowns || [];
+  if (!cooldowns.length) {
+    host.textContent = "当前没有辅助模型处于冷却状态。";
+    return;
+  }
+  const tableNode = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["账号", "用途", "Provider", "剩余", "最近错误", "操作"].forEach((label) => {
+    const cell = document.createElement("th");
+    cell.textContent = label;
+    headRow.append(cell);
+  });
+  head.append(headRow);
+  const body = document.createElement("tbody");
+  cooldowns.forEach((item) => {
+    const row = document.createElement("tr");
+    const purpose = item.purpose === "image" ? "图片转述" : "楼层上下文压缩";
+    [
+      item.profile_id,
+      purpose,
+      item.provider_id,
+      `${Number(item.remaining_seconds || 0)} 秒`,
+      item.last_error,
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = text(value);
+      row.append(cell);
+    });
+    const actionCell = document.createElement("td");
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "secondary";
+    clear.textContent = "结束冷却";
+    clear.addEventListener("click", () => busy(clear, async () => {
+      await bridge.apiPost("status/provider-cooldown/clear", {
+        profile_id: item.profile_id,
+        purpose: item.purpose,
+        provider_id: item.provider_id,
+      });
+      await loadStatus();
+      toast("已结束辅助模型冷却；下次需要时会重新尝试。", "success");
+    }));
+    actionCell.append(clear);
+    row.append(actionCell);
+    body.append(row);
+  });
+  tableNode.append(head, body);
+  host.replaceChildren(tableNode);
 }
 
 async function loadLogin() {

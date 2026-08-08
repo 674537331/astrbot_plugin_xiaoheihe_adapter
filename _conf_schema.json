@@ -188,7 +188,8 @@
       "context_cache_ttl_seconds": {
         "description": "上下文缓存 TTL",
         "type": "int",
-        "default": 300
+        "default": 60,
+        "hint": "活跃评论楼层默认只缓存 60 秒，减少近期评论滞后；同一楼层并发读取会自动合并为一次请求。"
       },
       "context_cache_max_entries": {
         "description": "上下文缓存最大条目",
@@ -204,16 +205,6 @@
         "description": "每事件最大图片数",
         "type": "int",
         "default": 6
-      },
-      "max_image_size_mb": {
-        "description": "单图上限 MB",
-        "type": "int",
-        "default": 8
-      },
-      "max_total_image_size_mb": {
-        "description": "单事件图片总上限 MB",
-        "type": "int",
-        "default": 24
       },
       "image_timeout_seconds": {
         "description": "图片读取超时",
@@ -487,11 +478,6 @@
         "description": "日志总上限 MB",
         "type": "int",
         "default": 100
-      },
-      "image_cache_soft_limit_mb": {
-        "description": "图片缓存软上限 MB",
-        "type": "int",
-        "default": 200
       }
     }
   },

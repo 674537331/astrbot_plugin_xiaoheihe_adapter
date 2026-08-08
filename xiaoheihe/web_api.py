@@ -26,6 +26,12 @@ class WebApiController:
     def register(self, context) -> None:
         routes = (
             ("status", self.status, ["GET"], "小黑盒状态总览"),
+            (
+                "status/provider-cooldown/clear",
+                self.clear_provider_cooldown,
+                ["POST"],
+                "手动结束辅助模型冷却",
+            ),
             ("auth/qr", self.auth_qr, ["POST"], "获取小黑盒登录二维码"),
             ("auth/status", self.auth_status, ["GET"], "读取登录状态"),
             ("auth/check", self.auth_check, ["POST"], "检查扫码或凭证"),
@@ -81,6 +87,29 @@ class WebApiController:
             return json_response(await self.runtime.status())
         except Exception as exc:
             return error_response(f"读取状态失败: {_safe_error(exc)}", status_code=500)
+
+    async def clear_provider_cooldown(self):
+        if response := self._unauthorized():
+            return response
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("冷却操作请求体必须是对象", status_code=400)
+        try:
+            profile_id = validate_profile_id(str(payload.get("profile_id", "default")))
+            purpose = str(payload.get("purpose", "")).strip()
+            provider_id = str(payload.get("provider_id", "")).strip()
+            if purpose not in {"context", "image"}:
+                raise ValueError("purpose 必须是 context 或 image")
+            if not provider_id or len(provider_id) > 256:
+                raise ValueError("provider_id 无效")
+            cleared = self.runtime.clear_auxiliary_provider_cooldown(
+                profile_id,
+                purpose,
+                provider_id,
+            )
+            return json_response({"cleared": cleared})
+        except (SecurityError, ValueError) as exc:
+            return error_response(str(exc), status_code=400)
 
     async def auth_qr(self):
         if response := self._unauthorized():

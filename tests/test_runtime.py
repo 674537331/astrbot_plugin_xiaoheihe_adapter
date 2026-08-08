@@ -210,6 +210,52 @@ async def test_runtime_reports_astrbot_segmented_reply(tmp_path, fake_config) ->
     await runtime.close()
 
 
+async def test_auxiliary_provider_cooldown_is_visible_logged_once_and_manual_clearable(
+    tmp_path,
+    fake_config,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+
+    class ForbiddenError(RuntimeError):
+        status_code = 403
+
+    assert RuntimeServices._aux_provider_cooldown_seconds(RuntimeError("Error code: 403")) == 300
+
+    runtime.report_auxiliary_provider_failure(
+        "default",
+        "image",
+        "vision-fixed",
+        ForbiddenError("403 forbidden"),
+    )
+    runtime.report_auxiliary_provider_failure(
+        "default",
+        "image",
+        "vision-fixed",
+        ForbiddenError("403 forbidden again"),
+    )
+
+    assert runtime.auxiliary_provider_available("default", "image", "vision-fixed") is False
+    status = await runtime.status()
+    assert len(status["provider_cooldowns"]) == 1
+    cooldown = status["provider_cooldowns"][0]
+    assert cooldown["provider_id"] == "vision-fixed"
+    assert cooldown["purpose"] == "image"
+    assert 1 <= cooldown["remaining_seconds"] <= 300
+    assert any("vision-fixed" in alert["message"] for alert in status["alerts"])
+    matching_logs = [
+        entry
+        for entry in runtime.logging.list()
+        if "辅助模型调用失败，已进入冷却" in entry["message"]
+    ]
+    assert len(matching_logs) == 1
+
+    assert runtime.clear_auxiliary_provider_cooldown("default", "image", "vision-fixed") is True
+    assert runtime.auxiliary_provider_available("default", "image", "vision-fixed") is True
+    assert (await runtime.status())["provider_cooldowns"] == []
+    assert any("WebUI 手动结束" in entry["message"] for entry in runtime.logging.list())
+    await runtime.close()
+
+
 async def test_runtime_persists_missing_web_client_identity(
     tmp_path,
     fake_config,

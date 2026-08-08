@@ -45,12 +45,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "thread_reply_compressed_comments_chars": 1400,
         "thread_reply_compressed_image_chars": 800,
         "thread_reply_compression_timeout_seconds": 30,
-        "context_cache_ttl_seconds": 300,
+        "context_cache_ttl_seconds": 60,
         "context_cache_max_entries": 256,
         "enable_image_understanding": True,
         "max_images_per_event": 6,
-        "max_image_size_mb": 8,
-        "max_total_image_size_mb": 24,
         "image_timeout_seconds": 15,
     },
     "reply": {
@@ -101,7 +99,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "database_warn_mb": 150,
         "database_soft_limit_mb": 200,
         "log_total_limit_mb": 100,
-        "image_cache_soft_limit_mb": 200,
     },
     "logging": {"level": "INFO", "max_memory_entries": 2000},
 }
@@ -245,13 +242,9 @@ class ConfigService:
         _bounded_int(context, "thread_reply_compressed_image_chars", 200, 4000)
         _bounded_int(context, "thread_reply_compression_timeout_seconds", 3, 120)
         _bounded_int(context, "max_images_per_event", 0, 20)
-        _bounded_int(context, "max_image_size_mb", 1, 32)
-        _bounded_int(context, "max_total_image_size_mb", 1, 128)
         _bounded_int(context, "context_cache_ttl_seconds", 10, 86400)
         _bounded_int(context, "context_cache_max_entries", 1, 4096)
         _bounded_int(context, "image_timeout_seconds", 1, 120)
-        if context["max_total_image_size_mb"] < context["max_image_size_mb"]:
-            raise ConfigValidationError("图片总上限不能小于单图上限")
 
         reply = _object(config, "reply")
         _bounded_int(reply, "max_reply_chars", 1, 5000)
@@ -322,7 +315,6 @@ class ConfigService:
         _bounded_int(retention, "database_warn_mb", 1, 10240)
         _bounded_int(retention, "database_soft_limit_mb", 1, 10240)
         _bounded_int(retention, "log_total_limit_mb", 5, 2048)
-        _bounded_int(retention, "image_cache_soft_limit_mb", 1, 10240)
         if retention["database_soft_limit_mb"] < retention["database_warn_mb"]:
             raise ConfigValidationError("数据库软上限不能小于警告阈值")
 

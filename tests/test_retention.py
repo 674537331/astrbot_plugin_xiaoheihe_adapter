@@ -109,3 +109,77 @@ async def test_soft_limit_prunes_only_low_priority_content(repository) -> None:
     assert pending["content"] == "body"
     assert pending["raw_json"]
     assert pending["status"] == EventState.CLAIMED.value
+
+
+async def test_cleanup_bounds_completed_metadata_by_dedup_retention(repository) -> None:
+    now = time.time()
+    old = now - 366 * 86400
+    notification = old_notification("metadata", old)
+    event_id = await repository.claim_event(notification)
+    await repository.mark_event(event_id, EventState.SENT, reply_text="reply")
+    outgoing_id = await repository.record_outgoing_attempt(
+        "default",
+        event_id,
+        notification.route,
+        "reply",
+        status="sending",
+    )
+    await repository.confirm_outgoing(outgoing_id, "self-old")
+    await repository.db.execute(
+        "UPDATE incoming_events SET completed_at = ?, updated_at = ? WHERE id = ?",
+        (old, old, event_id),
+    )
+    await repository.db.execute(
+        "UPDATE outgoing_replies SET attempted_at = ?, confirmed_at = ? WHERE id = ?",
+        (old, old, outgoing_id),
+    )
+    await repository.db.execute(
+        "UPDATE self_comment_ids SET created_at = ? WHERE external_comment_id = 'self-old'",
+        (old,),
+    )
+    await repository.db.execute(
+        """
+        INSERT INTO daily_counters(profile_id, day, reply_count, proactive_count, error_count)
+        VALUES ('default', '2025-01-01', 1, 0, 0)
+        """
+    )
+    await repository.db.execute(
+        """
+        INSERT INTO feed_candidates(
+            profile_id, post_id, generated_text, status, created_at, reviewed_at
+        ) VALUES ('default', 'old-feed', 'old', 'rejected', ?, ?)
+        """,
+        (old, old),
+    )
+
+    removed = await repository.cleanup(DEFAULT_CONFIG["retention"], now=now)
+
+    assert removed["outgoing_replies"] >= 1
+    assert removed["incoming_events"] >= 1
+    assert removed["self_comment_ids"] >= 1
+    assert removed["daily_counters"] >= 1
+    assert removed["feed_candidates"] >= 1
+    assert (
+        await repository.db.fetchone(
+            "SELECT 1 FROM self_comment_ids WHERE external_comment_id = 'self-old'"
+        )
+        is None
+    )
+
+
+async def test_cleanup_drains_more_than_one_500_row_batch(repository) -> None:
+    now = time.time()
+    old = now - 181 * 86400
+    async with repository.db.transaction() as connection:
+        await connection.executemany(
+            """
+            INSERT INTO session_mappings(
+                profile_id, session_id, post_id, root_comment_id, last_used_at
+            ) VALUES ('default', ?, 'p', 'r', ?)
+            """,
+            [(f"old-session-{index}", old) for index in range(510)],
+        )
+
+    removed = await repository.cleanup(DEFAULT_CONFIG["retention"], now=now)
+
+    assert removed["session_mappings"] == 510

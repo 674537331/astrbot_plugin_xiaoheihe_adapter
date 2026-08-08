@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 from tests.helpers import load_fixture
 from xiaoheihe.context_builder import ContextBuilder
 from xiaoheihe.models import Notification, NotificationType, ThreadContext
@@ -10,7 +13,9 @@ from xiaoheihe.security import clean_untrusted_text
 class FakeClient:
     calls = 0
 
-    async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+    async def fetch_thread_context(
+        self, post_id: str, *, root_comment_id: str = "", post_context=None
+    ):
         from xiaoheihe.parsers import parse_thread_context
 
         self.calls += 1
@@ -46,6 +51,102 @@ async def test_context_is_clean_bounded_and_cached() -> None:
     assert "不得因共享会话历史把不同 UID 当成同一人" in result.dynamic_context
     assert "不得把系统处理时间归因给作者" in result.dynamic_context
     assert result_again.thread.post_id == result.thread.post_id
+
+
+async def test_context_cache_singleflights_same_floor_misses() -> None:
+    notification = Notification(
+        profile_id="default",
+        external_event_id="singleflight",
+        external_comment_id="comment-current",
+        notification_id="singleflight",
+        event_type=NotificationType.REPLY,
+        sender_uid="speaker",
+        sender_nickname="当前用户",
+        post_id="post-singleflight",
+        root_comment_id="root-singleflight",
+        parent_comment_id="root-singleflight",
+        content="并发消息",
+        created_at=1_800_000_000,
+    )
+
+    class SlowClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
+            self.calls += 1
+            await asyncio.sleep(0.02)
+            return ThreadContext(post_id, "标题", "正文", "author", "楼主", [])
+
+    client = SlowClient()
+    builder = ContextBuilder(host_resolver=public_resolver)
+    results = await asyncio.gather(*(builder.build(notification, client) for _ in range(6)))
+
+    assert client.calls == 1
+    assert all(result.thread.post_id == "post-singleflight" for result in results)
+    await builder.clear()
+
+
+async def test_active_floor_cache_refreshes_for_notification_observed_after_fetch() -> None:
+    base = time.time()
+
+    def make_notification(identifier: str, observed_at: float) -> Notification:
+        return Notification(
+            profile_id="default",
+            external_event_id=identifier,
+            external_comment_id=f"comment-{identifier}",
+            notification_id=identifier,
+            event_type=NotificationType.REPLY,
+            sender_uid="speaker",
+            sender_nickname="用户",
+            post_id="post-refresh",
+            root_comment_id="root-refresh",
+            parent_comment_id="root-refresh",
+            content=identifier,
+            created_at=base,
+            observed_at=observed_at,
+        )
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
+            self.calls += 1
+            return ThreadContext(post_id, "标题", "正文", "author", "楼主", [])
+
+    client = Client()
+    builder = ContextBuilder(cache_ttl_seconds=300, host_resolver=public_resolver)
+    await builder.build(make_notification("first", base), client)
+    await builder.build(make_notification("second", base + 60), client)
+
+    assert client.calls == 2
+
+
+async def test_image_host_resolution_is_reused_within_one_event() -> None:
+    calls: list[str] = []
+
+    async def counting_resolver(hostname: str) -> set[str]:
+        calls.append(hostname)
+        return {"203.0.113.10"}
+
+    builder = ContextBuilder(max_images=4, host_resolver=counting_resolver)
+    urls, sources, warnings = await builder._collect_images(
+        [
+            ("https://cdn.example.com/a.png", "current_comment"),
+            ("https://cdn.example.com/b.png", "original_post"),
+            ("https://cdn.example.com/a.png", "original_post"),
+        ]
+    )
+
+    assert urls == ["https://cdn.example.com/a.png", "https://cdn.example.com/b.png"]
+    assert sources == ["current_comment", "original_post"]
+    assert warnings == []
+    assert calls == ["cdn.example.com"]
 
 
 async def test_comment_mention_includes_comment_and_original_post_media() -> None:
@@ -86,7 +187,9 @@ async def test_comment_mention_includes_comment_and_original_post_media() -> Non
     )
 
     class CommentTreeOnlyClient:
-        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
             return ThreadContext(
                 post_id=post_id,
                 title="",
@@ -140,7 +243,9 @@ async def test_proactive_context_strictly_separates_author_and_system_times(
     )
 
     class TimedClient:
-        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
             return ThreadContext(
                 post_id=post_id,
                 title="教程",
@@ -206,7 +311,9 @@ async def test_thread_reply_focus_bounds_post_and_recent_comments_around_direct_
     )
 
     class FocusClient:
-        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
             return ThreadContext(
                 post_id=post_id,
                 title="原帖是显卡讨论",
@@ -269,7 +376,9 @@ async def test_proactive_feed_keeps_full_post_budget_and_post_focus() -> None:
     )
 
     class FeedFocusClient:
-        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
             return ThreadContext(
                 post_id=post_id,
                 title="主动帖子",
@@ -332,7 +441,9 @@ async def test_thread_compression_input_stays_hard_bounded_beyond_fallback_windo
     )
 
     class LargeThreadClient:
-        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
             return ThreadContext(
                 post_id=post_id,
                 title="超长原帖",

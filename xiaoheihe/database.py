@@ -250,6 +250,19 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON notification_backfills(updated_at);
         """,
     ),
+    (
+        8,
+        """
+        CREATE INDEX IF NOT EXISTS idx_self_comment_post
+            ON self_comment_ids(profile_id, post_id);
+        CREATE INDEX IF NOT EXISTS idx_self_comment_created
+            ON self_comment_ids(created_at);
+        CREATE INDEX IF NOT EXISTS idx_incoming_status_completed
+            ON incoming_events(status, completed_at);
+        CREATE INDEX IF NOT EXISTS idx_daily_counters_day
+            ON daily_counters(day);
+        """,
+    ),
 )
 
 MIGRATION_MARKERS = {
@@ -260,6 +273,7 @@ MIGRATION_MARKERS = {
     5: "INSERT INTO schema_migrations(version) VALUES (5);",
     6: "INSERT INTO schema_migrations(version) VALUES (6);",
     7: "INSERT INTO schema_migrations(version) VALUES (7);",
+    8: "INSERT INTO schema_migrations(version) VALUES (8);",
 }
 
 

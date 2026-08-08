@@ -14,7 +14,7 @@ from xiaoheihe.api_client import (
     XiaoheiheApiClient,
     XiaoheiheApiError,
 )
-from xiaoheihe.models import Credentials, NotificationType, RoutingTarget
+from xiaoheihe.models import Credentials, NotificationType, RoutingTarget, ThreadContext
 from xiaoheihe.rate_limiter import AsyncRateLimiter
 
 
@@ -96,6 +96,53 @@ async def test_comment_context_merges_original_post_and_root_comment_tree() -> N
     assert context.body == "原帖正文"
     assert context.image_urls == ["https://cdn.example.com/post.png"]
     assert context.comments[0]["content"] == "楼层内容"
+    await client.close()
+    await http_client.aclose()
+
+
+async def test_comment_context_uses_notification_snapshot_without_duplicate_post_request() -> None:
+    observed: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = dict(request.url.params)
+        observed.append(query)
+        assert query.get("root_comment_id") == "root-1"
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "result": {
+                    "link": {"linkid": "30003"},
+                    "comments": [
+                        {
+                            "id": "root-1",
+                            "content": "楼层内容",
+                            "user": {"userid": "user", "username": "用户"},
+                        }
+                    ],
+                },
+            },
+        )
+
+    snapshot = ThreadContext(
+        post_id="30003",
+        title="通知内标题",
+        body="通知内正文",
+        author_uid="author",
+        author_name="作者",
+        comments=[],
+    )
+    client, http_client = client_with_handler(handler)
+    context = await client.fetch_thread_context(
+        "30003",
+        root_comment_id="root-1",
+        post_context=snapshot,
+    )
+
+    assert len(observed) == 1
+    assert context.title == "通知内标题"
+    assert context.body == "通知内正文"
+    assert context.comments[0]["id"] == "root-1"
     await client.close()
     await http_client.aclose()
 
