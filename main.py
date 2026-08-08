@@ -51,6 +51,8 @@ GROK_QUERY_REQUIREMENT = (
     "不要只描述随事件附带的图片，也不要返回‘稍后再查’之类的占位回答。"
 )
 SENDER_IDENTITY_TAG = "xiaoheihe_sender_identity"
+MAX_IMAGE_PREPROCESS_BUDGET_SECONDS = 60.0
+MIN_IMAGE_REPLY_GRACE_SECONDS = 15.0
 
 try:
     from .xiaoheihe.web_api import WebApiController
@@ -368,6 +370,12 @@ class XiaoheiheAdapterPlugin(Star):
         for url, source in zip(request.image_urls, sources, strict=True):
             grouped[source].append(url)
 
+        budget_seconds = self._image_preprocess_budget_seconds(
+            event,
+            context_settings=context_settings,
+            image_count=len(request.image_urls),
+        )
+        deadline = asyncio.get_running_loop().time() + budget_seconds
         remaining_urls: list[str] = []
         remaining_sources: list[str] = []
         for source in ("current_comment", "original_post", "event_image"):
@@ -381,6 +389,7 @@ class XiaoheiheAdapterPlugin(Star):
                 provider_settings=provider_settings,
                 profile_id=profile_id,
                 context_settings=context_settings,
+                deadline=deadline,
             )
             if rendered:
                 request.extra_user_content_parts.append(TextPart(text=rendered).mark_as_temp())
@@ -429,6 +438,7 @@ class XiaoheiheAdapterPlugin(Star):
         provider_settings: dict,
         profile_id: str,
         context_settings: dict,
+        deadline: float,
     ) -> str | None:
         compressed_image_chars = int(context_settings["thread_reply_compressed_image_chars"])
         if source == "original_post":
@@ -462,6 +472,7 @@ class XiaoheiheAdapterPlugin(Star):
                 max_chars=max_chars,
                 priority=priority,
                 profile_id=profile_id,
+                deadline=deadline,
             )
             if rendered:
                 return rendered
@@ -487,6 +498,7 @@ class XiaoheiheAdapterPlugin(Star):
                         max_chars=max_chars,
                         priority=priority,
                         profile_id=profile_id,
+                        deadline=deadline,
                     )
                     if rendered:
                         return rendered
@@ -502,6 +514,7 @@ class XiaoheiheAdapterPlugin(Star):
         max_chars: int,
         priority: str,
         profile_id: str,
+        deadline: float,
     ) -> str | None:
         if not self._provider_may_accept_images(provider):
             self.runtime.logging.emit(
@@ -514,15 +527,28 @@ class XiaoheiheAdapterPlugin(Star):
         text_chat = getattr(provider, "text_chat", None)
         if not callable(text_chat):
             return None
+        remaining_seconds = deadline - asyncio.get_running_loop().time()
+        if remaining_seconds <= 0:
+            self.runtime.logging.emit(
+                "WARNING",
+                "图片预处理总时间预算已耗尽，停止尝试其他 Provider",
+                profile_id=profile_id,
+                details={"provider_id": provider_label, "source": source},
+            )
+            return None
         try:
-            response = await text_chat(
-                prompt=build_image_compression_prompt(
-                    source=source,
-                    max_chars=max_chars,
+            response = await asyncio.wait_for(
+                text_chat(
+                    prompt=build_image_compression_prompt(
+                        source=source,
+                        max_chars=max_chars,
+                    ),
+                    session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
+                    image_urls=urls,
+                    persist=False,
+                    request_max_retries=1,
                 ),
-                session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
-                image_urls=urls,
-                persist=False,
+                timeout=remaining_seconds,
             )
             caption = clean_untrusted_text(
                 str(getattr(response, "completion_text", "") or ""),
@@ -530,6 +556,18 @@ class XiaoheiheAdapterPlugin(Star):
             )
             if not caption:
                 raise ValueError("图片预处理 Provider 返回空描述")
+        except TimeoutError:
+            self.runtime.logging.emit(
+                "WARNING",
+                "图片预处理达到本轮总时间预算，立即进入降级路径",
+                profile_id=profile_id,
+                details={
+                    "provider_id": provider_label,
+                    "source": source,
+                    "timeout_seconds": round(max(0.0, remaining_seconds), 3),
+                },
+            )
+            return None
         except Exception as exc:
             self.runtime.logging.emit(
                 "WARNING",
@@ -553,6 +591,39 @@ class XiaoheiheAdapterPlugin(Star):
         if not isinstance(modalities, list) or not modalities:
             return True
         return "image" in {str(modality).strip().casefold() for modality in modalities}
+
+    @staticmethod
+    def _image_preprocess_budget_seconds(
+        event: AstrMessageEvent,
+        *,
+        context_settings: dict,
+        image_count: int,
+    ) -> float:
+        """Bound image-caption calls to the extra image grace, capped per event."""
+        count = max(0, int(image_count))
+        if count == 0:
+            return 0.0
+
+        raw_message = getattr(getattr(event, "message_obj", None), "raw_message", {})
+        if isinstance(raw_message, dict):
+            try:
+                base_timeout = float(raw_message.get("reply_timeout_base_seconds", 0) or 0)
+                effective_timeout = float(
+                    raw_message.get("reply_timeout_effective_seconds", 0) or 0
+                )
+            except (TypeError, ValueError):
+                base_timeout = 0.0
+                effective_timeout = 0.0
+            grace_seconds = effective_timeout - base_timeout
+            if base_timeout > 0 and grace_seconds > 0:
+                return min(MAX_IMAGE_PREPROCESS_BUDGET_SECONDS, grace_seconds)
+
+        image_timeout = max(1.0, float(context_settings.get("image_timeout_seconds", 15)))
+        per_image_grace = max(MIN_IMAGE_REPLY_GRACE_SECONDS, image_timeout * 2)
+        return min(
+            MAX_IMAGE_PREPROCESS_BUDGET_SECONDS,
+            per_image_grace * count,
+        )
 
     @staticmethod
     def _render_blocked_thread_image_notice(*, source: str, image_count: int) -> str:
@@ -614,6 +685,12 @@ class XiaoheiheAdapterPlugin(Star):
 
         rendered: list[str] = []
         compressed_image_chars = int(context_settings["thread_reply_compressed_image_chars"])
+        budget_seconds = self._image_preprocess_budget_seconds(
+            event,
+            context_settings=context_settings,
+            image_count=len(request.image_urls),
+        )
+        deadline = asyncio.get_running_loop().time() + budget_seconds
         try:
             for source, urls in groups:
                 if is_thread_reply and source == "original_post":
@@ -625,14 +702,21 @@ class XiaoheiheAdapterPlugin(Star):
                 else:
                     max_chars = max(2400, compressed_image_chars)
                     priority = "primary"
-                response = await provider.text_chat(
-                    prompt=build_image_compression_prompt(
-                        source=source,
-                        max_chars=max_chars,
+                remaining_seconds = deadline - asyncio.get_running_loop().time()
+                if remaining_seconds <= 0:
+                    raise TimeoutError("图片预处理总时间预算已耗尽")
+                response = await asyncio.wait_for(
+                    provider.text_chat(
+                        prompt=build_image_compression_prompt(
+                            source=source,
+                            max_chars=max_chars,
+                        ),
+                        session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
+                        image_urls=urls,
+                        persist=False,
+                        request_max_retries=1,
                     ),
-                    session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
-                    image_urls=urls,
-                    persist=False,
+                    timeout=remaining_seconds,
                 )
                 caption = clean_untrusted_text(
                     str(getattr(response, "completion_text", "") or ""),

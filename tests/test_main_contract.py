@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
@@ -413,6 +414,55 @@ async def test_plugin_short_thread_skips_context_compressor(isolated_smoke_impor
     await plugin.terminate()
 
 
+async def test_no_image_or_long_thread_does_not_add_preprocess_provider_calls(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            raise AssertionError("no-image path must not resolve a preprocessing provider")
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("no-image path must not resolve the current provider")
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": default,
+        },
+    )()
+    request = ProviderRequest()
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    assert len(request.extra_user_content_parts) == 1
+    await plugin.terminate()
+
+
 async def test_plugin_tracks_agent_lifecycle_for_xiaoheihe(isolated_smoke_import) -> None:
     root = Path.cwd()
     spec = importlib.util.spec_from_file_location(
@@ -730,6 +780,7 @@ async def test_plugin_uses_fixed_image_provider_and_keeps_caption_temporary(
     assert request.image_urls == []
     assert len(image_provider.calls) == 1
     assert image_provider.calls[0]["image_urls"] == ["https://images.example.test/a.png"]
+    assert image_provider.calls[0]["request_max_retries"] == 1
     assert request.extra_user_content_parts[-1].temp is True
     assert "识别到一张测试图片" in request.extra_user_content_parts[-1].text
     await plugin.terminate()
@@ -927,6 +978,7 @@ async def test_thread_reply_without_fixed_image_provider_preprocesses_with_main_
     assert len(main_provider.calls) == 1
     assert main_provider.calls[0]["image_urls"] == ["https://images.example.test/post.png"]
     assert main_provider.calls[0]["persist"] is False
+    assert main_provider.calls[0]["request_max_retries"] == 1
     post_block = next(
         part.text
         for part in request.extra_user_content_parts
@@ -1137,6 +1189,106 @@ async def test_thread_reply_image_preprocess_fail_closed_for_post_but_keeps_curr
     await plugin.terminate()
 
 
+async def test_thread_image_preprocess_timeout_uses_budget_and_continues_to_final_agent(
+    isolated_smoke_import,
+    monkeypatch,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "MAX_IMAGE_PREPROCESS_BUDGET_SECONDS", 0.03)
+
+    class SlowImageProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            await asyncio.sleep(1)
+            return LLMResponse(completion_text="too late")
+
+    image_provider = SlowImageProvider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return image_provider if provider_id == "image-fixed" else None
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {"image_provider_id": "image-fixed"},
+                "context": {"enable_thread_reply_compression": False},
+            }
+        ),
+    )
+    extras = {
+        "xiaoheihe_runtime_context": "RUNTIME",
+        "xiaoheihe_community_context": "COMMUNITY",
+        "xiaoheihe_focus_context": "FINAL-FOCUS",
+        "xiaoheihe_compression_source": ThreadCompressionSource(
+            "post-1",
+            "楼主",
+            "标题",
+            "正文",
+            "楼层",
+            "直接回复",
+            "当前用户",
+            "当前消息",
+        ),
+        "xiaoheihe_image_sources": ["original_post"],
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {
+                    "raw_message": {
+                        "route": {"profile_id": "default"},
+                        "reply_timeout_base_seconds": 120,
+                        "reply_timeout_effective_seconds": 150,
+                    }
+                },
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/post.png"]
+    started = asyncio.get_running_loop().time()
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    elapsed = asyncio.get_running_loop().time() - started
+    assert elapsed < 0.25
+    assert len(image_provider.calls) == 1
+    assert request.image_urls == []
+    assert any(
+        "原图已从最终回答模型输入中移除" in part.text for part in request.extra_user_content_parts
+    )
+    assert request.extra_user_content_parts[-1].text == "FINAL-FOCUS"
+    assert any("总时间预算" in entry["message"] for entry in plugin.runtime.logging.list(limit=20))
+    await plugin.terminate()
+
+
 async def test_thread_reply_text_only_provider_never_receives_raw_post_image(
     isolated_smoke_import,
 ) -> None:
@@ -1327,6 +1479,71 @@ async def test_plugin_falls_back_to_main_images_when_fixed_image_provider_fails(
     assert len(request.extra_user_content_parts) == 1
     assert request.extra_user_content_parts[0].temp is False
     assert 'uid="speaker-1"' in request.extra_user_content_parts[0].text
+    await plugin.terminate()
+
+
+async def test_fixed_image_provider_timeout_returns_to_native_image_fallback(
+    isolated_smoke_import,
+    monkeypatch,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "MAX_IMAGE_PREPROCESS_BUDGET_SECONDS", 0.03)
+
+    class SlowImageProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+
+        async def text_chat(self, **kwargs):
+            await asyncio.sleep(1)
+            return LLMResponse(completion_text="too late")
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return SlowImageProvider() if provider_id == "image-fixed" else None
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = type(
+        "Event",
+        (),
+        {
+            "message_obj": type(
+                "Message",
+                (),
+                {
+                    "raw_message": {
+                        "reply_timeout_base_seconds": 120,
+                        "reply_timeout_effective_seconds": 150,
+                    }
+                },
+            )(),
+            "get_extra": lambda self, key, default="": default,
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/post.png"]
+
+    handled = await plugin._caption_images(
+        event,
+        request,
+        provider_id="image-fixed",
+        profile_id="default",
+        context_settings=plugin.runtime.config.snapshot()["context"],
+    )
+
+    assert handled is False
+    assert request.image_urls == ["https://images.example.test/post.png"]
     await plugin.terminate()
 
 
