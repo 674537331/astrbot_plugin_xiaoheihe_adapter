@@ -167,6 +167,131 @@ async def test_proactive_context_strictly_separates_author_and_system_times(
     assert "1. [2025-08-01T17:00:00+08:00] 评论者" in result.dynamic_context
 
 
+async def test_thread_reply_focus_bounds_post_and_recent_comments_around_direct_target() -> None:
+    post_body = " ".join(f"post-{index:04d}" for index in range(500))
+    comments = [
+        {
+            "id": f"comment-{index:02d}",
+            "content": f"topic-{index:02d}",
+            "user": {"userid": f"user-{index:02d}", "nickname": f"用户{index:02d}"},
+        }
+        for index in range(20)
+    ]
+    comments.append(
+        {
+            "id": "comment-current",
+            "content": "电影第二部到底怎么样？",
+            "user": {"userid": "speaker", "nickname": "当前用户"},
+        }
+    )
+    notification = Notification(
+        profile_id="default",
+        external_event_id="reply-focus",
+        external_comment_id="comment-current",
+        notification_id="reply-focus",
+        event_type=NotificationType.REPLY,
+        sender_uid="speaker",
+        sender_nickname="当前用户",
+        post_id="post-focus",
+        root_comment_id="comment-00",
+        parent_comment_id="comment-current",
+        content="电影第二部到底怎么样？",
+        created_at=1_800_000_000,
+        raw={
+            "comment_b_id": "comment-03",
+            "comment_b_text": "我们已经歪楼聊到电影了",
+            "user_b": {"userid": "movie-user", "username": "电影党"},
+        },
+    )
+
+    class FocusClient:
+        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+            return ThreadContext(
+                post_id=post_id,
+                title="原帖是显卡讨论",
+                body=post_body,
+                author_uid="author",
+                author_name="楼主",
+                comments=comments,
+            )
+
+    result = await ContextBuilder(
+        max_post_chars=6000,
+        max_thread_comments=40,
+        thread_reply_post_chars=220,
+        thread_reply_recent_comments=3,
+        host_resolver=public_resolver,
+    ).build(notification, FocusClient())
+
+    assert '<xiaoheihe_reply_focus trust="trusted" mode="thread_reply">' in (result.dynamic_context)
+    assert "原帖背景（低相关性" in result.dynamic_context
+    assert "当前消息直接回复对象（高相关性）" in result.dynamic_context
+    assert "评论 comment-03，电影党 (UID movie-user): 我们已经歪楼聊到电影了" in (
+        result.dynamic_context
+    )
+    assert "topic-17" in result.dynamic_context
+    assert "topic-18" in result.dynamic_context
+    assert "topic-19" in result.dynamic_context
+    assert "topic-16" not in result.dynamic_context
+    assert result.dynamic_context.count("电影第二部到底怎么样？") == 1
+    assert "post-0000" in result.dynamic_context
+    assert "post-0100" not in result.dynamic_context
+    assert "不得为了迎合原帖而强行建立关联" in result.dynamic_context
+
+
+async def test_proactive_feed_keeps_full_post_budget_and_post_focus() -> None:
+    post_body = " ".join(f"feed-{index:04d}" for index in range(220))
+    notification = Notification(
+        profile_id="default",
+        external_event_id="feed-focus",
+        external_comment_id="feed-focus",
+        notification_id="feed-focus",
+        event_type=NotificationType.PROACTIVE_FEED,
+        sender_uid="author",
+        sender_nickname="楼主",
+        post_id="post-feed-focus",
+        root_comment_id="",
+        parent_comment_id="",
+        content="主动浏览帖子",
+        created_at=1_800_000_000,
+    )
+
+    class FeedFocusClient:
+        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+            return ThreadContext(
+                post_id=post_id,
+                title="主动帖子",
+                body=post_body,
+                author_uid="author",
+                author_name="楼主",
+                comments=[
+                    {
+                        "id": f"feed-comment-{index}",
+                        "content": f"feed-topic-{index}",
+                        "user": {"userid": f"user-{index}", "nickname": f"用户{index}"},
+                    }
+                    for index in range(5)
+                ],
+            )
+
+    result = await ContextBuilder(
+        max_post_chars=6000,
+        max_thread_comments=40,
+        thread_reply_post_chars=200,
+        thread_reply_recent_comments=1,
+        host_resolver=public_resolver,
+    ).build(notification, FeedFocusClient())
+
+    assert '<xiaoheihe_reply_focus trust="trusted" mode="proactive_feed">' in (
+        result.dynamic_context
+    )
+    assert "原帖主题（主要背景）" in result.dynamic_context
+    assert "feed-0219" in result.dynamic_context
+    assert "feed-topic-0" in result.dynamic_context
+    assert "feed-topic-4" in result.dynamic_context
+    assert "原帖标题和正文是本轮主要话题" in result.dynamic_context
+
+
 def test_html_emoji_duplicate_and_tracking_cleanup() -> None:
     value = "<b>Hello</b>\nHello\n\n\n[表情:笑] https://x.test/a?utm_source=x&id=2"
     cleaned = clean_untrusted_text(value)

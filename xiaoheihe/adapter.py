@@ -187,6 +187,8 @@ class XiaoheihePlatformAdapter(Platform):
         self._context_builder = ContextBuilder(
             max_post_chars=int(context_config["max_post_chars"]),
             max_thread_comments=int(context_config["max_thread_comments"]),
+            thread_reply_post_chars=int(context_config["thread_reply_post_chars"]),
+            thread_reply_recent_comments=int(context_config["thread_reply_recent_comments"]),
             max_images=int(context_config["max_images_per_event"]),
             cache_ttl_seconds=int(context_config["context_cache_ttl_seconds"]),
             cache_max_entries=int(context_config["context_cache_max_entries"]),
