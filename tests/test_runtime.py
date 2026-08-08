@@ -86,7 +86,7 @@ async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
         ]
     )
     status = await runtime.status()
-    assert status["version"] == "v1.2.13"
+    assert status["version"] == "v1.2.14"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     assert status["adapters"] == [

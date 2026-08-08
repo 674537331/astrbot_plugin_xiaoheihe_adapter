@@ -6,14 +6,16 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.13**
+当前版本：**v1.2.14**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.13 重点：
+v1.2.14 重点：
 
+- 通知超过单轮分页上限时不再让旧 cursor 卡住后续轮询；未扫完区间持久化到 SQLite 并跨轮继续回填，实时新消息仍优先处理，插件重启后也能恢复进度；
+- 长楼层语义压缩额外保留由程序提取的“小黑盒昵称 + UID”身份锚点，压缩模型负责摘要语义但不能成为身份映射的唯一来源；当前发言人和直接回复对象仍保留原文；
 - 长楼层评论回复/@ 可先由 AstrBot Provider 按来源做语义压缩，原帖摘要与楼层摘要保持分离，并显式判断楼层是否已经歪楼；
 - 当前消息和直接回复对象不交给压缩结果替代，始终保留原文；最终可信焦点规则放在所有文字/图片背景之后，降低小模型被长原帖重新带偏的概率；
 - v1.2.12 的原帖 1600 字 / 最近 12 条窗口不删除，改为短上下文、关闭压缩或压缩失败时的确定性兜底；压缩器正常工作时可读取更宽但有硬上限的原帖/楼层窗口；
@@ -198,7 +200,7 @@ reply 通知历史基线已建立
 | --- | --- | --- |
 | `profiles[].dry_run` | `true` | 模拟运行 |
 | `polling.poll_interval_seconds` | `60` | 通知轮询间隔，最低 30 秒 |
-| `polling.max_pages_per_poll` | `3` | 每类通知每轮最大页数 |
+| `polling.max_pages_per_poll` | `3` | 每类通知每轮最大页数；超出后持久化并跨轮回填 |
 | `polling.initial_backfill_count` | `0` | 首次基线后回溯条数 |
 | `providers.llm_provider_id` | `""` | 固定小黑盒 LLM Provider；留空跟随当前配置或会话 |
 | `providers.image_provider_id` | `""` | 固定图片理解 Provider；被动楼层留空时自动尝试固定 LLM / 当前会话 Provider |
@@ -250,6 +252,11 @@ v1.2.13 对超过 2400 字的可压缩背景默认额外调用一次上下文 Pr
 原帖输入最多 8000 字、最近楼层输入合计最多 8000 字（并继续受全局读取上限约束）；输出分别硬限
 700 / 1400 字，并单独给出“当前局部话题”和“与原帖关系”。当前消息与直接回复对象只作为压缩
 参考，最终上下文中仍使用未经摘要替换的原文。
+
+v1.2.14 在压缩输入中额外加入由本地代码从实际楼层评论提取的只读参与者列表；昵称与 UID 会在
+压缩完成后再次作为身份锚点附回最终临时上下文，因此即使较小的压缩模型把楼层摘要写成“某用户”，
+主模型仍能看到本轮所选最近楼层中真实的“昵称 ↔ UID”映射。身份锚点仍属于不可信社区背景，
+不会修改 AstrBot system prompt 或人格。
 
 短楼层、显式关闭语义压缩、超时、Provider 异常或结果无法解析时，立即退回 v1.2.12 的确定性
 路径：原帖默认 1600 字、最近楼层默认 12 条且单条最多 800 字。通知中的直接回复对象在两条路径
@@ -343,7 +350,7 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.2.13 数据库迁移版本仍为 **v6**；
+- v1.2.14 数据库迁移版本为 **v7**，仅新增通知跨轮回填状态表；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
 
@@ -358,7 +365,7 @@ SQLite、去重记录、通知游标、审核候选和日志；插件配置继�
 
 主要表：`account_state`、`incoming_events`、`processed_event_keys`、`outgoing_replies`、
 `self_comment_ids`、`session_mappings`、`feed_candidates`、`runtime_errors`、
-`daily_counters`、`notification_cursors`。
+`daily_counters`、`notification_cursors`、`notification_backfills`。
 
 ## 常见排障
 
@@ -376,6 +383,7 @@ SQLite、去重记录、通知游标、审核候选和日志；插件配置继�
 | 带图问题调用 Grok 后只返回图片描述或“等着我查” | 升级 v1.2.10；普通 `grok_web_search` 查询会在工具执行期间临时隔离事件原图，明确搜图时仍保留原图 |
 | 同一楼层不同用户接话时“我/我的”被当成上一位用户 | 升级 v1.2.11；楼层继续共享会话，但每轮用户历史都会持久化真实发送者 UID，并在当前轮注入可信身份约束 |
 | 评论区已经歪楼，机器人却仍围着原帖答非所问 | 升级 v1.2.13；长楼层会按来源语义压缩原帖/评论，当前消息与直接回复对象保留原文，原帖图片降为低优先级；压缩失败自动回退 v1.2.12 预算 |
+| 持续出现“新通知超过单轮最大页数”且重复扫描 | 升级 v1.2.14；超出窗口的连续区间会持久化并跨轮回填，实时 cursor 不再被旧积压永久卡住 |
 | 多图总结在 120 秒进入 `dead_letter` | 升级 v1.2.2；基础超时保持原配置，适配器按图片数量自动增加视觉处理时间，6 图默认截止时间为 300 秒 |
 | @ 数量增加但事件为空 | 检查 `message_type`、接收条数、权限过滤和基线日志 |
 | `status=failed / code 1000` | 该发送尝试记录为失败终态；结合 API 契约核对评论请求字段 |

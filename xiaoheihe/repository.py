@@ -188,6 +188,131 @@ class Repository:
         )
         return cursor.rowcount == 1
 
+    async def notification_backfill(
+        self,
+        profile_id: str,
+        event_type: str,
+    ) -> dict[str, Any] | None:
+        row = await self.db.fetchone(
+            """
+            SELECT boundary_event_id, next_offset, started_at, updated_at
+            FROM notification_backfills
+            WHERE profile_id = ? AND event_type = ?
+            """,
+            (profile_id, event_type),
+        )
+        return dict(row) if row is not None else None
+
+    async def advance_notification_cursor_with_backfill(
+        self,
+        profile_id: str,
+        event_type: str,
+        previous_event_id: str,
+        last_event_id: str,
+        *,
+        next_offset: int,
+    ) -> bool:
+        """Advance the live cursor while durably retaining an older scan gap."""
+
+        now = time.time()
+        safe_offset = max(0, int(next_offset))
+        async with self.db.transaction() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE notification_cursors
+                SET last_event_id = ?, updated_at = ?
+                WHERE profile_id = ? AND event_type = ? AND last_event_id = ?
+                """,
+                (
+                    str(last_event_id),
+                    now,
+                    profile_id,
+                    event_type,
+                    str(previous_event_id),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return False
+            existing_cursor = await connection.execute(
+                """
+                SELECT boundary_event_id, next_offset
+                FROM notification_backfills
+                WHERE profile_id = ? AND event_type = ?
+                """,
+                (profile_id, event_type),
+            )
+            existing = await existing_cursor.fetchone()
+            if existing is None:
+                await connection.execute(
+                    """
+                    INSERT INTO notification_backfills(
+                        profile_id, event_type, boundary_event_id,
+                        next_offset, started_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        profile_id,
+                        event_type,
+                        str(previous_event_id),
+                        safe_offset,
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                # A newer burst can open another gap in front of an older one.
+                # Keep the oldest boundary and rewind the offset so the two gaps
+                # are drained as one continuous range instead of dropping the
+                # newly created middle section.
+                await connection.execute(
+                    """
+                    UPDATE notification_backfills
+                    SET next_offset = MIN(next_offset, ?), updated_at = ?
+                    WHERE profile_id = ? AND event_type = ?
+                    """,
+                    (safe_offset, now, profile_id, event_type),
+                )
+        return True
+
+    async def advance_notification_backfill(
+        self,
+        profile_id: str,
+        event_type: str,
+        boundary_event_id: str,
+        *,
+        next_offset: int,
+    ) -> bool:
+        cursor = await self.db.execute(
+            """
+            UPDATE notification_backfills
+            SET next_offset = ?, updated_at = ?
+            WHERE profile_id = ? AND event_type = ? AND boundary_event_id = ?
+            """,
+            (
+                max(0, int(next_offset)),
+                time.time(),
+                profile_id,
+                event_type,
+                str(boundary_event_id),
+            ),
+        )
+        return cursor.rowcount == 1
+
+    async def clear_notification_backfill(
+        self,
+        profile_id: str,
+        event_type: str,
+        boundary_event_id: str,
+    ) -> bool:
+        cursor = await self.db.execute(
+            """
+            DELETE FROM notification_backfills
+            WHERE profile_id = ? AND event_type = ? AND boundary_event_id = ?
+            """,
+            (profile_id, event_type, str(boundary_event_id)),
+        )
+        return cursor.rowcount == 1
+
     async def mark_event(
         self,
         event_id: int,
@@ -1051,6 +1176,7 @@ class Repository:
             "runtime_errors",
             "daily_counters",
             "notification_cursors",
+            "notification_backfills",
         )
         counts: dict[str, int] = {}
         for table in tables:

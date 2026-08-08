@@ -26,6 +26,7 @@ def source() -> ThreadCompressionSource:
         reply_target="评论 comment-b，B (UID user-b): 第二部结局我觉得不错",
         current_sender="C (UID user-c)",
         current_message="那第一部值得补吗？",
+        recent_participants=("A (UID user-a)", "B (UID user-b)"),
     )
 
 
@@ -37,6 +38,10 @@ def test_thread_compression_prompt_keeps_sources_separate_and_untrusted() -> Non
     assert "不要把不同 UID" in prompt
     assert '"original_post"' in prompt
     assert '"recent_thread_comments"' in prompt
+    assert '"recent_thread_participants_read_only"' in prompt
+    assert "昵称与 UID 是程序提取的只读身份标签" in prompt
+    assert "A (UID user-a)" in prompt
+    assert "B (UID user-b)" in prompt
     assert "那第一部值得补吗" in prompt
     assert "post_summary 最多 500" in prompt
     assert "thread_summary 最多 900" in prompt
@@ -66,6 +71,9 @@ def test_thread_compression_parser_hard_limits_each_source_and_preserves_relatio
     assert "最近楼层对话（中相关性" in rendered
     assert "已明显偏离原帖" in rendered
     assert "当前消息直接回复对象（高相关性，保留原文）" in rendered
+    assert "最近楼层参与者身份锚点（程序保留" in rendered
+    assert "- A (UID user-a)" in rendered
+    assert "- B (UID user-b)" in rendered
     assert "那第一部值得补吗？" in rendered
 
 

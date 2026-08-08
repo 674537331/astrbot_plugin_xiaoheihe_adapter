@@ -234,6 +234,22 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         UPDATE daily_counters SET proactive_count = 0;
         """,
     ),
+    (
+        7,
+        """
+        CREATE TABLE IF NOT EXISTS notification_backfills (
+            profile_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            boundary_event_id TEXT NOT NULL,
+            next_offset INTEGER NOT NULL DEFAULT 0,
+            started_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(profile_id, event_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_notification_backfills_updated
+            ON notification_backfills(updated_at);
+        """,
+    ),
 )
 
 MIGRATION_MARKERS = {
@@ -243,6 +259,7 @@ MIGRATION_MARKERS = {
     4: "INSERT INTO schema_migrations(version) VALUES (4);",
     5: "INSERT INTO schema_migrations(version) VALUES (5);",
     6: "INSERT INTO schema_migrations(version) VALUES (6);",
+    7: "INSERT INTO schema_migrations(version) VALUES (7);",
 }
 
 

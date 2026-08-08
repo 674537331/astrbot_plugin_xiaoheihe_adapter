@@ -134,13 +134,16 @@ class NotificationService:
         first_observation = stored_cursor is None
         remaining_backfill = int(self.config["polling"]["initial_backfill_count"])
         max_pages = int(self.config["polling"]["max_pages_per_poll"])
+        page_size = int(self.config["polling"]["page_size"])
+        pages_used = 0
 
         for page_index in range(1, max_pages + 1):
+            pages_used = page_index
             page = await self.client.fetch_notifications(
                 event_type,
                 cursor=page_cursor,
                 page=page_index,
-                page_size=int(self.config["polling"]["page_size"]),
+                page_size=page_size,
             )
             self._report_poll_summary(event_type, page_index)
             notifications = [wrapper["notification"] for wrapper in page.items]
@@ -197,25 +200,133 @@ class NotificationService:
                 break
             page_cursor = page.next_cursor
 
-        if first_observation or not newest_event_id:
+        if first_observation:
             return
         if not all_new_events_durable:
             return
-        if not (boundary_reached or exhausted):
-            self.logger.emit(
-                "WARNING",
-                f"{event_type.value} 新通知超过单轮最大页数，暂不推进消息边界",
-                profile_id=self.profile_id,
-                details={"max_pages": max_pages},
-            )
+        if newest_event_id:
+            if not (boundary_reached or exhausted):
+                if _event_is_newer(newest_event_id, stored_cursor):
+                    next_offset = _notification_offset(
+                        page_cursor,
+                        fallback=pages_used * page_size,
+                    )
+                    persisted = await self.repository.advance_notification_cursor_with_backfill(
+                        self.profile_id,
+                        event_type.value,
+                        stored_cursor,
+                        newest_event_id,
+                        next_offset=next_offset,
+                    )
+                    if persisted:
+                        self.logger.emit(
+                            "WARNING",
+                            (
+                                f"{event_type.value} 新通知超过单轮最大页数，"
+                                "剩余区间已持久化并将在后续轮询继续回填"
+                            ),
+                            profile_id=self.profile_id,
+                            details={
+                                "max_pages": max_pages,
+                                "next_offset": next_offset,
+                            },
+                        )
+                return
+            if _event_is_newer(newest_event_id, stored_cursor):
+                await self.repository.advance_notification_cursor(
+                    self.profile_id,
+                    event_type.value,
+                    stored_cursor,
+                    newest_event_id,
+                )
+
+        remaining_pages = max(0, max_pages - pages_used)
+        if remaining_pages:
+            await self._poll_backfill(event_type, page_budget=remaining_pages)
+
+    async def _poll_backfill(
+        self,
+        event_type: NotificationType,
+        *,
+        page_budget: int,
+    ) -> None:
+        state = await self.repository.notification_backfill(
+            self.profile_id,
+            event_type.value,
+        )
+        if state is None or page_budget <= 0:
             return
-        if _event_is_newer(newest_event_id, stored_cursor):
-            await self.repository.advance_notification_cursor(
+        boundary_event_id = str(state["boundary_event_id"])
+        page_size = int(self.config["polling"]["page_size"])
+        current_offset = max(0, int(state["next_offset"]))
+        boundary_reached = False
+        exhausted = False
+        all_events_durable = True
+
+        for _ in range(page_budget):
+            page_number = max(1, current_offset // max(1, page_size) + 1)
+            page = await self.client.fetch_notifications(
+                event_type,
+                cursor=str(current_offset),
+                page=page_number,
+                page_size=page_size,
+            )
+            self._report_poll_summary(event_type, page_number)
+            notifications = [wrapper["notification"] for wrapper in page.items]
+            for notification in notifications:
+                if _event_at_or_before(
+                    notification.external_event_id,
+                    boundary_event_id,
+                ):
+                    boundary_reached = True
+                    break
+                queued = await self.enqueue(notification)
+                if not queued and not await self.repository.event_exists(
+                    notification.profile_id,
+                    notification.external_event_id,
+                ):
+                    all_events_durable = False
+            if boundary_reached:
+                break
+            if not page.has_more:
+                exhausted = True
+                break
+            next_offset = _notification_offset(
+                page.next_cursor,
+                fallback=current_offset + page_size,
+            )
+            if next_offset <= current_offset:
+                self.logger.emit(
+                    "WARNING",
+                    f"{event_type.value} 历史通知回填分页未推进，保留当前位置等待下轮重试",
+                    profile_id=self.profile_id,
+                    details={"current_offset": current_offset},
+                )
+                return
+            current_offset = next_offset
+
+        if not all_events_durable:
+            return
+        if boundary_reached or exhausted:
+            cleared = await self.repository.clear_notification_backfill(
                 self.profile_id,
                 event_type.value,
-                stored_cursor,
-                newest_event_id,
+                boundary_event_id,
             )
+            if cleared:
+                self.logger.emit(
+                    "INFO",
+                    f"{event_type.value} 历史通知回填完成",
+                    profile_id=self.profile_id,
+                    details={"boundary_event_id": boundary_event_id},
+                )
+            return
+        await self.repository.advance_notification_backfill(
+            self.profile_id,
+            event_type.value,
+            boundary_event_id,
+            next_offset=current_offset,
+        )
 
     def _report_poll_summary(self, event_type: NotificationType, page_index: int) -> None:
         summaries = getattr(self.client, "last_notification_polls", {})
@@ -503,6 +614,13 @@ def _numeric_event_id(value: str) -> int | None:
     if not normalized.isdecimal():
         return None
     return int(normalized)
+
+
+def _notification_offset(value: str, *, fallback: int) -> int:
+    try:
+        return max(0, int(str(value).strip()))
+    except (TypeError, ValueError):
+        return max(0, int(fallback))
 
 
 def _event_at_or_before(event_id: str, stored_cursor: str) -> bool:
