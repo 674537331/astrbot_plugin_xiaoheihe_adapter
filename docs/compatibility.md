@@ -1,15 +1,15 @@
-# AstrBot 兼容性说明（v1.2.11）
+# AstrBot 兼容性说明（v1.2.12）
 
 ## 调查范围
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测环境为
-AstrBot 4.26.8。v1.2.11 在 v1.2.10 Grok 图片隔离基础上，为同楼层多人会话增加持久化发送者
-UID 标记：共享 session 不变，但不同用户的 `role=user` 历史不再失去身份。2026-08-06 发布
-v1.2.11 前再次核对：
+AstrBot 4.26.8。v1.2.12 在 v1.2.11 多人 UID 身份修复基础上调整小黑盒被动楼层回复的临时
+上下文形状：当前消息和直接回复对象优先，原帖及普通楼层背景受独立预算限制；主动浏览仍以原帖
+为主要话题。该版本没有新增 AstrBot API 依赖。2026-08-08 发布 v1.2.12 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
-- PyPI 已发布的最低版本 4.24.2、重点版本 4.26.2，以及 2026-08-06 的当前稳定版
+- PyPI 已发布的最低版本 4.24.2、重点版本 4.26.2，以及 2026-08-08 的当前稳定版
   4.27.2 wheel；
 - AstrBot 当前官方插件开发、平台适配器和 Plugin Pages 文档；
 - `Platform`、`PlatformMetadata`、`register_platform_adapter`、`AstrBotMessage`、
@@ -41,7 +41,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 固定 LLM Provider | 事件入队前设置 `selected_provider` extra | 兼容 4.24.2 与 4.26.2 的主 Agent Provider 选择时序；留空时继续使用会话或全局 Provider |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
-| 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；完整帖子/楼层背景使用 `TextPart(...).mark_as_temp()`，不改 system prompt、不重复持久化动态社区内容 |
+| 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；动态帖子/楼层背景保持临时；被动楼层回复按“当前消息 → 直接回复对象 → 最近楼层 → 原帖”聚焦并限制低优先级背景预算 |
 | 图片 | `astrbot.api.message_components.Image(file=url, url=url)` | v1.0.0 只传经过安全校验的公开 HTTPS URL，交给 AstrBot 媒体链路 |
 | 固定图片 Provider | `Context.get_provider_by_id()` + `Provider.text_chat()` | 成功时注入临时图片描述；失败或空结果时保留原图并回退主 Provider 与 AstrBot 原生图片流程 |
 | 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 按固定或当前主 Provider 检查能力；仅在明确不含 `image` 时移除图片并保留文本 |
@@ -77,6 +77,14 @@ AstrBot 的 Conversation 以 `unified_msg_origin` 作为会话键，而本适配
 `on_llm_request` 中把 `event.get_sender_id()` 生成的短 UID 身份块作为普通（非 temp）
 `extra_user_content_parts` 追加到每轮用户输入；按 AstrBot 4.24+ 的官方语义，普通内容块会进入
 会话历史，只有 `mark_as_temp()` 才不持久化。QQ 和其他平台在钩子入口即返回，不添加该身份块。
+
+v1.2.12 继续使用同一个 `on_llm_request` 接口，没有修改 AstrBot 的 Conversation 或 system
+prompt。对于带 `root_comment_id` 的小黑盒被动回复，动态临时背景按“当前原生用户消息 → 直接
+回复对象 → 最近楼层 → 原帖”排序；默认把原帖正文限制为 1600 字、普通最近楼层限制为 12 条，
+每条普通楼层最多 800 字，并把通知中明确的直接回复对象从普通窗口中独立保留。当前消息会在
+临时背景末尾出现一个仅用于模型定位的副本，但只有原生用户消息进入会话历史。主动浏览不应用
+这些被动预算，继续使用全局原帖/评论上限并明确把原帖作为主要话题。因此改动只改变本插件提交
+给现有 AstrBot API 的临时内容，不增加运行时契约。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -121,7 +129,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.11 的最新迁移版本仍为 v6；除旧版
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.12 的最新迁移版本仍为 v6；除旧版
 按浏览量统计的 `proactive_count` 会清零并切换为主动 AI 请求口径外，其余已有记录原位保留。
 卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据边界；更新前备份
 插件数据目录可用于回滚。

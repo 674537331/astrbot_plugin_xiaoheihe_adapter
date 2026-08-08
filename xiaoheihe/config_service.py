@@ -36,6 +36,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "context": {
         "max_post_chars": 6000,
         "max_thread_comments": 40,
+        "thread_reply_post_chars": 1600,
+        "thread_reply_recent_comments": 12,
         "context_cache_ttl_seconds": 300,
         "context_cache_max_entries": 256,
         "enable_image_understanding": True,
@@ -228,6 +230,8 @@ class ConfigService:
         context = _object(config, "context")
         _bounded_int(context, "max_post_chars", 500, 50000)
         _bounded_int(context, "max_thread_comments", 1, 200)
+        _bounded_int(context, "thread_reply_post_chars", 200, 10000)
+        _bounded_int(context, "thread_reply_recent_comments", 1, 50)
         _bounded_int(context, "max_images_per_event", 0, 20)
         _bounded_int(context, "max_image_size_mb", 1, 32)
         _bounded_int(context, "max_total_image_size_mb", 1, 128)

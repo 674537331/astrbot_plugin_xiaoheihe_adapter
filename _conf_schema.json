@@ -132,6 +132,18 @@
         "type": "int",
         "default": 40
       },
+      "thread_reply_post_chars": {
+        "description": "楼层回复时原帖正文字符预算",
+        "type": "int",
+        "default": 1600,
+        "hint": "仅用于评论回复/@ 的原帖低优先级背景，实际不会超过帖子正文最大字符数；主动刷帖仍使用完整帖子预算。"
+      },
+      "thread_reply_recent_comments": {
+        "description": "楼层回复时最近对话条数",
+        "type": "int",
+        "default": 12,
+        "hint": "仅用于评论回复/@ 的局部对话窗口，实际不会超过楼层最大评论数；直接回复对象会另行保留。"
+      },
       "context_cache_ttl_seconds": {
         "description": "上下文缓存 TTL",
         "type": "int",

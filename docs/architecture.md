@@ -12,6 +12,7 @@
   → AstrBotMessage + XiaoheiheMessageEvent
   → Platform.commit_event()
   → 楼层共享 session + 每轮发送者 UID 持久化到 LLM 用户历史
+  → 被动楼层焦点路由（当前消息 > 直接回复对象 > 最近楼层 > 原帖背景）
   → AstrBot 原生会话 / 人格 / 记忆 / Agent / MCP / Skills / Tools
   → 指定工具兼容层（Grok 普通网页查询临时隔离事件原图并在调用后恢复）
   → Agent 生命周期跟踪 + XiaoheiheMessageEvent 回复聚合
@@ -29,7 +30,7 @@ AstrBot 原生管线负责。
 - `endpoints.py` / `parsers.py` / `request_signing.py`：隔离不稳定的外部契约。
 - `auth.py`：二维码状态机与原子凭证存储。
 - `notification_service.py`：`message_id` 分页边界、有界优先队列、首次基线和到期重试恢复。
-- `context_builder.py`：帖子/楼层缓存、内容清洗、图片 URL 校验、临时上下文。
+- `context_builder.py`：帖子/楼层缓存、内容清洗、图片 URL 校验、临时上下文，以及被动回复与主动刷帖分离的上下文预算/焦点路由。
 - `permission_service.py`：自身、黑名单、主人、白名单、普通触发的固定优先级。
 - `feed_service.py`：高风险主动刷帖筛选、候选、人工审核与无审核直发入口。
 - `database.py` / `repository.py`：迁移、事务、索引、幂等、保留和诊断。
@@ -71,6 +72,13 @@ AstrBot 会将普通 `extra_user_content_parts` 持久化到该轮 `role=user` �
 共用一个 Conversation，每一轮历史仍带有各自 UID。帖子、楼层全文和实时状态继续使用
 `mark_as_temp()`，只参与当前请求，不重复写入历史。可信运行时元数据也会指出当前触发 UID，
 要求模型按 UID 区分不同发言人的第一人称。
+
+v1.2.12 在不改变上述 session 和持久化身份模型的前提下，对临时社区背景增加事件类型相关的
+焦点路由。评论回复/@ 以当前原生用户消息为最高优先级，从通知引用关系或楼层父评论中单独
+提取直接回复对象，再提供最近楼层窗口，最后才提供低相关性的原帖背景；当前入站评论和直接
+回复对象会从普通楼层窗口去重。默认楼层回复原帖预算为 1600 字、最近窗口为 12 条且单条最多
+800 字，并在临时背景尾部重复当前消息作为定位副本，再追加不含社区正文的可信焦点规则。
+主动推荐流不套用这些缩减预算，继续以原帖为主要话题并使用完整的全局帖子/评论上限。
 
 ## 事件状态
 

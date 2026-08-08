@@ -2,7 +2,7 @@ name: astrbot_plugin_xiaoheihe_adapter
 display_name: 小黑盒适配器
 desc: AstrBot 的小黑盒原生平台适配器
 short_desc: 将小黑盒帖子和评论接入 AstrBot 原生会话、人格及 Agent 链路。
-version: v1.2.11
+version: v1.2.12
 astrbot_version: ">=4.24.2,<5"
 author: RyanVaderAn
 repo: https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter

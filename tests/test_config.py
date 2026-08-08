@@ -21,6 +21,8 @@ def test_config_defaults_and_profile(fake_config) -> None:
         "llm_provider_id": "",
         "image_provider_id": "",
     }
+    assert service.snapshot()["context"]["thread_reply_post_chars"] == 1600
+    assert service.snapshot()["context"]["thread_reply_recent_comments"] == 12
 
 
 @pytest.mark.asyncio
@@ -69,6 +71,11 @@ def test_config_rejects_unsafe_storage_and_timeout_values(fake_config) -> None:
     safe["network"]["request_timeout_seconds"] = 0
     with pytest.raises(ConfigValidationError, match="request_timeout_seconds"):
         ConfigService(safe)
+
+    invalid_context = copy.deepcopy(DEFAULT_CONFIG)
+    invalid_context["context"]["thread_reply_recent_comments"] = 0
+    with pytest.raises(ConfigValidationError, match="thread_reply_recent_comments"):
+        ConfigService(invalid_context)
 
 
 def test_config_rejects_invalid_provider_ids() -> None:

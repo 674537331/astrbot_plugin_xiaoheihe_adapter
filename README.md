@@ -6,14 +6,19 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.11**
+当前版本：**v1.2.12**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.11 重点：
+v1.2.12 重点：
 
+- 评论回复/@ 按“当前消息 > 直接回复对象 > 最近楼层 > 原帖背景”组织上下文，歪楼后不再强行把当前话题拉回原帖；
+- 被动楼层回复会实际缩小背景体积：原帖默认最多 1600 字、最近楼层默认 12 条，直接回复对象独立保留；
+- 当前消息在临时背景尾部增加定位副本，并追加可信焦点规则；原生用户消息仍是唯一持久化的正文，不重复污染会话历史；
+- 主动刷帖不使用上述缩减预算，继续以完整原帖为主要话题；帖子级触发也继续以原帖作为主要背景；
+- 新增 `context.thread_reply_post_chars` / `thread_reply_recent_comments`，可按账号使用习惯调整被动回复背景预算；
 - 同一帖子/楼层仍作为一个共享 AstrBot 会话，不按用户拆散公开讨论的上下文；
 - 每一轮小黑盒用户消息都会将真实发送者 UID 写入可持久化的 LLM 用户历史，避免 A、B、C 在历史里都只剩匿名 `role=user`；
 - 当前轮可信运行时元数据同步标注触发发言人 UID，并要求不同 UID 的“我/我的”等第一人称分别归属各自发言人；
@@ -62,6 +67,7 @@ v1.2.11 重点：
 - 当前评论、原帖、根楼层、引用、作者和双方图片作为本轮临时上下文；
 - “帖子 + 根楼层”确定性会话隔离；
 - 楼层会话共享上下文，但每轮 LLM 历史持久化真实发言人 UID；
+- 楼层回复使用当前消息/直接回复对象优先的焦点路由，并与主动刷帖采用不同上下文预算；
 - SQLite 幂等、状态机、迁移、恢复和自动清理；
 - 模拟运行完成完整推理并保存结果；
 - 白名单、黑名单、主人 UID 和自身消息过滤；
@@ -193,6 +199,8 @@ reply 通知历史基线已建立
 | `polling.initial_backfill_count` | `0` | 首次基线后回溯条数 |
 | `providers.llm_provider_id` | `""` | 固定小黑盒 LLM Provider；留空跟随当前配置或会话 |
 | `providers.image_provider_id` | `""` | 固定图片理解 Provider；留空使用 AstrBot 原生图片流程 |
+| `context.thread_reply_post_chars` | `1600` | 评论回复/@ 时原帖低优先级正文预算；主动刷帖不使用 |
+| `context.thread_reply_recent_comments` | `12` | 评论回复/@ 时最近楼层窗口；直接回复对象另行保留 |
 | `reply.dry_run_mark_processed` | `true` | 模拟结果保存后标记完成 |
 | `reply.max_reply_chars` | `500` | 回复字符上限 |
 | `reply.only_explicit_mentions` | `true` | 只处理明确 @ |
@@ -227,6 +235,12 @@ message_id        xhh_<event_type>_<notification_id>_<comment_id>
 
 这些内容使用 `TextPart.mark_as_temp()` 作为本轮用户侧临时上下文，当前评论正文作为真正的
 用户消息进入 AstrBot 会话。
+
+评论回复/@ 会进一步按“当前原生用户消息 > 直接回复对象 > 最近楼层 > 原帖背景”建立焦点：
+原帖低优先级正文默认限制为 1600 字，普通楼层窗口默认只取最近 12 条且单条最多 800 字；
+通知中的直接回复对象单独保留，并从普通楼层窗口去重。背景末尾仅临时重复一份当前消息用于
+定位，再追加可信焦点规则；当前消息能独立理解时不得为了迎合原帖强行关联。主动刷帖不使用
+这些楼层回复预算，仍按 `max_post_chars` / `max_thread_comments` 读取原帖和辅助评论。
 
 ## 图片理解
 
@@ -303,7 +317,7 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.2.11 数据库迁移版本仍为 **v6**；
+- v1.2.12 数据库迁移版本仍为 **v6**；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
 
@@ -335,6 +349,7 @@ SQLite、去重记录、通知游标、审核候选和日志；插件配置继�
 | 实际评论只显示工具状态、第一段或“正在查询” | 升级 v1.2.9；适配器会等待 Agent 完成，并兼容 AstrBot 分段和流式回复后一次性提交最终内容 |
 | 带图问题调用 Grok 后只返回图片描述或“等着我查” | 升级 v1.2.10；普通 `grok_web_search` 查询会在工具执行期间临时隔离事件原图，明确搜图时仍保留原图 |
 | 同一楼层不同用户接话时“我/我的”被当成上一位用户 | 升级 v1.2.11；楼层继续共享会话，但每轮用户历史都会持久化真实发送者 UID，并在当前轮注入可信身份约束 |
+| 评论区已经歪楼，机器人却仍围着原帖答非所问 | 升级 v1.2.12；被动楼层回复会优先当前消息和直接回复对象，并限制原帖/普通楼层背景预算；主动刷帖仍以原帖为主 |
 | 多图总结在 120 秒进入 `dead_letter` | 升级 v1.2.2；基础超时保持原配置，适配器按图片数量自动增加视觉处理时间，6 图默认截止时间为 300 秒 |
 | @ 数量增加但事件为空 | 检查 `message_type`、接收条数、权限过滤和基线日志 |
 | `status=failed / code 1000` | 该发送尝试记录为失败终态；结合 API 契约核对评论请求字段 |
