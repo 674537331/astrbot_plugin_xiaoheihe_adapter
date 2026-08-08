@@ -46,7 +46,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
 | 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；动态帖子/楼层背景保持临时；长被动楼层可先按来源语义压缩，最终焦点仍按“当前消息 → 直接回复对象 → 最近楼层 → 原帖” |
 | 图片 | `astrbot.api.message_components.Image(file=url, url=url)` | v1.0.0 只传经过安全校验的公开 HTTPS URL，交给 AstrBot 媒体链路 |
-| 被动楼层图片预处理 | `Context.get_provider_by_id()` / `get_using_provider()` + `Provider.text_chat(persist=False)` | 当前评论图/原帖图分组处理，按固定图片 → 固定 LLM → 当前会话逐级尝试；原帖只向最终模型提供硬限长描述，全部失败时移除原图；当前评论图失败时才保留原生视觉兜底 |
+| 被动楼层图片预处理 | `Context.get_provider_by_id()` / `get_using_provider()` + `Provider.text_chat(persist=False)` | 当前评论图/原帖图分组处理，按固定图片 → 固定 LLM → 当前会话逐级尝试；所有尝试共享图片额外回复宽限且单事件硬限 60 秒，预算耗尽立即降级；原帖全部失败时移除原图，当前评论图失败时才保留原生视觉兜底 |
 | 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 被动楼层明确声明纯文本的 Provider 不参与图片预处理；其他事件沿用主 Provider 能力检查，明确不含 `image` 时移除图片并保留文本 |
 | 配置 | 构造参数中的 `AstrBotConfig` + `save_config()` | 原生设置和 Plugin Page 共用同一个对象，不写核心配置文件 |
 | 数据目录 | `StarTools.get_data_dir(plugin_name)` | 凭证与 SQLite 位于插件专属数据目录，覆盖更新后继续读取 |
@@ -98,7 +98,9 @@ Agent 调用。图片预处理同样复用 v1.2.2 起已有的 `Provider.text_ch
 评论图与原帖图分组。原帖图片只允许把硬限长的描述传给最终 Agent，所有预处理路径失败时直接
 移除原帖原图；当前评论自己的图片才允许回退 AstrBot 原生多模态链路。最终可信焦点块仍在这些
 背景之后注入，因此这仍是插件侧临时输入整形，不修改 AstrBot system prompt、Conversation、
-工具注册或其他平台事件。
+工具注册或其他平台事件。图片预处理调用额外受事件图片宽限和单事件 60 秒硬预算约束；4.26.2+
+同时把单次 Provider 请求重试数限制为 1，4.24.2 即使忽略该兼容参数也仍受外层硬预算保护。超时
+视为该预处理路径失败并继续 Agent；无图片事件不会执行该 Provider 路径。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
