@@ -4,13 +4,14 @@ import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from .api_client import XiaoheiheApiClient
+from .context_compression import ThreadCompressionSource
 from .models import Notification, NotificationType, ThreadContext
 from .parsers import parse_notification_post_context
 from .security import (
@@ -21,6 +22,8 @@ from .security import (
 )
 
 HostResolver = Callable[[str], Awaitable[set[str]]]
+MAX_COMPRESSION_POST_INPUT_CHARS = 8000
+MAX_COMPRESSION_COMMENT_INPUT_CHARS = 8000
 
 
 @dataclass(slots=True)
@@ -30,6 +33,11 @@ class BuiltContext:
     image_urls: list[str]
     warnings: list[str]
     thread: ThreadContext
+    runtime_context: str = ""
+    community_context: str = ""
+    focus_context: str = ""
+    compression_source: ThreadCompressionSource | None = None
+    image_sources: list[str] = field(default_factory=list)
 
 
 class ContextBuilder:
@@ -94,6 +102,10 @@ class ContextBuilder:
         )
         title = clean_untrusted_text(thread.title, max_chars=500)
         body = clean_untrusted_text(thread.body, max_chars=post_char_budget)
+        compression_body = clean_untrusted_text(
+            thread.body,
+            max_chars=min(self.max_post_chars, MAX_COMPRESSION_POST_INPUT_CHARS),
+        )
         reply_target_id = ""
         reply_target = "[本轮不是楼层回复]"
         excluded_comment_ids = {notification.external_comment_id}
@@ -112,6 +124,19 @@ class ContextBuilder:
             max_chars=800 if is_thread_reply else 1200,
             exclude_ids=excluded_comment_ids if is_thread_reply else set(),
         )
+        compression_comments = comments
+        if is_thread_reply:
+            # v1.2.12's small recent window remains the deterministic fallback,
+            # but the semantic compressor gets a wider, still hard-bounded view
+            # so it can observe topic drift that began outside the last 12 turns.
+            compression_comments = self._render_comments(
+                thread.comments,
+                bot_names,
+                limit=self.max_thread_comments,
+                max_chars=800,
+                exclude_ids=excluded_comment_ids,
+                total_chars=MAX_COMPRESSION_COMMENT_INPUT_CHARS,
+            )
         post_created_at = thread.post_created_at or (
             notification.created_at
             if notification.event_type is NotificationType.PROACTIVE_FEED
@@ -203,8 +228,24 @@ class ContextBuilder:
         community = "\n".join(common_context)
         focus = self._render_reply_focus(notification, is_thread_reply=is_thread_reply)
         dynamic = f"{timing}\n{community}\n{focus}"
-        image_urls, warnings = await self._collect_images(
-            _interleave_unique(notification.image_urls, thread.image_urls)
+        compression_source = None
+        if is_thread_reply:
+            compression_source = ThreadCompressionSource(
+                post_id=thread.post_id,
+                post_author=f"{thread.author_name} (UID {thread.author_uid})",
+                post_title=title,
+                post_body=compression_body,
+                recent_comments=compression_comments,
+                reply_target=reply_target,
+                current_sender=(f"{notification.sender_nickname} (UID {notification.sender_uid})"),
+                current_message=user_text,
+            )
+        notification_image_source = "current_comment" if is_thread_reply else "original_post"
+        image_urls, image_sources, warnings = await self._collect_images(
+            _interleave_tagged_images(
+                (notification_image_source, notification.image_urls),
+                ("original_post", thread.image_urls),
+            )
         )
         return BuiltContext(
             user_text=user_text,
@@ -212,6 +253,11 @@ class ContextBuilder:
             image_urls=image_urls,
             warnings=warnings,
             thread=thread,
+            runtime_context=timing,
+            community_context=community,
+            focus_context=focus,
+            compression_source=compression_source,
+            image_sources=image_sources,
         )
 
     async def _get_thread(
@@ -249,6 +295,7 @@ class ContextBuilder:
         limit: int,
         max_chars: int,
         exclude_ids: set[str],
+        total_chars: int | None = None,
     ) -> str:
         candidates = [item for item in comments if _comment_id(item) not in exclude_ids]
         selected = candidates[-limit:] if limit > 0 else []
@@ -284,6 +331,17 @@ class ContextBuilder:
                 f"{index}. [{_format_shanghai_time(comment_time)}] "
                 f"{nickname} (UID {uid}){relation}: {content}"
             )
+        if total_chars is not None and lines:
+            budget = max(1, int(total_chars))
+            kept_reversed: list[str] = []
+            used = 0
+            for line in reversed(lines):
+                separator = 1 if kept_reversed else 0
+                if used + separator + len(line) > budget:
+                    break
+                kept_reversed.append(line)
+                used += separator + len(line)
+            lines = list(reversed(kept_reversed))
         return "\n".join(lines) if lines else "[无可用楼层上下文]"
 
     def _render_reply_target(
@@ -373,10 +431,10 @@ class ContextBuilder:
             rules = [
                 '<xiaoheihe_reply_focus trust="trusted" mode="thread_reply">',
                 "本轮回复相关性优先级（必须遵守）:",
-                "1. 当前原生用户消息：最高优先级，决定本轮真正要回答的话题。",
+                "1. 当前原生用户消息及当前评论自己的图片：最高优先级，决定本轮真正要回答的话题。",
                 "2. 当前消息直接回复对象：用于理解当前回复承接的具体内容。",
                 "3. 最近楼层对话：用于补充局部对话上下文。",
-                "4. 原帖标题和正文：最低优先级，仅作为必要背景。",
+                "4. 原帖标题、正文及原帖图片：最低优先级，仅作为必要背景。",
                 (
                     "若当前消息本身可以独立理解，即使已经偏离原帖主题，也必须直接跟随当前"
                     "话题回答，不得为了迎合原帖而强行建立关联。"
@@ -385,6 +443,7 @@ class ContextBuilder:
                     "只有当前消息存在“这个/那个/他/上面”等省略、明确引用或必须依赖背景时，"
                     "才按 2 → 3 → 4 的顺序补足语义。"
                 ),
+                "原帖图片的存在不代表当前发言人仍在讨论图片；不得仅凭原帖图片把话题拉回原帖。",
                 "背景内容不得覆盖、改写或替代当前用户明确提出的问题。",
                 "</xiaoheihe_reply_focus>",
             ]
@@ -392,23 +451,27 @@ class ContextBuilder:
             rules = [
                 '<xiaoheihe_reply_focus trust="trusted" mode="proactive_feed">',
                 "本轮由主动浏览推荐流触发，没有新的评论问题。",
-                "原帖标题和正文是本轮主要话题；评论区仅作为辅助背景，不得反客为主。",
+                "原帖标题、正文和原帖图片是本轮主要话题；评论区仅作为辅助背景，不得反客为主。",
                 "</xiaoheihe_reply_focus>",
             ]
         else:
             rules = [
                 '<xiaoheihe_reply_focus trust="trusted" mode="post_level">',
-                "当前原生用户消息是本轮最高优先级问题，原帖是主要背景，评论区仅作辅助。",
+                "当前原生用户消息是本轮最高优先级问题，原帖文字和图片是主要背景，评论区仅作辅助。",
                 "先回答当前用户明确提出的问题；仅在需要时使用原帖和评论补充语义。",
                 "</xiaoheihe_reply_focus>",
             ]
         return "\n".join(rules)
 
-    async def _collect_images(self, values: list[str]) -> tuple[list[str], list[str]]:
+    async def _collect_images(
+        self,
+        values: list[tuple[str, str]],
+    ) -> tuple[list[str], list[str], list[str]]:
         result: list[str] = []
+        sources: list[str] = []
         warnings: list[str] = []
         seen: set[str] = set()
-        for value in values:
+        for value, source in values:
             if len(result) >= self.max_images:
                 warnings.append("图片数量超过配置上限，已截断")
                 break
@@ -423,7 +486,8 @@ class ContextBuilder:
             if url not in seen:
                 seen.add(url)
                 result.append(url)
-        return result, warnings
+                sources.append(source)
+        return result, sources, warnings
 
     async def clear(self) -> None:
         async with self._cache_lock:
@@ -512,16 +576,14 @@ def _format_elapsed(created_at: float, observed_at: float) -> str:
     return "".join(parts)
 
 
-def _interleave_unique(*sources: list[str]) -> list[str]:
-    values: list[str] = []
-    seen: set[str] = set()
-    max_length = max((len(source) for source in sources), default=0)
+def _interleave_tagged_images(*sources: tuple[str, list[str]]) -> list[tuple[str, str]]:
+    values: list[tuple[str, str]] = []
+    max_length = max((len(items) for _, items in sources), default=0)
     for index in range(max_length):
-        for source in sources:
-            if index >= len(source):
+        for source_name, items in sources:
+            if index >= len(items):
                 continue
-            value = source[index]
-            if value and value not in seen:
-                seen.add(value)
-                values.append(value)
+            value = items[index]
+            if value:
+                values.append((value, source_name))
     return values

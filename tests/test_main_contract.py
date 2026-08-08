@@ -11,6 +11,7 @@ from astrbot.api.message_components import Image, Plain
 from astrbot.api.provider import LLMResponse, ProviderRequest
 
 from tests.astrbot_stubs import REGISTERED_ADAPTERS
+from xiaoheihe.context_compression import ThreadCompressionSource
 
 
 @pytest.fixture
@@ -164,6 +165,251 @@ async def test_xiaoheihe_sender_identity_persists_per_turn_in_shared_floor(
         non_xiaoheihe,
     )
     assert non_xiaoheihe.extra_user_content_parts == []
+    await plugin.terminate()
+
+
+async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Provider:
+        def __init__(self, response="") -> None:
+            self.provider_config = {"modalities": ["text"]}
+            self.response = response
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(completion_text=self.response)
+
+    compressor = Provider(
+        '{"post_summary":"原帖讨论显卡价格",'
+        '"thread_summary":"A 和 B 已经转而讨论电影续作",'
+        '"local_topic":"电影续作","relation_to_post":"drifted"}'
+    )
+    main_provider = Provider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return {"main-fixed": main_provider, "compress-fixed": compressor}.get(provider_id)
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("fixed providers should be used")
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {
+                    "llm_provider_id": "main-fixed",
+                    "context_provider_id": "compress-fixed",
+                },
+                "context": {"thread_reply_compression_trigger_chars": 500},
+            }
+        ),
+    )
+    compression_source = ThreadCompressionSource(
+        post_id="post-1",
+        post_author="楼主 (UID author)",
+        post_title="原帖显卡",
+        post_body="显卡正文" * 300,
+        recent_comments="A (UID a): 最近聊电影\nB (UID b): 第二部挺好",
+        reply_target="B (UID b): 第二部挺好",
+        current_sender="C (UID c)",
+        current_message="那第一部呢？",
+    )
+    extras = {
+        "xiaoheihe_dynamic_context": "LEGACY-FALLBACK",
+        "xiaoheihe_runtime_context": "<runtime>可信时间</runtime>",
+        "xiaoheihe_community_context": "FALLBACK-SHOULD-BE-REPLACED",
+        "xiaoheihe_focus_context": "<focus>FINAL-FOCUS</focus>",
+        "xiaoheihe_compression_source": compression_source,
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "c",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+        },
+    )()
+    request = ProviderRequest()
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert len(compressor.calls) == 1
+    assert compressor.calls[0]["persist"] is False
+    assert "不可信社区数据" in compressor.calls[0]["prompt"]
+    assert "那第一部呢？" in compressor.calls[0]["prompt"]
+    assert len(request.extra_user_content_parts) == 3
+    assert request.extra_user_content_parts[0].temp is False
+    compressed = request.extra_user_content_parts[1].text
+    assert 'compression="llm"' in compressed
+    assert "A 和 B 已经转而讨论电影续作" in compressed
+    assert "已明显偏离原帖" in compressed
+    assert "FALLBACK-SHOULD-BE-REPLACED" not in compressed
+    assert request.extra_user_content_parts[-1].text == "<focus>FINAL-FOCUS</focus>"
+    assert request.extra_user_content_parts[-1].temp is True
+    await plugin.terminate()
+
+
+async def test_plugin_context_compression_failure_falls_back_without_blocking(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class BrokenCompressor:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text"]}
+
+        async def text_chat(self, **kwargs):
+            raise RuntimeError("compressor unavailable")
+
+    class MainProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text"]}
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return {
+                "main-fixed": MainProvider(),
+                "compress-fixed": BrokenCompressor(),
+            }.get(provider_id)
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {
+                    "llm_provider_id": "main-fixed",
+                    "context_provider_id": "compress-fixed",
+                },
+                "context": {"thread_reply_compression_trigger_chars": 500},
+            }
+        ),
+    )
+    source = ThreadCompressionSource(
+        "post-1",
+        "楼主",
+        "标题",
+        "正文" * 300,
+        "最近评论",
+        "直接回复",
+        "用户",
+        "当前消息",
+    )
+    extras = {
+        "xiaoheihe_runtime_context": "RUNTIME",
+        "xiaoheihe_community_context": "V1.2.12-FALLBACK",
+        "xiaoheihe_focus_context": "FINAL-FOCUS",
+        "xiaoheihe_compression_source": source,
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+        },
+    )()
+    request = ProviderRequest()
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert "V1.2.12-FALLBACK" in request.extra_user_content_parts[1].text
+    assert request.extra_user_content_parts[-1].text == "FINAL-FOCUS"
+    await plugin.terminate()
+
+
+async def test_plugin_short_thread_skips_context_compressor(isolated_smoke_import) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Compressor:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            raise AssertionError("short thread must not call the compressor")
+
+    compressor = Compressor()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return compressor if provider_id == "compress-fixed" else None
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    source = module.ThreadCompressionSource(
+        "post-1",
+        "楼主",
+        "短标题",
+        "短正文",
+        "一条短评论",
+        "直接回复",
+        "当前用户",
+        "当前消息",
+    )
+    selected = await plugin._compress_thread_context(
+        type("Event", (), {"unified_msg_origin": "xiaoheihe:test"})(),
+        source,
+        provider_settings={"context_provider_id": "compress-fixed", "llm_provider_id": ""},
+        context_settings=plugin.runtime.config.snapshot()["context"],
+        profile_id="default",
+    )
+
+    assert selected is None
+    assert compressor.calls == []
     await plugin.terminate()
 
 
@@ -487,6 +733,157 @@ async def test_plugin_uses_fixed_image_provider_and_keeps_caption_temporary(
     assert request.extra_user_content_parts[-1].temp is True
     assert "识别到一张测试图片" in request.extra_user_content_parts[-1].text
     await plugin.terminate()
+
+
+async def test_thread_reply_image_provider_compresses_sources_before_final_focus(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class ImageProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            value = (
+                "当前评论图像信息" * 400
+                if "current.png" in kwargs["image_urls"][0]
+                else "原帖图像信息" * 400
+            )
+            return LLMResponse(completion_text=value)
+
+    image_provider = ImageProvider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return image_provider if provider_id == "image-fixed" else None
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {"image_provider_id": "image-fixed"},
+                "context": {
+                    "enable_thread_reply_compression": False,
+                    "thread_reply_compressed_image_chars": 800,
+                },
+            }
+        ),
+    )
+    compression_source = ThreadCompressionSource(
+        "post-1",
+        "楼主",
+        "标题",
+        "正文",
+        "楼层",
+        "直接回复",
+        "当前用户",
+        "当前消息",
+    )
+    extras = {
+        "xiaoheihe_runtime_context": "RUNTIME",
+        "xiaoheihe_community_context": "COMMUNITY",
+        "xiaoheihe_focus_context": "FINAL-FOCUS",
+        "xiaoheihe_compression_source": compression_source,
+        "xiaoheihe_image_sources": ["current_comment", "original_post"],
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = [
+        "https://images.example.test/current.png",
+        "https://images.example.test/post.png",
+    ]
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    assert len(image_provider.calls) == 2
+    assert image_provider.calls[0]["image_urls"] == ["https://images.example.test/current.png"]
+    assert image_provider.calls[1]["image_urls"] == ["https://images.example.test/post.png"]
+    current_block = request.extra_user_content_parts[2].text
+    post_block = request.extra_user_content_parts[3].text
+    assert 'source="current_comment" priority="highest"' in current_block
+    assert len(current_block.splitlines()[2]) == 1600
+    assert 'source="original_post" priority="low"' in post_block
+    assert len(post_block.splitlines()[2]) == 800
+    assert request.extra_user_content_parts[-1].text == "FINAL-FOCUS"
+    await plugin.terminate()
+
+
+def test_raw_thread_images_keep_source_priority_without_fixed_image_provider(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    source = ThreadCompressionSource(
+        "post-1",
+        "楼主",
+        "标题",
+        "正文",
+        "楼层",
+        "直接回复",
+        "当前用户",
+        "当前消息",
+    )
+    extras = {
+        "xiaoheihe_compression_source": source,
+        "xiaoheihe_image_sources": ["current_comment", "original_post"],
+    }
+    event = type(
+        "Event",
+        (),
+        {"get_extra": lambda self, key, default="": extras.get(key, default)},
+    )()
+    request = ProviderRequest()
+    request.image_urls = [
+        "https://images.example.test/current.png",
+        "https://images.example.test/post.png",
+    ]
+
+    rendered = module.XiaoheiheAdapterPlugin._render_image_source_map(event, request)
+
+    assert "当前评论图片；与当前消息同为最高优先级" in rendered
+    assert "原帖图片；低优先级背景，不得单独决定当前话题" in rendered
+    assert request.image_urls == [
+        "https://images.example.test/current.png",
+        "https://images.example.test/post.png",
+    ]
 
 
 async def test_plugin_falls_back_to_main_images_when_fixed_image_provider_fails(

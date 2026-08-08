@@ -117,6 +117,7 @@ async def test_config_schema_api_exposes_structured_form_metadata(fake_config) -
     assert schema["polling"]["items"]["poll_interval_seconds"]["type"] == "int"
     assert schema["providers"]["items"]["llm_provider_id"]["_special"] == ("select_provider")
     assert schema["providers"]["items"]["image_provider_id"]["_special"] == ("select_provider")
+    assert schema["providers"]["items"]["context_provider_id"]["_special"] == ("select_provider")
     assert schema["logging"]["items"]["level"]["options"] == [
         "DEBUG",
         "INFO",
@@ -141,6 +142,7 @@ async def test_config_schema_includes_configured_provider_choices(fake_config) -
         {"value": "provider-a", "label": "provider-a · test-model"},
         {"value": "provider-b", "label": "provider-b"},
     ]
+    assert schema["providers"]["items"]["context_provider_id"]["options"] == options
 
 
 async def test_config_api_rejects_unknown_group(fake_config) -> None:

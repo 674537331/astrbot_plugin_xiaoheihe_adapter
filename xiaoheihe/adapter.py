@@ -314,6 +314,7 @@ class XiaoheihePlatformAdapter(Platform):
             "sender_uid": str(notification.sender_uid),
             "post_author_uid": str(notification.post_author_uid),
             "image_urls": list(context.image_urls),
+            "image_sources": list(context.image_sources),
             "warnings": list(context.warnings),
             "reply_timeout_base_seconds": base_reply_timeout,
             "reply_timeout_effective_seconds": effective_reply_timeout,
@@ -343,6 +344,11 @@ class XiaoheihePlatformAdapter(Platform):
         if permission.map_as_admin:
             event.role = "admin"
         event.set_extra("xiaoheihe_dynamic_context", context.dynamic_context)
+        event.set_extra("xiaoheihe_runtime_context", context.runtime_context)
+        event.set_extra("xiaoheihe_community_context", context.community_context)
+        event.set_extra("xiaoheihe_focus_context", context.focus_context)
+        event.set_extra("xiaoheihe_compression_source", context.compression_source)
+        event.set_extra("xiaoheihe_image_sources", list(context.image_sources))
         event.set_extra("xiaoheihe_route", notification.route.as_dict())
         fixed_llm_provider_id = str(runtime_config["providers"]["llm_provider_id"]).strip()
         if fixed_llm_provider_id:

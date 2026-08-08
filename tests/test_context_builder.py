@@ -112,6 +112,7 @@ async def test_comment_mention_includes_comment_and_original_post_media() -> Non
         "https://cdn.example.com/comment-1.png",
         "https://cdn.example.com/post-1.png",
     ]
+    assert result.image_sources == ["current_comment", "original_post"]
 
 
 async def test_proactive_context_strictly_separates_author_and_system_times(
@@ -237,6 +238,12 @@ async def test_thread_reply_focus_bounds_post_and_recent_comments_around_direct_
     assert "post-0000" in result.dynamic_context
     assert "post-0100" not in result.dynamic_context
     assert "不得为了迎合原帖而强行建立关联" in result.dynamic_context
+    assert result.compression_source is not None
+    assert "post-0100" in result.compression_source.post_body
+    assert "topic-00" in result.compression_source.recent_comments
+    assert "topic-16" in result.compression_source.recent_comments
+    assert result.compression_source.current_message == "电影第二部到底怎么样？"
+    assert result.compression_source.reply_target.endswith("我们已经歪楼聊到电影了")
 
 
 async def test_proactive_feed_keeps_full_post_budget_and_post_focus() -> None:
@@ -254,6 +261,7 @@ async def test_proactive_feed_keeps_full_post_budget_and_post_focus() -> None:
         parent_comment_id="",
         content="主动浏览帖子",
         created_at=1_800_000_000,
+        image_urls=["https://cdn.example.com/feed-focus.png"],
     )
 
     class FeedFocusClient:
@@ -289,7 +297,60 @@ async def test_proactive_feed_keeps_full_post_budget_and_post_focus() -> None:
     assert "feed-0219" in result.dynamic_context
     assert "feed-topic-0" in result.dynamic_context
     assert "feed-topic-4" in result.dynamic_context
-    assert "原帖标题和正文是本轮主要话题" in result.dynamic_context
+    assert "原帖标题、正文和原帖图片是本轮主要话题" in result.dynamic_context
+    assert result.compression_source is None
+    assert result.image_sources == ["original_post"]
+
+
+async def test_thread_compression_input_stays_hard_bounded_beyond_fallback_window() -> None:
+    post_body = " ".join(f"body-{index:05d}" for index in range(6000))
+    comments = [
+        {
+            "id": f"comment-{index:02d}",
+            "content": " ".join(f"topic-{index:02d}-{part:03d}" for part in range(80)),
+            "user": {"userid": f"user-{index:02d}", "nickname": f"用户{index:02d}"},
+        }
+        for index in range(60)
+    ]
+    notification = Notification(
+        profile_id="default",
+        external_event_id="compression-bounds",
+        external_comment_id="current-comment",
+        notification_id="compression-bounds",
+        event_type=NotificationType.REPLY,
+        sender_uid="speaker",
+        sender_nickname="当前用户",
+        post_id="post-bounds",
+        root_comment_id="root-comment",
+        parent_comment_id="",
+        content="当前独立话题",
+        created_at=1_800_000_000,
+    )
+
+    class LargeThreadClient:
+        async def fetch_thread_context(self, post_id: str, *, root_comment_id: str = ""):
+            return ThreadContext(
+                post_id=post_id,
+                title="超长原帖",
+                body=post_body,
+                author_uid="author",
+                author_name="楼主",
+                comments=comments,
+            )
+
+    result = await ContextBuilder(
+        max_post_chars=50_000,
+        max_thread_comments=200,
+        host_resolver=public_resolver,
+    ).build(notification, LargeThreadClient())
+
+    assert result.compression_source is not None
+    assert 1600 < len(result.compression_source.post_body) <= 8000
+    assert len(result.compression_source.recent_comments) <= 8000
+    assert "topic-59" in result.compression_source.recent_comments
+    assert "topic-00" not in result.compression_source.recent_comments
+    assert "body-00500" in result.compression_source.post_body
+    assert "body-00500" not in result.community_context
 
 
 def test_html_emoji_duplicate_and_tracking_cleanup() -> None:
