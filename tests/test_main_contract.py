@@ -838,6 +838,374 @@ async def test_thread_reply_image_provider_compresses_sources_before_final_focus
     await plugin.terminate()
 
 
+async def test_thread_reply_without_fixed_image_provider_preprocesses_with_main_provider(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class MainProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(completion_text="原帖视觉摘要" * 400)
+
+    main_provider = MainProvider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return main_provider if provider_id == "main-fixed" else None
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("fixed main provider should satisfy image preprocessing")
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {"llm_provider_id": "main-fixed"},
+                "context": {
+                    "enable_thread_reply_compression": False,
+                    "thread_reply_compressed_image_chars": 800,
+                },
+            }
+        ),
+    )
+    extras = {
+        "xiaoheihe_runtime_context": "RUNTIME",
+        "xiaoheihe_community_context": "COMMUNITY",
+        "xiaoheihe_focus_context": "FINAL-FOCUS",
+        "xiaoheihe_compression_source": ThreadCompressionSource(
+            "post-1",
+            "楼主",
+            "标题",
+            "正文",
+            "楼层",
+            "直接回复",
+            "当前用户",
+            "当前消息",
+        ),
+        "xiaoheihe_image_sources": ["original_post"],
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/post.png"]
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    assert extras["xiaoheihe_image_sources"] == []
+    assert len(main_provider.calls) == 1
+    assert main_provider.calls[0]["image_urls"] == ["https://images.example.test/post.png"]
+    assert main_provider.calls[0]["persist"] is False
+    post_block = next(
+        part.text
+        for part in request.extra_user_content_parts
+        if 'source="original_post" priority="low"' in part.text
+    )
+    assert len(post_block.splitlines()[2]) == 800
+    assert request.extra_user_content_parts[-1].text == "FINAL-FOCUS"
+    await plugin.terminate()
+
+
+async def test_thread_reply_fixed_image_failure_falls_through_to_main_preprocessor(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class BrokenImageProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            raise RuntimeError("image provider unavailable")
+
+    class MainProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(completion_text="主模型预处理成功")
+
+    image_provider = BrokenImageProvider()
+    main_provider = MainProvider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return {
+                "image-fixed": image_provider,
+                "main-fixed": main_provider,
+            }.get(provider_id)
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("fixed main provider should satisfy fallback preprocessing")
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {
+                    "image_provider_id": "image-fixed",
+                    "llm_provider_id": "main-fixed",
+                },
+                "context": {"enable_thread_reply_compression": False},
+            }
+        ),
+    )
+    extras = {
+        "xiaoheihe_compression_source": ThreadCompressionSource(
+            "post-1",
+            "楼主",
+            "标题",
+            "正文",
+            "楼层",
+            "直接回复",
+            "当前用户",
+            "当前消息",
+        ),
+        "xiaoheihe_image_sources": ["original_post"],
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/post.png"]
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    assert len(image_provider.calls) == 1
+    assert len(main_provider.calls) == 1
+    assert any("主模型预处理成功" in part.text for part in request.extra_user_content_parts)
+    await plugin.terminate()
+
+
+async def test_thread_reply_image_preprocess_fail_closed_for_post_but_keeps_current_raw(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class BrokenMainProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text", "image"]}
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            raise RuntimeError("preprocessing failed")
+
+    main_provider = BrokenMainProvider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return main_provider if provider_id == "main-fixed" else None
+
+        def get_using_provider(self, umo=None):
+            return main_provider
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig(
+            {
+                "providers": {"llm_provider_id": "main-fixed"},
+                "context": {"enable_thread_reply_compression": False},
+            }
+        ),
+    )
+    extras = {
+        "xiaoheihe_runtime_context": "RUNTIME",
+        "xiaoheihe_community_context": "COMMUNITY",
+        "xiaoheihe_focus_context": "FINAL-FOCUS",
+        "xiaoheihe_compression_source": ThreadCompressionSource(
+            "post-1",
+            "楼主",
+            "标题",
+            "正文",
+            "楼层",
+            "直接回复",
+            "当前用户",
+            "当前消息",
+        ),
+        "xiaoheihe_image_sources": ["current_comment", "original_post"],
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = [
+        "https://images.example.test/current.png",
+        "https://images.example.test/post.png",
+    ]
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == ["https://images.example.test/current.png"]
+    assert extras["xiaoheihe_image_sources"] == ["current_comment"]
+    assert len(main_provider.calls) == 2
+    assert any(
+        "原帖图片 1 张的视觉预处理失败，原图已从最终回答模型输入中移除" in part.text
+        for part in request.extra_user_content_parts
+    )
+    assert any(
+        "当前评论图片；与当前消息同为最高优先级" in part.text
+        for part in request.extra_user_content_parts
+    )
+    assert request.extra_user_content_parts[-1].text == "FINAL-FOCUS"
+    await plugin.terminate()
+
+
+async def test_thread_reply_text_only_provider_never_receives_raw_post_image(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    provider = type("Provider", (), {"provider_config": {"modalities": ["text"]}})()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_using_provider(self, umo=None):
+            return provider
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig({"context": {"enable_thread_reply_compression": False}}),
+    )
+    extras = {
+        "xiaoheihe_compression_source": ThreadCompressionSource(
+            "post-1",
+            "楼主",
+            "标题",
+            "正文",
+            "楼层",
+            "直接回复",
+            "当前用户",
+            "当前消息",
+        ),
+        "xiaoheihe_image_sources": ["original_post"],
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/post.png"]
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    assert extras["xiaoheihe_image_sources"] == []
+    assert any(
+        "原图已从最终回答模型输入中移除" in part.text for part in request.extra_user_content_parts
+    )
+    await plugin.terminate()
+
+
 def test_raw_thread_images_keep_source_priority_without_fixed_image_provider(
     isolated_smoke_import,
 ) -> None:
