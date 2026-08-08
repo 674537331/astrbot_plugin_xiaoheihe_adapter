@@ -17,7 +17,7 @@ v1.2.13 重点：
 - 长楼层评论回复/@ 可先由 AstrBot Provider 按来源做语义压缩，原帖摘要与楼层摘要保持分离，并显式判断楼层是否已经歪楼；
 - 当前消息和直接回复对象不交给压缩结果替代，始终保留原文；最终可信焦点规则放在所有文字/图片背景之后，降低小模型被长原帖重新带偏的概率；
 - v1.2.12 的原帖 1600 字 / 最近 12 条窗口不删除，改为短上下文、关闭压缩或压缩失败时的确定性兜底；压缩器正常工作时可读取更宽但有硬上限的原帖/楼层窗口；
-- 固定图片 Provider 会把当前评论图片与原帖图片分组理解：当前评论图片保持最高相关性，原帖图片压成更短的低优先级描述；未配置固定图片 Provider 时也会给原生图片链路追加可信来源标记；
+- 被动楼层会强制把当前评论图片与原帖图片分组预处理：固定图片 Provider 留空或失败时继续尝试固定 LLM、当前会话 Provider；原帖图片只以较短的低优先级文字描述进入最终回答模型，预处理全部失败时不再把原帖原图交给最终模型；
 - 语义压缩默认只在可压缩背景超过 2400 字时触发，超时、Provider 不存在、返回异常 JSON 均自动回退，不阻断本轮回复；主动刷帖不使用这套被动楼层压缩；
 - 新增可选 `providers.context_provider_id`，可单独选择上下文压缩 Provider；留空依次复用固定 LLM Provider 和当前会话 Provider；
 - 主动刷帖不使用上述缩减预算，继续以完整原帖为主要话题；帖子级触发也继续以原帖作为主要背景；
@@ -200,13 +200,13 @@ reply 通知历史基线已建立
 | `polling.max_pages_per_poll` | `3` | 每类通知每轮最大页数 |
 | `polling.initial_backfill_count` | `0` | 首次基线后回溯条数 |
 | `providers.llm_provider_id` | `""` | 固定小黑盒 LLM Provider；留空跟随当前配置或会话 |
-| `providers.image_provider_id` | `""` | 固定图片理解 Provider；留空使用 AstrBot 原生图片流程 |
+| `providers.image_provider_id` | `""` | 固定图片理解 Provider；被动楼层留空时自动尝试固定 LLM / 当前会话 Provider |
 | `providers.context_provider_id` | `""` | 长楼层语义压缩 Provider；留空复用固定 LLM，再留空则跟随当前会话 |
 | `context.enable_thread_reply_compression` | `true` | 仅为被动长楼层启用来源感知语义压缩 |
 | `context.thread_reply_compression_trigger_chars` | `2400` | 超过此可压缩背景长度才额外调用一次上下文 Provider |
 | `context.thread_reply_compressed_post_chars` | `700` | LLM 压缩后原帖摘要硬上限 |
 | `context.thread_reply_compressed_comments_chars` | `1400` | LLM 压缩后最近楼层摘要硬上限 |
-| `context.thread_reply_compressed_image_chars` | `800` | 固定图片 Provider 对被动回复原帖图片描述的硬上限 |
+| `context.thread_reply_compressed_image_chars` | `800` | 被动回复原帖图片预处理描述的硬上限 |
 | `context.thread_reply_post_chars` | `1600` | 压缩未触发/关闭/失败时的原帖兜底预算 |
 | `context.thread_reply_recent_comments` | `12` | 压缩未触发/关闭/失败时的最近楼层兜底窗口 |
 | `reply.dry_run_mark_processed` | `true` | 模拟结果保存后标记完成 |
@@ -259,12 +259,16 @@ v1.2.13 对超过 2400 字的可压缩背景默认额外调用一次上下文 Pr
 ## 图片理解
 
 公开 HTTPS 图片 URL 会转换为 AstrBot 原生 `Image` 组件。默认每个事件最多 6 张图片。插件
-会检查协议、认证信息、主机和 DNS 结果，过滤本地地址、内网地址与保留地址。配置固定图片
-Provider 后，插件先按“当前评论图片 / 原帖图片”分组生成本轮临时视觉描述，再交给固定或当前
-LLM Provider；在被动楼层里，当前评论图片属于最高相关性，原帖图片默认只保留最多 800 字的
-低优先级描述。图片 Provider 不存在、调用失败或返回空描述时会保留原图并回退 AstrBot 原生图片
-流程，同时对仍保留的图片注入来源/优先级映射。未固定图片 Provider 且当前 LLM Provider 明确
-声明为纯文本能力时，本轮按纯文本继续处理，并在管理页显示提示。
+会检查协议、认证信息、主机和 DNS 结果，过滤本地地址、内网地址与保留地址。被动楼层回复在
+最终回答前强制按“当前评论图片 / 原帖图片”分组做一次视觉预处理，Provider 顺序为“固定图片
+Provider → 固定 LLM Provider → 当前会话 Provider”；每次预处理均使用独立临时 session 且
+`persist=False`。原帖图片描述默认由本地代码再次硬限制到最多 800 字并作为低优先级背景，
+原帖原图不会进入最终回答模型；如果所有可用 Provider 都无法完成预处理，适配器移除原帖原图并
+注入“视觉预处理不可用”的可信系统说明，不允许模型猜图。
+
+当前评论自己的图片属于最高相关性，也优先转成临时视觉描述；只有所有预处理 Provider 都失败时
+才保留当前评论原图，交给 AstrBot 原生视觉链路兜底，并继续附带可信来源/优先级映射。帖子级
+触发和主动刷帖保持原有图片流程，不套用被动楼层的 fail-closed 规则，避免改变以原帖为主的话题。
 
 v1.2.2 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
 

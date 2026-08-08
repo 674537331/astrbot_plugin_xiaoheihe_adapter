@@ -4,7 +4,8 @@
 
 项目面向 AstrBot `>=4.24.2,<5`，重点兼容 4.26.2；接收与真实评论链路的最新用户复测日志来自
 AstrBot 4.27.2。v1.2.13 在 v1.2.12 焦点路由上增加被动长楼层的来源感知语义压缩和图片来源
-路由：当前消息/直接回复对象保持原文，原帖与楼层分开压缩，主动浏览仍以原帖为主要话题。
+路由：当前消息/直接回复对象保持原文，原帖与楼层分开压缩，被动楼层的原帖原图在最终 Agent
+前强制转为硬限长描述或 fail-closed，主动浏览仍以原帖为主要话题。
 该版本复用已有的 Provider 与 `on_llm_request` 接口，没有新增 AstrBot API 依赖。2026-08-08
 发布 v1.2.13 前再次核对：
 
@@ -45,8 +46,8 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
 | 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；动态帖子/楼层背景保持临时；长被动楼层可先按来源语义压缩，最终焦点仍按“当前消息 → 直接回复对象 → 最近楼层 → 原帖” |
 | 图片 | `astrbot.api.message_components.Image(file=url, url=url)` | v1.0.0 只传经过安全校验的公开 HTTPS URL，交给 AstrBot 媒体链路 |
-| 固定图片 Provider | `Context.get_provider_by_id()` + `Provider.text_chat()` | 当前评论图/原帖图分组生成临时描述并保留来源优先级；任一分组失败时保留全部原图并回退主 Provider 与 AstrBot 原生图片流程 |
-| 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 按固定或当前主 Provider 检查能力；仅在明确不含 `image` 时移除图片并保留文本 |
+| 被动楼层图片预处理 | `Context.get_provider_by_id()` / `get_using_provider()` + `Provider.text_chat(persist=False)` | 当前评论图/原帖图分组处理，按固定图片 → 固定 LLM → 当前会话逐级尝试；原帖只向最终模型提供硬限长描述，全部失败时移除原图；当前评论图失败时才保留原生视觉兜底 |
+| 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 被动楼层明确声明纯文本的 Provider 不参与图片预处理；其他事件沿用主 Provider 能力检查，明确不含 `image` 时移除图片并保留文本 |
 | 配置 | 构造参数中的 `AstrBotConfig` + `save_config()` | 原生设置和 Plugin Page 共用同一个对象，不写核心配置文件 |
 | 数据目录 | `StarTools.get_data_dir(plugin_name)` | 凭证与 SQLite 位于插件专属数据目录，覆盖更新后继续读取 |
 | Plugin Page | `window.AstrBotPluginPage` + `context.register_web_api()` + `astrbot.api.web` | 4.26.2 完整可用；页面只通过受限 bridge 通信 |
@@ -92,10 +93,12 @@ v1.2.13 仍使用同一接口，但将 v1.2.12 的 1600 字 / 12 条背景降为
 默认 2400 字的被动楼层先通过 `Provider.text_chat(persist=False)` 生成分离的原帖摘要、楼层摘要
 和局部话题关系；输入与输出均由插件本地代码设置硬上限，当前消息和直接回复对象不被摘要替换。
 上下文 Provider 缺失、超时、异常或返回无效 JSON 时直接回退 v1.2.12 临时背景，不改变 AstrBot
-Agent 调用。固定图片 Provider 同样复用 v1.2.2 起已有的 `Provider.text_chat()` 能力，只是把当前
-评论图与原帖图分组；没有固定图片 Provider 时原图仍由 AstrBot 原生多模态链路处理。最终可信
-焦点块在这些背景之后注入，因此这仍是插件侧临时输入整形，不修改 AstrBot system prompt、
-Conversation、工具注册或其他平台事件。
+Agent 调用。图片预处理同样复用 v1.2.2 起已有的 `Provider.text_chat()` 能力，但被动楼层不再
+要求必须配置固定图片 Provider：按固定图片、固定 LLM、当前会话 Provider 逐级尝试，并把当前
+评论图与原帖图分组。原帖图片只允许把硬限长的描述传给最终 Agent，所有预处理路径失败时直接
+移除原帖原图；当前评论自己的图片才允许回退 AstrBot 原生多模态链路。最终可信焦点块仍在这些
+背景之后注入，因此这仍是插件侧临时输入整形，不修改 AstrBot system prompt、Conversation、
+工具注册或其他平台事件。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2

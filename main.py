@@ -219,20 +219,26 @@ class XiaoheiheAdapterPlugin(Star):
         if dynamic_context:
             request.extra_user_content_parts.append(TextPart(text=dynamic_context).mark_as_temp())
 
-        captioned = False
+        is_thread_reply = compression_source is not None
         image_provider_id = str(provider_settings["image_provider_id"]).strip()
-        if request.image_urls and image_provider_id:
-            captioned = await self._caption_images(
+        if request.image_urls and is_thread_reply:
+            await self._preprocess_thread_images(
+                event,
+                request,
+                provider_settings=provider_settings,
+                profile_id=profile_id,
+                context_settings=context_settings,
+            )
+        elif request.image_urls and image_provider_id:
+            await self._caption_images(
                 event,
                 request,
                 provider_id=image_provider_id,
                 profile_id=profile_id,
                 context_settings=context_settings,
             )
-            if captioned:
-                self.runtime.clear_vision_alert()
 
-        if not captioned:
+        if request.image_urls:
             llm_provider_id = str(provider_settings["llm_provider_id"]).strip()
             if llm_provider_id:
                 provider = self.context.get_provider_by_id(llm_provider_id)
@@ -261,6 +267,8 @@ class XiaoheiheAdapterPlugin(Star):
                 request.extra_user_content_parts.append(
                     TextPart(text=image_source_map).mark_as_temp()
                 )
+        else:
+            self.runtime.clear_vision_alert()
 
         if has_split_context and focus_context:
             # Keep the trusted routing rule after both text compression and image
@@ -342,6 +350,235 @@ class XiaoheiheAdapterPlugin(Star):
         )
         return rendered
 
+    async def _preprocess_thread_images(
+        self,
+        event: AstrMessageEvent,
+        request: ProviderRequest,
+        *,
+        provider_settings: dict,
+        profile_id: str,
+        context_settings: dict,
+    ) -> None:
+        sources = self._normalized_image_sources(event, request)
+        grouped: dict[str, list[str]] = {
+            "current_comment": [],
+            "original_post": [],
+            "event_image": [],
+        }
+        for url, source in zip(request.image_urls, sources, strict=True):
+            grouped[source].append(url)
+
+        remaining_urls: list[str] = []
+        remaining_sources: list[str] = []
+        for source in ("current_comment", "original_post", "event_image"):
+            urls = grouped[source]
+            if not urls:
+                continue
+            rendered = await self._caption_thread_image_group(
+                event,
+                source=source,
+                urls=urls,
+                provider_settings=provider_settings,
+                profile_id=profile_id,
+                context_settings=context_settings,
+            )
+            if rendered:
+                request.extra_user_content_parts.append(TextPart(text=rendered).mark_as_temp())
+                continue
+
+            if source == "current_comment":
+                # The user's own image is part of the highest-priority current
+                # message.  Preserve it only as the last-resort AstrBot native
+                # vision fallback; low-priority post images never get this path.
+                remaining_urls.extend(urls)
+                remaining_sources.extend([source] * len(urls))
+                self.runtime.logging.emit(
+                    "WARNING",
+                    "当前评论图片预处理失败，保留原图作为最终视觉兜底",
+                    profile_id=profile_id,
+                    details={"image_count": len(urls)},
+                )
+                continue
+
+            request.extra_user_content_parts.append(
+                TextPart(
+                    text=self._render_blocked_thread_image_notice(
+                        source=source,
+                        image_count=len(urls),
+                    )
+                ).mark_as_temp()
+            )
+            self.runtime.logging.emit(
+                "WARNING",
+                "低优先级楼层图片预处理失败，已阻止原图进入最终 LLM",
+                profile_id=profile_id,
+                details={"source": source, "image_count": len(urls)},
+            )
+
+        request.image_urls[:] = remaining_urls
+        set_extra = getattr(event, "set_extra", None)
+        if callable(set_extra):
+            set_extra("xiaoheihe_image_sources", remaining_sources)
+
+    async def _caption_thread_image_group(
+        self,
+        event: AstrMessageEvent,
+        *,
+        source: str,
+        urls: list[str],
+        provider_settings: dict,
+        profile_id: str,
+        context_settings: dict,
+    ) -> str | None:
+        compressed_image_chars = int(context_settings["thread_reply_compressed_image_chars"])
+        if source == "original_post":
+            max_chars = compressed_image_chars
+            priority = "low"
+        elif source == "current_comment":
+            max_chars = max(1600, compressed_image_chars)
+            priority = "highest"
+        else:
+            # Unknown provenance is deliberately treated as low-priority in a
+            # passive floor reply: if it cannot be summarized, it is fail-closed.
+            max_chars = compressed_image_chars
+            priority = "low"
+
+        tried_providers: set[int] = set()
+        provider_ids = []
+        for key in ("image_provider_id", "llm_provider_id"):
+            provider_id = str(provider_settings.get(key, "") or "").strip()
+            if provider_id and provider_id not in provider_ids:
+                provider_ids.append(provider_id)
+        for provider_id in provider_ids:
+            provider = self.context.get_provider_by_id(provider_id)
+            if provider is None or id(provider) in tried_providers:
+                continue
+            tried_providers.add(id(provider))
+            rendered = await self._try_caption_thread_image_group(
+                provider,
+                provider_label=provider_id,
+                source=source,
+                urls=urls,
+                max_chars=max_chars,
+                priority=priority,
+                profile_id=profile_id,
+            )
+            if rendered:
+                return rendered
+
+        get_using_provider = getattr(self.context, "get_using_provider", None)
+        if callable(get_using_provider):
+            try:
+                provider = get_using_provider(umo=event.unified_msg_origin)
+            except Exception as exc:
+                self.runtime.logging.emit(
+                    "WARNING",
+                    f"无法获取当前会话图片预处理 Provider: {exc}",
+                    profile_id=profile_id,
+                    details={"source": source},
+                )
+            else:
+                if provider is not None and id(provider) not in tried_providers:
+                    rendered = await self._try_caption_thread_image_group(
+                        provider,
+                        provider_label="current-session",
+                        source=source,
+                        urls=urls,
+                        max_chars=max_chars,
+                        priority=priority,
+                        profile_id=profile_id,
+                    )
+                    if rendered:
+                        return rendered
+        return None
+
+    async def _try_caption_thread_image_group(
+        self,
+        provider: object,
+        *,
+        provider_label: str,
+        source: str,
+        urls: list[str],
+        max_chars: int,
+        priority: str,
+        profile_id: str,
+    ) -> str | None:
+        if not self._provider_may_accept_images(provider):
+            self.runtime.logging.emit(
+                "DEBUG",
+                "图片预处理 Provider 明确不支持图片，尝试下一 Provider",
+                profile_id=profile_id,
+                details={"provider_id": provider_label, "source": source},
+            )
+            return None
+        text_chat = getattr(provider, "text_chat", None)
+        if not callable(text_chat):
+            return None
+        try:
+            response = await text_chat(
+                prompt=build_image_compression_prompt(
+                    source=source,
+                    max_chars=max_chars,
+                ),
+                session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
+                image_urls=urls,
+                persist=False,
+            )
+            caption = clean_untrusted_text(
+                str(getattr(response, "completion_text", "") or ""),
+                max_chars=max_chars,
+            )
+            if not caption:
+                raise ValueError("图片预处理 Provider 返回空描述")
+        except Exception as exc:
+            self.runtime.logging.emit(
+                "WARNING",
+                f"图片预处理 Provider 处理失败，尝试下一 Provider: {exc}",
+                profile_id=profile_id,
+                details={"provider_id": provider_label, "source": source},
+            )
+            return None
+        return render_image_context(
+            source=source,
+            caption=caption,
+            priority=priority,
+        )
+
+    @staticmethod
+    def _provider_may_accept_images(provider: object) -> bool:
+        provider_config = getattr(provider, "provider_config", {})
+        modalities = (
+            provider_config.get("modalities") if isinstance(provider_config, dict) else None
+        )
+        if not isinstance(modalities, list) or not modalities:
+            return True
+        return "image" in {str(modality).strip().casefold() for modality in modalities}
+
+    @staticmethod
+    def _render_blocked_thread_image_notice(*, source: str, image_count: int) -> str:
+        label = "原帖图片" if source == "original_post" else "来源无法确认的楼层图片"
+        return "\n".join(
+            [
+                (
+                    '<xiaoheihe_image_preprocess trust="trusted" '
+                    f'source="{source}" status="unavailable">'
+                ),
+                f"{label} {image_count} 张的视觉预处理失败，原图已从最终回答模型输入中移除。",
+                "不得根据这些图片的存在推断当前话题，也不得编造其内容。",
+                "</xiaoheihe_image_preprocess>",
+            ]
+        )
+
+    @staticmethod
+    def _normalized_image_sources(event: AstrMessageEvent, request: ProviderRequest) -> list[str]:
+        sources = event.get_extra("xiaoheihe_image_sources", [])
+        if not isinstance(sources, list) or len(sources) != len(request.image_urls):
+            return ["event_image"] * len(request.image_urls)
+        return [
+            source if source in {"current_comment", "original_post"} else "event_image"
+            for source in sources
+        ]
+
     async def _caption_images(
         self,
         event: AstrMessageEvent,
@@ -360,14 +597,7 @@ class XiaoheiheAdapterPlugin(Star):
                 details={"provider_id": provider_id},
             )
             return False
-        sources = event.get_extra("xiaoheihe_image_sources", [])
-        if not isinstance(sources, list) or len(sources) != len(request.image_urls):
-            sources = ["event_image"] * len(request.image_urls)
-        else:
-            sources = [
-                source if source in {"current_comment", "original_post"} else "event_image"
-                for source in sources
-            ]
+        sources = self._normalized_image_sources(event, request)
         is_thread_reply = (
             self._coerce_compression_source(event.get_extra("xiaoheihe_compression_source", None))
             is not None

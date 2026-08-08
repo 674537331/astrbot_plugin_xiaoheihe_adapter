@@ -114,7 +114,7 @@
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "指定小黑盒图片理解使用的 Provider ID；留空则由当前 LLM Provider 和 AstrBot 原生图片流程处理。"
+        "hint": "指定小黑盒图片理解使用的 Provider ID；被动楼层留空或失败时会依次尝试固定 LLM、当前会话 Provider，原帖原图不会直接进入最终回答模型。其他事件留空时保持 AstrBot 原生图片流程。"
       },
       "context_provider_id": {
         "description": "上下文压缩 Provider",
@@ -177,7 +177,7 @@
         "description": "被动回复原帖图片描述字符上限",
         "type": "int",
         "default": 800,
-        "hint": "配置固定图片 Provider 时，原帖图片会按来源压成该长度以内的低优先级视觉描述；当前评论自己的图片使用更高预算。"
+        "hint": "被动楼层的原帖图片会先按来源压成该长度以内的低优先级视觉描述；固定图片 Provider 留空或失败时会继续尝试固定 LLM、当前会话 Provider。"
       },
       "thread_reply_compression_timeout_seconds": {
         "description": "上下文压缩超时秒数",

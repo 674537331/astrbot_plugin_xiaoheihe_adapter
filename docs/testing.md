@@ -21,7 +21,7 @@ python -m compileall -q .
 - 按账号/通知类型持久化 `message_id` 边界、缺省时间历史过滤和游标原子推进；
 - 队列拥塞先持久化、SQLite 到期重试主动恢复和更新后状态继承；
 - 自身消息、黑白名单、主人 UID 和管理员映射默认关闭；
-- 当前评论/原帖/楼层上下文、被动回复焦点优先级、直接回复对象保留、v1.2.12 兜底预算、长楼层来源感知语义压缩、主动浏览差异、HTML 清洗、临时上下文、双方图片 URL、图片来源优先级、固定图片 Provider 与视觉降级提示；
+- 当前评论/原帖/楼层上下文、被动回复焦点优先级、直接回复对象保留、v1.2.12 兜底预算、长楼层来源感知语义压缩、主动浏览差异、HTML 清洗、临时上下文、双方图片 URL、图片来源优先级、被动楼层图片 Provider 逐级预处理、原帖图片 fail-closed 与视觉降级提示；
 - SSRF 基础防护、路径穿越、日志/响应脱敏、回复清理与长度；
 - 确定性 session/message ID、唤醒标记、父类发送状态；
 - 同楼层不同发送者共享 session 但保留各自 `MessageMember.user_id`，每轮 UID 身份块持久化而楼层背景保持临时；
@@ -34,7 +34,7 @@ python -m compileall -q .
 - 配置同步、保存成功提示、保存回滚、Plugin Page API、SSE、任务关闭和 HTTP Client 关闭；
 - 覆盖更新后的适配器实例重建、冷启动不重复加载和配置实例状态回显；
 - 平台注册与 `PlatformMetadata` 均使用仓库 `logo.png`；
-- 主模块只注册平台适配器；固定 LLM Provider 通过事件选择进入 AstrBot 原生链路，固定图片 Provider 仅生成临时图片描述。
+- 主模块只注册平台适配器；固定 LLM Provider 通过事件选择进入 AstrBot 原生链路，被动楼层图片预处理只调用已有 AstrBot Provider 并生成临时图片描述。
 
 Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web API 由专门的契约测试覆盖，
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
@@ -42,13 +42,13 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 
 ## 2026-08-08 v1.2.13 本地结果
 
-- Pytest：`198 passed`；
+- Pytest：`202 passed`；
 - Coverage：`82%`（启用 branch，达到 `fail_under = 80`）；
 - Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、JSON、仓库静态校验与 `git diff --check`：通过；
 - 长被动楼层超过阈值时，原帖与最近楼层分别进入语义压缩，压缩结果具有本地硬上限，当前消息/直接回复对象仍保留原文；
 - 短楼层不额外调用上下文 Provider；压缩 Provider 异常时自动恢复 v1.2.12 的 1600 字 / 最近 12 条兜底上下文且继续本轮回复；
 - 压缩器输入窗口比 v1.2.12 兜底更宽但仍硬限制原帖/楼层各 8000 字，覆盖话题在较早楼层已经迁移的情况；
-- 固定图片 Provider 会区分当前评论图与原帖图并分别限制描述；没有固定图片 Provider 时原图不被改写，仅追加来源优先级映射；
+- 被动楼层会按固定图片 Provider → 固定 LLM Provider → 当前会话 Provider 逐级预处理；原帖图描述硬限长且原图不进入最终 Agent，全部预处理失败时 fail-closed；当前评论图只有在全部预处理失败时才保留原图兜底；
 - 主动浏览继续以原帖为主要内容并跳过被动楼层文本压缩；多人 UID、Grok 图片隔离与 Agent 最终回复聚合继续回归；
 - AstrBot 包级契约：4.24.2、4.26.2、当前稳定版 4.27.2 全部通过。
 
