@@ -280,7 +280,8 @@ class XiaoheihePlatformAdapter(Platform):
     ) -> None:
         runtime = get_runtime()
         runtime_config = runtime.config.snapshot()
-        credentials = runtime.credentials.load(notification.profile_id)
+        client = await runtime.get_client(notification.profile_id)
+        credentials = client.credentials
         if credentials is None:
             raise RuntimeError("分发事件时账号凭证不存在")
         message = AstrBotMessage()

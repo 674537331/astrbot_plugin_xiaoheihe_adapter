@@ -103,9 +103,12 @@ Agent 调用。图片预处理同样复用 v1.2.2 起已有的 `Provider.text_ch
 视为该预处理路径失败并继续 Agent；无图片事件不会执行该 Provider 路径。
 
 v1.2.14 的身份增强仍只改变小黑盒事件自己的临时社区上下文：压缩输入中的楼层行继续携带昵称
-和 UID，本地代码额外提取参与者身份锚点并在压缩后重新附回，因此不会因为上下文 Provider 的
-摘要风格而丢失本轮参与者映射。当前发言人与直接回复对象继续保留原文；未触发压缩、无图片、
-未安装/未调用 Grok 以及其他平台均不新增 Provider 调用或 AstrBot 钩子。
+和 UID，本地代码额外提取参与者身份锚点，并修复主钩子重建压缩源时漏掉该字段的问题；压缩后
+身份锚点由本地代码重新附回，因此不会因为上下文 Provider 的摘要风格而丢失本轮参与者映射。
+当前发言人与直接回复对象继续保留原文。辅助图片/上下文 Provider 的冷却、原帖图片转述文本缓存
+和楼层网络 single-flight 都位于插件侧预处理层，不修改 AstrBot Agent 的 system prompt、人格、
+工具注册或主 Provider fallback；未触发压缩、无图片、未安装/未调用 Grok 以及其他平台不新增
+对应的辅助模型调用。
 
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
@@ -150,9 +153,10 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.14 的最新迁移版本为 v7；新增的
-`notification_backfills` 只保存通知类型、待追赶旧边界和下一 offset。旧版按浏览量统计的
-`proactive_count` 仍沿用既有 v6 迁移规则，其余已有记录原位保留。
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.14 的最新迁移版本为 v8：v7 新增的
+`notification_backfills` 只保存通知类型、待追赶旧边界和下一 offset；v8 只增加自身评论、完成
+事件和日计数清理所需索引。旧版按浏览量统计的 `proactive_count` 仍沿用既有 v6 迁移规则，其余
+已有记录原位保留；超过现有 `dedup_days` 保留期的已完成元数据会由日常清理分批回收。
 卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据边界；更新前备份
 插件数据目录可用于回滚。
 

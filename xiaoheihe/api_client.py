@@ -265,28 +265,33 @@ class XiaoheiheApiClient:
         return parsed
 
     async def fetch_thread_context(
-        self, post_id: str, *, root_comment_id: str = ""
+        self,
+        post_id: str,
+        *,
+        root_comment_id: str = "",
+        post_context: ThreadContext | None = None,
     ) -> ThreadContext:
         # The reference mobile-web route returns the complete original post
         # when queried by link_id alone. A root-specific query may return a
         # narrowed comment tree, so keep the two sources separate and merge.
-        post_response = await self._request(
-            EndpointName.POST_TREE,
-            params={"link_id": post_id, "h_src": ""},
-        )
-        try:
-            post_context = parse_thread_context(post_response.payload, post_id)
-        except ResponseShapeError as exc:
-            error = ResponseContractError(
-                str(exc),
-                category="response_shape",
-                details={
-                    "context_source": "post",
-                    **_response_shape_summary(post_response.payload),
-                },
+        if post_context is None:
+            post_response = await self._request(
+                EndpointName.POST_TREE,
+                params={"link_id": post_id, "h_src": ""},
             )
-            self._remember_error(error)
-            raise error from exc
+            try:
+                post_context = parse_thread_context(post_response.payload, post_id)
+            except ResponseShapeError as exc:
+                error = ResponseContractError(
+                    str(exc),
+                    category="response_shape",
+                    details={
+                        "context_source": "post",
+                        **_response_shape_summary(post_response.payload),
+                    },
+                )
+                self._remember_error(error)
+                raise error from exc
         if not root_comment_id:
             return post_context
 

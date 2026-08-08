@@ -29,6 +29,19 @@ def test_config_defaults_and_profile(fake_config) -> None:
     assert service.snapshot()["context"]["thread_reply_compressed_post_chars"] == 700
     assert service.snapshot()["context"]["thread_reply_compressed_comments_chars"] == 1400
     assert service.snapshot()["context"]["thread_reply_compressed_image_chars"] == 800
+    assert service.snapshot()["context"]["context_cache_ttl_seconds"] == 60
+
+
+def test_legacy_unused_image_byte_limit_settings_are_dropped(fake_config) -> None:
+    fake_config["context"]["max_image_size_mb"] = 8
+    fake_config["context"]["max_total_image_size_mb"] = 24
+    fake_config["retention"]["image_cache_soft_limit_mb"] = 200
+
+    snapshot = ConfigService(fake_config).snapshot()
+
+    assert "max_image_size_mb" not in snapshot["context"]
+    assert "max_total_image_size_mb" not in snapshot["context"]
+    assert "image_cache_soft_limit_mb" not in snapshot["retention"]
 
 
 @pytest.mark.asyncio

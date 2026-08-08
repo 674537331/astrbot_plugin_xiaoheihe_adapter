@@ -55,7 +55,7 @@ class ContextBuilder:
         thread_reply_post_chars: int = 1600,
         thread_reply_recent_comments: int = 12,
         max_images: int = 6,
-        cache_ttl_seconds: int = 300,
+        cache_ttl_seconds: int = 60,
         cache_max_entries: int = 256,
         host_resolver: HostResolver = resolve_public_host,
     ) -> None:
@@ -67,7 +67,10 @@ class ContextBuilder:
         self.cache_ttl = cache_ttl_seconds
         self.cache_max_entries = cache_max_entries
         self.host_resolver = host_resolver
-        self._cache: OrderedDict[tuple[str, str, str], tuple[float, ThreadContext]] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str, str], tuple[float, float, ThreadContext]] = (
+            OrderedDict()
+        )
+        self._inflight: dict[tuple[str, str, str], asyncio.Task[ThreadContext]] = {}
         self._cache_lock = asyncio.Lock()
 
     async def build(
@@ -79,10 +82,14 @@ class ContextBuilder:
     ) -> BuiltContext:
         reply_started_at = time.time()
         observed_at = notification.observed_at or reply_started_at
-        thread = await self._get_thread(notification, client)
         post_snapshot = parse_notification_post_context(
             notification.raw,
             notification.post_id,
+        )
+        thread = await self._get_thread(
+            notification,
+            client,
+            post_snapshot=post_snapshot,
         )
         if post_snapshot is not None:
             thread = _merge_thread_with_post_snapshot(thread, post_snapshot)
@@ -271,7 +278,11 @@ class ContextBuilder:
         )
 
     async def _get_thread(
-        self, notification: Notification, client: XiaoheiheApiClient
+        self,
+        notification: Notification,
+        client: XiaoheiheApiClient,
+        *,
+        post_snapshot: ThreadContext | None = None,
     ) -> ThreadContext:
         key = (
             notification.profile_id,
@@ -281,21 +292,62 @@ class ContextBuilder:
         now = time.monotonic()
         async with self._cache_lock:
             cached = self._cache.get(key)
-            if cached and cached[0] > now:
+            event_observed_at = float(notification.observed_at or 0)
+            cache_covers_event = bool(
+                cached
+                and (
+                    not notification.root_comment_id
+                    or event_observed_at <= 0
+                    or event_observed_at <= cached[1]
+                )
+            )
+            if cached and cached[0] > now and cache_covers_event:
                 self._cache.move_to_end(key)
-                return cached[1]
+                return cached[2]
             if cached:
                 self._cache.pop(key, None)
-        thread = await client.fetch_thread_context(
-            notification.post_id,
-            root_comment_id=notification.root_comment_id,
-        )
-        async with self._cache_lock:
-            self._cache[key] = (now + self.cache_ttl, thread)
-            self._cache.move_to_end(key)
-            while len(self._cache) > self.cache_max_entries:
-                self._cache.popitem(last=False)
-        return thread
+            inflight = self._inflight.get(key)
+            if inflight is None:
+                inflight = asyncio.create_task(
+                    self._fetch_and_cache_thread(
+                        key,
+                        notification,
+                        client,
+                        post_snapshot=post_snapshot,
+                    )
+                )
+                self._inflight[key] = inflight
+        return await asyncio.shield(inflight)
+
+    async def _fetch_and_cache_thread(
+        self,
+        key: tuple[str, str, str],
+        notification: Notification,
+        client: XiaoheiheApiClient,
+        *,
+        post_snapshot: ThreadContext | None,
+    ) -> ThreadContext:
+        task = asyncio.current_task()
+        try:
+            thread = await client.fetch_thread_context(
+                notification.post_id,
+                root_comment_id=notification.root_comment_id,
+                post_context=post_snapshot if notification.root_comment_id else None,
+            )
+            async with self._cache_lock:
+                self._cache[key] = (
+                    time.monotonic() + self.cache_ttl,
+                    time.time(),
+                    thread,
+                )
+                self._cache.move_to_end(key)
+                while len(self._cache) > self.cache_max_entries:
+                    self._cache.popitem(last=False)
+            return thread
+        finally:
+            async with self._cache_lock:
+                if self._inflight.get(key) is task:
+                    self._inflight.pop(key, None)
 
     def _render_comments(
         self,
@@ -520,15 +572,19 @@ class ContextBuilder:
         sources: list[str] = []
         warnings: list[str] = []
         seen: set[str] = set()
+        resolved_hosts: set[str] = set()
         for value, source in values:
             if len(result) >= self.max_images:
                 warnings.append("图片数量超过配置上限，已截断")
                 break
             try:
                 url = validate_public_https_url(value)
+                if url in seen:
+                    continue
                 hostname = urlsplit(url).hostname
-                if hostname and not _is_ip_literal(hostname):
+                if hostname and not _is_ip_literal(hostname) and hostname not in resolved_hosts:
                     await self.host_resolver(hostname)
+                    resolved_hosts.add(hostname)
             except (OSError, SecurityError) as exc:
                 warnings.append(f"忽略不安全图片 URL: {exc}")
                 continue
@@ -541,6 +597,12 @@ class ContextBuilder:
     async def clear(self) -> None:
         async with self._cache_lock:
             self._cache.clear()
+            inflight = list(self._inflight.values())
+            self._inflight.clear()
+        for task in inflight:
+            task.cancel()
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
 
 
 def _is_ip_literal(hostname: str) -> bool:

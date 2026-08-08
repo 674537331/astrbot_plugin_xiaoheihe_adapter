@@ -27,6 +27,11 @@ from .task_manager import TaskManager
 
 PLUGIN_NAME = "astrbot_plugin_xiaoheihe_adapter"
 
+AUX_PROVIDER_PURPOSE_LABELS = {
+    "context": "楼层上下文压缩",
+    "image": "图片转述",
+}
+
 _runtime: RuntimeServices | None = None
 
 
@@ -81,6 +86,7 @@ class RuntimeServices:
         self._floor_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
         self._feed_approval_locks: dict[str, asyncio.Lock] = {}
         self._alerts: dict[str, dict[str, Any]] = {}
+        self._aux_provider_cooldowns: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._configured_adapters: dict[str, dict[str, Any]] = {}
         self.last_cleanup_at: str | None = None
         self.config.add_restart_callback(self._on_config_changed)
@@ -666,6 +672,7 @@ class RuntimeServices:
 
     async def status(self) -> dict[str, Any]:
         await self.ensure_started()
+        provider_cooldowns = self._active_aux_provider_cooldowns()
         profiles = []
         alerts = dict(self._alerts)
         for profile in self.config.enabled_profiles():
@@ -754,9 +761,169 @@ class RuntimeServices:
             ),
             "database_size": self.repository.database_size(),
             "log_size": self.logging.total_size(),
+            "provider_cooldowns": provider_cooldowns,
             "alerts": list(alerts.values()),
             "last_cleanup_at": self.last_cleanup_at,
         }
+
+    @staticmethod
+    def _aux_provider_key(profile_id: str, purpose: str, provider_id: str) -> tuple[str, str, str]:
+        return (
+            str(profile_id or "default")[:128],
+            str(purpose or "auxiliary")[:64],
+            str(provider_id or "current-session")[:256],
+        )
+
+    @staticmethod
+    def _aux_provider_alert_key(key: tuple[str, str, str]) -> str:
+        profile_id, purpose, provider_id = key
+        return f"aux_provider:{profile_id}:{purpose}:{provider_id}"
+
+    @staticmethod
+    def _aux_provider_cooldown_seconds(error: BaseException) -> int:
+        status_code = getattr(error, "status_code", None)
+        if not isinstance(status_code, int):
+            response = getattr(error, "response", None)
+            status_code = getattr(response, "status_code", None)
+        if status_code in {401, 403}:
+            return 300
+        if status_code == 429:
+            return 120
+        message = str(error).casefold()
+        if any(
+            marker in message
+            for marker in ("error code: 401", "error code: 403", "http 401", "http 403")
+        ):
+            return 300
+        if "error code: 429" in message or "http 429" in message:
+            return 120
+        if isinstance(error, TimeoutError) or "timeout" in message or "timed out" in message:
+            return 60
+        if "permission" in message or "forbidden" in message:
+            return 300
+        return 60
+
+    def auxiliary_provider_available(
+        self,
+        profile_id: str,
+        purpose: str,
+        provider_id: str,
+    ) -> bool:
+        key = self._aux_provider_key(profile_id, purpose, provider_id)
+        state = self._aux_provider_cooldowns.get(key)
+        if state is None:
+            return True
+        if float(state.get("until", 0)) > time.time():
+            return False
+        self._aux_provider_cooldowns.pop(key, None)
+        self._alerts.pop(self._aux_provider_alert_key(key), None)
+        self.logging.emit(
+            "INFO",
+            "辅助模型冷却结束，将在需要时重新尝试",
+            profile_id=key[0],
+            details={"purpose": key[1], "provider_id": key[2]},
+        )
+        return True
+
+    def report_auxiliary_provider_failure(
+        self,
+        profile_id: str,
+        purpose: str,
+        provider_id: str,
+        error: BaseException,
+    ) -> None:
+        key = self._aux_provider_key(profile_id, purpose, provider_id)
+        now = time.time()
+        cooldown_seconds = self._aux_provider_cooldown_seconds(error)
+        existing = self._aux_provider_cooldowns.get(key)
+        safe_error = redact_text(str(error))[:500] or type(error).__name__
+        state = {
+            "profile_id": key[0],
+            "purpose": key[1],
+            "provider_id": key[2],
+            "until": now + cooldown_seconds,
+            "cooldown_seconds": cooldown_seconds,
+            "last_error": safe_error,
+        }
+        self._aux_provider_cooldowns[key] = state
+        label = AUX_PROVIDER_PURPOSE_LABELS.get(key[1], key[1])
+        alert_key = self._aux_provider_alert_key(key)
+        self._alerts[alert_key] = {
+            "key": alert_key,
+            "level": "warning",
+            "message": (
+                f"{label}辅助模型 {key[2]} 调用失败，已冷却 {cooldown_seconds} 秒；"
+                "冷却期间自动跳过该辅助调用并走降级/备用路径，不会停掉主对话回复。"
+            ),
+        }
+        if existing is None or float(existing.get("until", 0)) <= now:
+            self.logging.emit(
+                "WARNING",
+                f"{label}辅助模型调用失败，已进入冷却: {safe_error}",
+                profile_id=key[0],
+                details={
+                    "purpose": key[1],
+                    "provider_id": key[2],
+                    "cooldown_seconds": cooldown_seconds,
+                    "exception_type": type(error).__name__,
+                },
+            )
+
+    def report_auxiliary_provider_success(
+        self,
+        profile_id: str,
+        purpose: str,
+        provider_id: str,
+    ) -> None:
+        key = self._aux_provider_key(profile_id, purpose, provider_id)
+        previous = self._aux_provider_cooldowns.pop(key, None)
+        self._alerts.pop(self._aux_provider_alert_key(key), None)
+        if previous is not None:
+            label = AUX_PROVIDER_PURPOSE_LABELS.get(key[1], key[1])
+            self.logging.emit(
+                "INFO",
+                f"{label}辅助模型调用已恢复",
+                profile_id=key[0],
+                details={"purpose": key[1], "provider_id": key[2]},
+            )
+
+    def clear_auxiliary_provider_cooldown(
+        self,
+        profile_id: str,
+        purpose: str,
+        provider_id: str,
+    ) -> bool:
+        key = self._aux_provider_key(profile_id, purpose, provider_id)
+        previous = self._aux_provider_cooldowns.pop(key, None)
+        self._alerts.pop(self._aux_provider_alert_key(key), None)
+        if previous is None:
+            return False
+        label = AUX_PROVIDER_PURPOSE_LABELS.get(key[1], key[1])
+        self.logging.emit(
+            "INFO",
+            f"已由 WebUI 手动结束{label}辅助模型冷却",
+            profile_id=key[0],
+            details={"purpose": key[1], "provider_id": key[2]},
+        )
+        return True
+
+    def _active_aux_provider_cooldowns(self) -> list[dict[str, Any]]:
+        now = time.time()
+        result: list[dict[str, Any]] = []
+        for key, state in tuple(self._aux_provider_cooldowns.items()):
+            until = float(state.get("until", 0))
+            if until <= now:
+                self._aux_provider_cooldowns.pop(key, None)
+                self._alerts.pop(self._aux_provider_alert_key(key), None)
+                continue
+            result.append(
+                {
+                    **state,
+                    "remaining_seconds": max(1, int(until - now)),
+                }
+            )
+        result.sort(key=lambda item: (item["profile_id"], item["purpose"], item["provider_id"]))
+        return result
 
     async def _on_auth_invalid(self, profile_id: str, status_code: int) -> None:
         field = f"consecutive_{status_code}"

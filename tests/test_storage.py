@@ -28,6 +28,10 @@ async def test_database_migrations_and_pragmas(tmp_path) -> None:
         "notification_cursors",
         "notification_backfills",
     } <= names
+    self_indexes = await database.fetchall("PRAGMA index_list(self_comment_ids)")
+    assert {"idx_self_comment_post", "idx_self_comment_created"} <= {
+        row["name"] for row in self_indexes
+    }
     await database.close()
 
 

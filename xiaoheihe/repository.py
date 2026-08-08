@@ -17,6 +17,7 @@ FINAL_STATES = {
     EventState.IGNORED.value,
     EventState.DEAD_LETTER.value,
 }
+MAX_CLEANUP_BATCHES_PER_RULE = 20
 
 
 class Repository:
@@ -1008,11 +1009,17 @@ class Repository:
         safe_batch = max(1, min(batch_size, 500))
         removed: dict[str, int] = {}
         for name, select_sql, parameters in self._cleanup_rules(retention, current):
-            cursor = await self.db.execute(
-                f"DELETE FROM {name} WHERE rowid IN (SELECT rowid FROM ({select_sql}) LIMIT ?)",
-                (*parameters, safe_batch),
-            )
-            removed[name] = max(0, cursor.rowcount)
+            total = 0
+            for _ in range(MAX_CLEANUP_BATCHES_PER_RULE):
+                cursor = await self.db.execute(
+                    f"DELETE FROM {name} WHERE rowid IN (SELECT rowid FROM ({select_sql}) LIMIT ?)",
+                    (*parameters, safe_batch),
+                )
+                changed = max(0, cursor.rowcount)
+                total += changed
+                if changed < safe_batch:
+                    break
+            removed[name] = total
         await self.db.checkpoint()
         await self.db.incremental_vacuum()
         return removed
@@ -1089,6 +1096,7 @@ class Repository:
         failure_cutoff = now - int(retention["failed_days"]) * day
         session_cutoff = now - int(retention["session_mapping_days"]) * day
         dedup_cutoff = now - int(retention["dedup_days"]) * day
+        dedup_day = datetime.fromtimestamp(dedup_cutoff, UTC).date().isoformat()
         error_cutoff = now - 30 * day
         return [
             (
@@ -1107,24 +1115,51 @@ class Repository:
                 (error_cutoff,),
             ),
             (
+                "feed_candidates",
+                """
+                SELECT rowid FROM feed_candidates
+                WHERE status IN ('sent', 'rejected', 'expired', 'failed')
+                  AND created_at < ?
+                """,
+                (dedup_cutoff,),
+            ),
+            (
                 "outgoing_replies",
                 """
                 SELECT rowid FROM outgoing_replies
-                WHERE status = 'failed' AND attempted_at < ?
+                WHERE (status = 'failed' AND attempted_at < ?)
+                   OR (status IN ('sent', 'dry_run') AND attempted_at < ?)
                 """,
-                (failure_cutoff,),
+                (failure_cutoff, dedup_cutoff),
             ),
             (
                 "incoming_events",
                 """
                 SELECT rowid FROM incoming_events
-                WHERE status = 'dead_letter' AND completed_at < ?
+                WHERE (
+                    (status = 'dead_letter' AND completed_at < ?)
+                    OR (status IN ('sent', 'dry_run', 'ignored') AND completed_at < ?)
+                )
                   AND NOT EXISTS (
                       SELECT 1 FROM outgoing_replies
                       WHERE outgoing_replies.incoming_event_id = incoming_events.id
                   )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM feed_candidates
+                      WHERE feed_candidates.incoming_event_id = incoming_events.id
+                  )
                 """,
-                (failure_cutoff,),
+                (failure_cutoff, dedup_cutoff),
+            ),
+            (
+                "self_comment_ids",
+                "SELECT rowid FROM self_comment_ids WHERE created_at < ?",
+                (dedup_cutoff,),
+            ),
+            (
+                "daily_counters",
+                "SELECT rowid FROM daily_counters WHERE day < ?",
+                (dedup_day,),
             ),
         ]
 

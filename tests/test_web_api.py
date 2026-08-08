@@ -80,6 +80,10 @@ def test_plugin_page_localizes_events_and_formats_times() -> None:
     assert "formatTime(entry.time)" in source
     assert "toLocaleString()" not in source
     assert '<option value="dead_letter">处理失败</option>' in html
+    assert 'metric("辅助模型冷却"' in source
+    assert 'clear.textContent = "结束冷却"' in source
+    assert 'bridge.apiPost("status/provider-cooldown/clear"' in source
+    assert 'id="provider-cooldown-list"' in html
 
 
 def test_registers_only_plugin_prefixed_routes(fake_config) -> None:
@@ -159,6 +163,32 @@ async def test_config_api_rejects_non_object_body(fake_config) -> None:
     REQUEST._json = []
     response = await controller.config_save()
     assert response["status_code"] == 400
+
+
+async def test_web_api_can_manually_clear_auxiliary_provider_cooldown(fake_config) -> None:
+    class CooldownRuntime(FakeRuntime):
+        def __init__(self, config) -> None:
+            super().__init__(config)
+            self.cleared = None
+
+        def clear_auxiliary_provider_cooldown(self, profile_id, purpose, provider_id):
+            self.cleared = (profile_id, purpose, provider_id)
+            return True
+
+    runtime = CooldownRuntime(fake_config)
+    controller = WebApiController(runtime)
+    REQUEST.username = "admin"
+    REQUEST._json = {
+        "profile_id": "default",
+        "purpose": "image",
+        "provider_id": "vision-fixed",
+    }
+
+    response = await controller.clear_provider_cooldown()
+
+    assert response["status_code"] == 200
+    assert response["json"] == {"cleared": True}
+    assert runtime.cleared == ("default", "image", "vision-fixed")
 
 
 async def test_web_api_requires_dashboard_identity(fake_config) -> None:

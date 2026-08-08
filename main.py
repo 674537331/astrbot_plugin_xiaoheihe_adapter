@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections import OrderedDict
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
@@ -53,6 +54,8 @@ GROK_QUERY_REQUIREMENT = (
 SENDER_IDENTITY_TAG = "xiaoheihe_sender_identity"
 MAX_IMAGE_PREPROCESS_BUDGET_SECONDS = 60.0
 MIN_IMAGE_REPLY_GRACE_SECONDS = 15.0
+IMAGE_CAPTION_CACHE_TTL_SECONDS = 1800.0
+IMAGE_CAPTION_CACHE_MAX_ENTRIES = 256
 
 try:
     from .xiaoheihe.web_api import WebApiController
@@ -74,6 +77,10 @@ class XiaoheiheAdapterPlugin(Star):
         self.context = context
         data_dir = StarTools.get_data_dir(PLUGIN_NAME)
         self.runtime = RuntimeServices(config, data_dir)
+        self._image_caption_cache: OrderedDict[tuple[object, ...], tuple[float, str]] = (
+            OrderedDict()
+        )
+        self._image_caption_cache_lock = asyncio.Lock()
         bind_runtime(self.runtime)
         self.web = (
             WebApiController(self.runtime, provider_supplier=self._provider_options)
@@ -292,22 +299,6 @@ class XiaoheiheAdapterPlugin(Star):
         if source.compressible_chars <= trigger_chars:
             return None
 
-        configured_provider_id = str(provider_settings.get("context_provider_id", "")).strip()
-        fallback_provider_id = str(provider_settings.get("llm_provider_id", "")).strip()
-        provider_id = configured_provider_id or fallback_provider_id
-        if provider_id:
-            provider = self.context.get_provider_by_id(provider_id)
-        else:
-            provider = self.context.get_using_provider(umo=event.unified_msg_origin)
-        if provider is None:
-            self.runtime.logging.emit(
-                "WARNING",
-                "楼层上下文压缩 Provider 不存在，回退 v1.2.12 硬截断上下文",
-                profile_id=profile_id,
-                details={"provider_id": provider_id or "current-session"},
-            )
-            return None
-
         post_chars = int(context_settings["thread_reply_compressed_post_chars"])
         comments_chars = int(context_settings["thread_reply_compressed_comments_chars"])
         prompt = build_thread_compression_prompt(
@@ -316,41 +307,146 @@ class XiaoheiheAdapterPlugin(Star):
             comments_chars=comments_chars,
         )
         timeout = int(context_settings["thread_reply_compression_timeout_seconds"])
-        try:
-            response = await asyncio.wait_for(
-                provider.text_chat(
-                    prompt=prompt,
-                    session_id=f"xiaoheihe-context-{uuid.uuid4().hex}",
-                    persist=False,
-                ),
-                timeout=timeout,
-            )
-            result = parse_thread_compression(
-                str(getattr(response, "completion_text", "") or ""),
-                post_chars=post_chars,
-                comments_chars=comments_chars,
-            )
-        except Exception as exc:
-            self.runtime.logging.emit(
-                "WARNING",
-                f"楼层上下文 LLM 压缩失败，回退 v1.2.12 硬截断上下文: {exc}",
-                profile_id=profile_id,
-                details={"provider_id": provider_id or "current-session"},
-            )
-            return None
-        rendered = render_compressed_thread_context(source, result)
-        self.runtime.logging.emit(
-            "DEBUG",
-            "楼层上下文已按来源完成 LLM 语义压缩",
+        deadline = asyncio.get_running_loop().time() + timeout
+        providers = self._auxiliary_provider_candidates(
+            event,
+            provider_settings,
+            keys=("context_provider_id", "llm_provider_id"),
+            purpose="context",
             profile_id=profile_id,
-            details={
-                "provider_id": provider_id or "current-session",
-                "input_chars": source.compressible_chars,
-                "output_chars": len(rendered),
-                "relation_to_post": result.relation_to_post,
-            },
         )
-        return rendered
+        for provider, provider_label in providers:
+            if not self.runtime.auxiliary_provider_available(
+                profile_id,
+                "context",
+                provider_label,
+            ):
+                continue
+            remaining_seconds = deadline - asyncio.get_running_loop().time()
+            if remaining_seconds <= 0:
+                break
+            try:
+                response = await asyncio.wait_for(
+                    provider.text_chat(
+                        prompt=prompt,
+                        session_id=f"xiaoheihe-context-{uuid.uuid4().hex}",
+                        persist=False,
+                    ),
+                    timeout=remaining_seconds,
+                )
+                result = parse_thread_compression(
+                    str(getattr(response, "completion_text", "") or ""),
+                    post_chars=post_chars,
+                    comments_chars=comments_chars,
+                )
+            except TimeoutError as exc:
+                timeout_error = TimeoutError(f"楼层上下文压缩总预算耗尽（{timeout} 秒）")
+                timeout_error.__cause__ = exc
+                self.runtime.report_auxiliary_provider_failure(
+                    profile_id,
+                    "context",
+                    provider_label,
+                    timeout_error,
+                )
+                break
+            except Exception as exc:
+                self.runtime.report_auxiliary_provider_failure(
+                    profile_id,
+                    "context",
+                    provider_label,
+                    exc,
+                )
+                continue
+            self.runtime.report_auxiliary_provider_success(
+                profile_id,
+                "context",
+                provider_label,
+            )
+            rendered = render_compressed_thread_context(source, result)
+            self.runtime.logging.emit(
+                "DEBUG",
+                "楼层上下文已按来源完成 LLM 语义压缩",
+                profile_id=profile_id,
+                details={
+                    "provider_id": provider_label,
+                    "input_chars": source.compressible_chars,
+                    "output_chars": len(rendered),
+                    "relation_to_post": result.relation_to_post,
+                },
+            )
+            return rendered
+        return None
+
+    def _auxiliary_provider_candidates(
+        self,
+        event: AstrMessageEvent,
+        provider_settings: dict,
+        *,
+        keys: tuple[str, ...],
+        purpose: str,
+        profile_id: str,
+    ) -> list[tuple[object, str]]:
+        candidates: list[tuple[object, str]] = []
+        seen: set[int] = set()
+        for key in keys:
+            configured_id = str(provider_settings.get(key, "") or "").strip()
+            if not configured_id:
+                continue
+            if not self.runtime.auxiliary_provider_available(
+                profile_id,
+                purpose,
+                configured_id,
+            ):
+                continue
+            try:
+                provider = self.context.get_provider_by_id(configured_id)
+            except Exception as exc:
+                self.runtime.report_auxiliary_provider_failure(
+                    profile_id,
+                    purpose,
+                    configured_id,
+                    exc,
+                )
+                continue
+            if provider is None:
+                self.runtime.report_auxiliary_provider_failure(
+                    profile_id,
+                    purpose,
+                    configured_id,
+                    RuntimeError("Provider 不存在或当前未启用"),
+                )
+                continue
+            if id(provider) in seen:
+                continue
+            seen.add(id(provider))
+            candidates.append((provider, self._provider_runtime_label(provider, configured_id)))
+
+        get_using_provider = getattr(self.context, "get_using_provider", None)
+        if callable(get_using_provider):
+            try:
+                provider = get_using_provider(umo=event.unified_msg_origin)
+            except Exception as exc:
+                self.runtime.logging.emit(
+                    "WARNING",
+                    f"无法获取当前会话辅助 Provider: {exc}",
+                    profile_id=profile_id,
+                    details={"purpose": purpose},
+                )
+            else:
+                if provider is not None and id(provider) not in seen:
+                    label = self._provider_runtime_label(provider, "current-session")
+                    if self.runtime.auxiliary_provider_available(profile_id, purpose, label):
+                        candidates.append((provider, label))
+        return candidates
+
+    @staticmethod
+    def _provider_runtime_label(provider: object, fallback: str) -> str:
+        provider_config = getattr(provider, "provider_config", {})
+        if isinstance(provider_config, dict):
+            configured_id = str(provider_config.get("id", "") or "").strip()
+            if configured_id:
+                return configured_id[:256]
+        return str(fallback or "current-session")[:256]
 
     async def _preprocess_thread_images(
         self,
@@ -460,10 +556,36 @@ class XiaoheiheAdapterPlugin(Star):
             if provider_id and provider_id not in provider_ids:
                 provider_ids.append(provider_id)
         for provider_id in provider_ids:
-            provider = self.context.get_provider_by_id(provider_id)
-            if provider is None or id(provider) in tried_providers:
+            provider_available = self.runtime.auxiliary_provider_available(
+                profile_id,
+                "image",
+                provider_id,
+            )
+            try:
+                provider = self.context.get_provider_by_id(provider_id)
+            except Exception as exc:
+                if provider_available:
+                    self.runtime.report_auxiliary_provider_failure(
+                        profile_id,
+                        "image",
+                        provider_id,
+                        exc,
+                    )
+                continue
+            if provider is None:
+                if provider_available:
+                    self.runtime.report_auxiliary_provider_failure(
+                        profile_id,
+                        "image",
+                        provider_id,
+                        RuntimeError("Provider 不存在或当前未启用"),
+                    )
+                continue
+            if id(provider) in tried_providers:
                 continue
             tried_providers.add(id(provider))
+            if not provider_available:
+                continue
             rendered = await self._try_caption_thread_image_group(
                 provider,
                 provider_label=provider_id,
@@ -527,6 +649,26 @@ class XiaoheiheAdapterPlugin(Star):
         text_chat = getattr(provider, "text_chat", None)
         if not callable(text_chat):
             return None
+        provider_label = self._provider_runtime_label(provider, provider_label)
+        cached_caption = await self._get_cached_image_caption(
+            provider,
+            provider_label=provider_label,
+            source=source,
+            urls=urls,
+            max_chars=max_chars,
+        )
+        if cached_caption:
+            return render_image_context(
+                source=source,
+                caption=cached_caption,
+                priority=priority,
+            )
+        if not self.runtime.auxiliary_provider_available(
+            profile_id,
+            "image",
+            provider_label,
+        ):
+            return None
         remaining_seconds = deadline - asyncio.get_running_loop().time()
         if remaining_seconds <= 0:
             self.runtime.logging.emit(
@@ -556,31 +698,122 @@ class XiaoheiheAdapterPlugin(Star):
             )
             if not caption:
                 raise ValueError("图片预处理 Provider 返回空描述")
-        except TimeoutError:
-            self.runtime.logging.emit(
-                "WARNING",
-                "图片预处理达到本轮总时间预算，立即进入降级路径",
-                profile_id=profile_id,
-                details={
-                    "provider_id": provider_label,
-                    "source": source,
-                    "timeout_seconds": round(max(0.0, remaining_seconds), 3),
-                },
+        except TimeoutError as exc:
+            timeout_error = TimeoutError(
+                f"图片预处理达到本轮总时间预算（{round(max(0.0, remaining_seconds), 3)} 秒）"
+            )
+            timeout_error.__cause__ = exc
+            self.runtime.report_auxiliary_provider_failure(
+                profile_id,
+                "image",
+                provider_label,
+                timeout_error,
             )
             return None
         except Exception as exc:
-            self.runtime.logging.emit(
-                "WARNING",
-                f"图片预处理 Provider 处理失败，尝试下一 Provider: {exc}",
-                profile_id=profile_id,
-                details={"provider_id": provider_label, "source": source},
+            self.runtime.report_auxiliary_provider_failure(
+                profile_id,
+                "image",
+                provider_label,
+                exc,
             )
             return None
+        self.runtime.report_auxiliary_provider_success(profile_id, "image", provider_label)
+        await self._store_cached_image_caption(
+            provider,
+            provider_label=provider_label,
+            source=source,
+            urls=urls,
+            max_chars=max_chars,
+            caption=caption,
+        )
         return render_image_context(
             source=source,
             caption=caption,
             priority=priority,
         )
+
+    @staticmethod
+    def _image_caption_cache_key(
+        provider: object,
+        *,
+        provider_label: str,
+        source: str,
+        urls: list[str],
+        max_chars: int,
+    ) -> tuple[object, ...] | None:
+        if source != "original_post" or not urls:
+            return None
+        model = ""
+        get_model = getattr(provider, "get_model", None)
+        if callable(get_model):
+            try:
+                model = str(get_model() or "").strip()
+            except Exception:
+                model = ""
+        return (
+            id(provider),
+            provider_label,
+            model,
+            source,
+            tuple(urls),
+            int(max_chars),
+        )
+
+    async def _get_cached_image_caption(
+        self,
+        provider: object,
+        *,
+        provider_label: str,
+        source: str,
+        urls: list[str],
+        max_chars: int,
+    ) -> str | None:
+        key = self._image_caption_cache_key(
+            provider,
+            provider_label=provider_label,
+            source=source,
+            urls=urls,
+            max_chars=max_chars,
+        )
+        if key is None:
+            return None
+        now = asyncio.get_running_loop().time()
+        async with self._image_caption_cache_lock:
+            cached = self._image_caption_cache.get(key)
+            if cached is None:
+                return None
+            if cached[0] <= now:
+                self._image_caption_cache.pop(key, None)
+                return None
+            self._image_caption_cache.move_to_end(key)
+            return cached[1]
+
+    async def _store_cached_image_caption(
+        self,
+        provider: object,
+        *,
+        provider_label: str,
+        source: str,
+        urls: list[str],
+        max_chars: int,
+        caption: str,
+    ) -> None:
+        key = self._image_caption_cache_key(
+            provider,
+            provider_label=provider_label,
+            source=source,
+            urls=urls,
+            max_chars=max_chars,
+        )
+        if key is None:
+            return
+        expires_at = asyncio.get_running_loop().time() + IMAGE_CAPTION_CACHE_TTL_SECONDS
+        async with self._image_caption_cache_lock:
+            self._image_caption_cache[key] = (expires_at, caption)
+            self._image_caption_cache.move_to_end(key)
+            while len(self._image_caption_cache) > IMAGE_CAPTION_CACHE_MAX_ENTRIES:
+                self._image_caption_cache.popitem(last=False)
 
     @staticmethod
     def _provider_may_accept_images(provider: object) -> bool:
@@ -659,15 +892,27 @@ class XiaoheiheAdapterPlugin(Star):
         profile_id: str,
         context_settings: dict,
     ) -> bool:
-        provider = self.context.get_provider_by_id(provider_id)
-        if provider is None:
-            self.runtime.logging.emit(
-                "WARNING",
-                "固定图片 Provider 不存在，回退当前 LLM 图片流程",
-                profile_id=profile_id,
-                details={"provider_id": provider_id},
+        if not self.runtime.auxiliary_provider_available(profile_id, "image", provider_id):
+            return False
+        try:
+            provider = self.context.get_provider_by_id(provider_id)
+        except Exception as exc:
+            self.runtime.report_auxiliary_provider_failure(
+                profile_id,
+                "image",
+                provider_id,
+                exc,
             )
             return False
+        if provider is None:
+            self.runtime.report_auxiliary_provider_failure(
+                profile_id,
+                "image",
+                provider_id,
+                RuntimeError("固定图片 Provider 不存在或当前未启用"),
+            )
+            return False
+        provider_label = self._provider_runtime_label(provider, provider_id)
         sources = self._normalized_image_sources(event, request)
         is_thread_reply = (
             self._coerce_compression_source(event.get_extra("xiaoheihe_compression_source", None))
@@ -691,54 +936,29 @@ class XiaoheiheAdapterPlugin(Star):
             image_count=len(request.image_urls),
         )
         deadline = asyncio.get_running_loop().time() + budget_seconds
-        try:
-            for source, urls in groups:
-                if is_thread_reply and source == "original_post":
-                    max_chars = compressed_image_chars
-                    priority = "low"
-                elif is_thread_reply and source == "current_comment":
-                    max_chars = max(1600, compressed_image_chars)
-                    priority = "highest"
-                else:
-                    max_chars = max(2400, compressed_image_chars)
-                    priority = "primary"
-                remaining_seconds = deadline - asyncio.get_running_loop().time()
-                if remaining_seconds <= 0:
-                    raise TimeoutError("图片预处理总时间预算已耗尽")
-                response = await asyncio.wait_for(
-                    provider.text_chat(
-                        prompt=build_image_compression_prompt(
-                            source=source,
-                            max_chars=max_chars,
-                        ),
-                        session_id=f"xiaoheihe-image-{uuid.uuid4().hex}",
-                        image_urls=urls,
-                        persist=False,
-                        request_max_retries=1,
-                    ),
-                    timeout=remaining_seconds,
-                )
-                caption = clean_untrusted_text(
-                    str(getattr(response, "completion_text", "") or ""),
-                    max_chars=max_chars,
-                )
-                if not caption:
-                    raise ValueError("固定图片 Provider 返回空描述")
-                rendered.append(
-                    render_image_context(
-                        source=source,
-                        caption=caption,
-                        priority=priority,
-                    )
-                )
-        except Exception as exc:
-            self.runtime.logging.emit(
-                "WARNING",
-                f"固定图片 Provider 处理失败，回退当前 LLM 图片流程: {exc}",
+        for source, urls in groups:
+            if is_thread_reply and source == "original_post":
+                max_chars = compressed_image_chars
+                priority = "low"
+            elif is_thread_reply and source == "current_comment":
+                max_chars = max(1600, compressed_image_chars)
+                priority = "highest"
+            else:
+                max_chars = max(2400, compressed_image_chars)
+                priority = "primary"
+            block = await self._try_caption_thread_image_group(
+                provider,
+                provider_label=provider_label,
+                source=source,
+                urls=urls,
+                max_chars=max_chars,
+                priority=priority,
                 profile_id=profile_id,
-                details={"provider_id": provider_id},
+                deadline=deadline,
             )
-            return False
+            if not block:
+                return False
+            rendered.append(block)
         for block in rendered:
             request.extra_user_content_parts.append(TextPart(text=block).mark_as_temp())
         request.image_urls.clear()
@@ -792,7 +1012,14 @@ class XiaoheiheAdapterPlugin(Star):
             values = {field: str(getattr(value, field)) for field in fields}
         except (AttributeError, TypeError, ValueError):
             return None
-        return ThreadCompressionSource(**values)
+        participants: list[str] = []
+        raw_participants = getattr(value, "recent_participants", ())
+        if isinstance(raw_participants, (list, tuple)):
+            for item in raw_participants[:64]:
+                identity = clean_untrusted_text(str(item), max_chars=180).replace("\n", " ")
+                if identity:
+                    participants.append(identity)
+        return ThreadCompressionSource(**values, recent_participants=tuple(participants))
 
     @staticmethod
     def _grok_query_needs_event_images(tool_args: dict | None) -> bool:
@@ -958,4 +1185,6 @@ class XiaoheiheAdapterPlugin(Star):
             mark_done(final_text)
 
     async def terminate(self) -> None:
+        async with self._image_caption_cache_lock:
+            self._image_caption_cache.clear()
         await self.runtime.close()
