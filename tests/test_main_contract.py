@@ -68,25 +68,39 @@ def test_image_preprocess_budget_tracks_count_and_configured_limit(
         module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
             event, context_settings=settings, image_count=1
         )
-        == 30
+        == 45
     )
     assert (
         module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
             event, context_settings=settings, image_count=2
         )
-        == 60
+        == 90
+    )
+    assert (
+        module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
+            event,
+            context_settings={
+                "max_images_per_event": 20,
+                "image_timeout_seconds": 15,
+                "image_total_timeout_seconds": 600,
+            },
+            image_count=20,
+            provider_candidate_count=3,
+            image_group_counts=(10, 10),
+        )
+        == 600
     )
     assert (
         module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
             event, context_settings=settings, image_count=3
         )
-        == 90
+        == 135
     )
     assert (
         module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
             event, context_settings=settings, image_count=6
         )
-        == 120
+        == 240
     )
     assert (
         module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
@@ -94,8 +108,319 @@ def test_image_preprocess_budget_tracks_count_and_configured_limit(
             context_settings={"max_images_per_event": 2, "image_timeout_seconds": 15},
             image_count=6,
         )
-        == 60
+        == 90
     )
+
+
+async def test_early_image_route_falls_back_in_configured_order(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    calls: list[str] = []
+
+    class Provider:
+        def __init__(self, provider_id: str, *, succeeds: bool) -> None:
+            self.provider_config = {
+                "id": provider_id,
+                "modalities": ["text", "image"],
+            }
+            self.succeeds = succeeds
+
+        async def text_chat(self, **kwargs):
+            calls.append(self.provider_config["id"])
+            if not self.succeeds:
+                raise RuntimeError(f"{self.provider_config['id']} unavailable")
+            return LLMResponse(completion_text="AstrBot 主模型识别成功")
+
+    providers = {
+        "plugin-image": Provider("plugin-image", succeeds=False),
+        "astrbot-image": Provider("astrbot-image", succeeds=False),
+        "astrbot-main": Provider("astrbot-main", succeeds=True),
+    }
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return providers.get(provider_id)
+
+        def get_using_provider(self, umo=None):
+            return providers["astrbot-main"]
+
+        def get_config(self, umo=None):
+            return {
+                "provider_settings": {
+                    "default_image_caption_provider_id": "astrbot-image",
+                    "fallback_chat_models": [],
+                }
+            }
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig({"providers": {"image_provider_id": "plugin-image"}}),
+    )
+    extras = {"xiaoheihe_image_sources": ["current_comment"]}
+    messages = [
+        Plain("看看这张图"),
+        Image(
+            file="https://images.example.test/current.png",
+            url="https://images.example.test/current.png",
+        ),
+    ]
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_messages": lambda self: messages,
+            "get_extra": lambda self, key, default=None: extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+
+    await plugin.prepare_xiaoheihe_before_agent(event)
+
+    assert calls == ["plugin-image", "astrbot-image", "astrbot-main"]
+    assert all(not isinstance(component, Image) for component in messages)
+    assert extras[module.EARLY_IMAGE_URLS_EXTRA] == ["https://images.example.test/current.png"]
+    assert any(
+        "AstrBot 主模型识别成功" in block for block in extras[module.EARLY_IMAGE_BLOCKS_EXTRA]
+    )
+
+    request = ProviderRequest()
+    await plugin.inject_xiaoheihe_context(event, request)
+    assert request.image_urls == []
+    assert any("AstrBot 主模型识别成功" in part.text for part in request.extra_user_content_parts)
+    await plugin.terminate()
+
+
+async def test_early_image_route_fail_closed_never_forwards_raw_image(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class TextOnlyProvider:
+        def __init__(self) -> None:
+            self.provider_config = {"id": "astrbot-main", "modalities": ["text"]}
+
+        async def text_chat(self, **kwargs):
+            raise AssertionError("text-only provider must not receive images")
+
+    provider = TextOnlyProvider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_using_provider(self, umo=None):
+            return provider
+
+        def get_config(self, umo=None):
+            return {"provider_settings": {}}
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    extras = {"xiaoheihe_image_sources": ["original_post"]}
+    messages = [
+        Plain("原帖"),
+        Image(
+            file="https://images.example.test/post.png",
+            url="https://images.example.test/post.png",
+        ),
+    ]
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_post-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "author",
+            "get_messages": lambda self: messages,
+            "get_extra": lambda self, key, default=None: extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+
+    await plugin.prepare_xiaoheihe_before_agent(event)
+
+    assert all(not isinstance(component, Image) for component in messages)
+    assert any('status="unavailable"' in block for block in extras[module.EARLY_IMAGE_BLOCKS_EXTRA])
+    request = ProviderRequest()
+    await plugin.inject_xiaoheihe_context(event, request)
+    assert request.image_urls == []
+    assert plugin.runtime._alerts["vision_unsupported"]["level"] == "warning"
+    await plugin.terminate()
+
+
+async def test_early_no_image_path_makes_no_provider_request(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Provider:
+        def __init__(self) -> None:
+            self.provider_config = {"id": "astrbot-main", "modalities": ["text"]}
+
+        async def text_chat(self, **kwargs):
+            raise AssertionError("the pre-build no-image path must not call an LLM")
+
+    provider = Provider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_using_provider(self, umo=None):
+            return provider
+
+        def get_config(self, umo=None):
+            return {"provider_settings": {"fallback_chat_models": []}}
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    original_snapshot = plugin.runtime.config.snapshot
+    snapshot_calls = 0
+
+    def counted_snapshot():
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        return original_snapshot()
+
+    plugin.runtime.config.snapshot = counted_snapshot
+    extras = {}
+    messages = [Plain("纯文本消息")]
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_post-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "",
+            "get_messages": lambda self: messages,
+            "get_extra": lambda self, key, default=None: extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+
+    await plugin.prepare_xiaoheihe_before_agent(event)
+    await plugin.inject_xiaoheihe_context(event, ProviderRequest())
+
+    assert messages == [messages[0]]
+    assert snapshot_calls == 1
+    assert extras[module.EARLY_IMAGE_PREPARED_EXTRA] is True
+    assert extras["xiaoheihe_provider_route"]["native_main_provider_ids"] == ["astrbot-main"]
+    await plugin.terminate()
+
+
+async def test_invalid_plugin_main_falls_back_before_agent_and_surfaces_warning(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    astrbot_main = type(
+        "Provider",
+        (),
+        {"provider_config": {"id": "astrbot-main", "modalities": ["text"]}},
+    )()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return None
+
+        def get_using_provider(self, umo=None):
+            return astrbot_main
+
+        def get_config(self, umo=None):
+            return {"provider_settings": {"fallback_chat_models": ["fallback-1"]}}
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig({"providers": {"llm_provider_id": "missing-main"}}),
+    )
+    extras = {"selected_provider": "missing-main"}
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_post-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {"raw_message": {"route": {"profile_id": "default"}}},
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_messages": lambda self: [Plain("纯文本消息")],
+            "get_extra": lambda self, key, default=None: extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+
+    await plugin.prepare_xiaoheihe_before_agent(event)
+
+    assert extras["selected_provider"] is None
+    assert extras["xiaoheihe_provider_route"]["native_main_provider_ids"] == [
+        "astrbot-main",
+        "fallback-1",
+    ]
+    alert = plugin.runtime._alerts["default:provider_route"]
+    assert "已退回 AstrBot 主模型" in alert["message"]
+    await plugin.terminate()
 
 
 async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_import) -> None:
@@ -788,6 +1113,59 @@ async def test_plugin_preserves_images_for_explicit_grok_image_search_and_other_
     await plugin.terminate()
 
 
+async def test_explicit_grok_image_search_temporarily_opens_early_image_vault(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    image = Image(url="https://images.example.test/a.png")
+    messages = [Plain("帮我搜图")]
+    extras = {
+        module.EARLY_IMAGE_VAULT_EXTRA: {
+            "hidden": [(1, image)],
+            "exposed": False,
+        }
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_messages": lambda self: messages,
+            "get_extra": lambda self, key, default=None: extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    grok_tool = type("Tool", (), {"name": "grok_web_search"})()
+
+    await plugin.isolate_xiaoheihe_images_for_grok(
+        event,
+        grok_tool,
+        {"query": "搜索这张图的出处"},
+    )
+    assert messages == [messages[0], image]
+
+    await plugin.restore_xiaoheihe_images_after_grok(event, grok_tool, None, None)
+    assert len(messages) == 1
+    assert isinstance(messages[0], Plain)
+    assert extras[module.GROK_IMAGE_EXPOSURE_EXTRA] is None
+    await plugin.terminate()
+
+
 async def test_plugin_restores_grok_images_on_agent_done_fallback(
     isolated_smoke_import,
 ) -> None:
@@ -926,7 +1304,7 @@ async def test_plugin_uses_fixed_image_provider_and_keeps_caption_temporary(
     await plugin.terminate()
 
 
-async def test_proactive_image_uses_fixed_main_provider_when_image_provider_is_empty(
+async def test_proactive_image_uses_astrbot_main_when_image_provider_is_empty(
     isolated_smoke_import,
 ) -> None:
     root = Path.cwd()
@@ -942,7 +1320,7 @@ async def test_proactive_image_uses_fixed_main_provider_when_image_provider_is_e
 
     class Provider:
         def __init__(self) -> None:
-            self.provider_config = {"id": "main-fixed", "modalities": ["text", "image"]}
+            self.provider_config = {"id": "astrbot-main", "modalities": ["text", "image"]}
             self.calls = []
 
         async def text_chat(self, **kwargs):
@@ -956,14 +1334,14 @@ async def test_proactive_image_uses_fixed_main_provider_when_image_provider_is_e
             return None
 
         def get_provider_by_id(self, provider_id):
-            return provider if provider_id == "main-fixed" else None
+            return None
 
         def get_using_provider(self, umo=None):
-            raise AssertionError("fixed main provider should satisfy proactive captioning")
+            return provider
 
     plugin = module.XiaoheiheAdapterPlugin(
         Context(),
-        AstrBotConfig({"providers": {"llm_provider_id": "main-fixed"}}),
+        AstrBotConfig(),
     )
     extras = {"xiaoheihe_image_sources": ["original_post"]}
     event = type(
@@ -1080,6 +1458,7 @@ async def test_thread_reply_image_provider_compresses_sources_before_final_focus
             "get_platform_name": lambda self: "xiaoheihe",
             "get_sender_id": lambda self: "user",
             "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
         },
     )()
     request = ProviderRequest()
@@ -1276,13 +1655,13 @@ async def test_thread_reply_without_fixed_image_provider_preprocesses_with_main_
             return main_provider if provider_id == "main-fixed" else None
 
         def get_using_provider(self, umo=None):
-            raise AssertionError("fixed main provider should satisfy image preprocessing")
+            return main_provider
 
     plugin = module.XiaoheiheAdapterPlugin(
         Context(),
         AstrBotConfig(
             {
-                "providers": {"llm_provider_id": "main-fixed"},
+                "providers": {},
                 "context": {
                     "enable_thread_reply_compression": False,
                     "thread_reply_compressed_image_chars": 800,
@@ -1389,7 +1768,7 @@ async def test_thread_reply_fixed_image_failure_falls_through_to_main_preprocess
             }.get(provider_id)
 
         def get_using_provider(self, umo=None):
-            raise AssertionError("fixed main provider should satisfy fallback preprocessing")
+            return main_provider
 
     plugin = module.XiaoheiheAdapterPlugin(
         Context(),
@@ -1397,7 +1776,6 @@ async def test_thread_reply_fixed_image_failure_falls_through_to_main_preprocess
             {
                 "providers": {
                     "image_provider_id": "image-fixed",
-                    "llm_provider_id": "main-fixed",
                 },
                 "context": {"enable_thread_reply_compression": False},
             }
@@ -1893,8 +2271,8 @@ async def test_fixed_image_provider_timeout_returns_to_native_image_fallback(
     handled = await plugin._caption_images(
         event,
         request,
-        provider_id="image-fixed",
         profile_id="default",
+        provider_settings={"image_provider_id": "image-fixed"},
         context_settings=plugin.runtime.config.snapshot()["context"],
     )
 
@@ -1949,8 +2327,8 @@ async def test_unusable_image_placeholder_is_not_cached_as_success(
     handled = await plugin._caption_images(
         event,
         request,
-        provider_id="image-fixed",
         profile_id="default",
+        provider_settings={"image_provider_id": "image-fixed"},
         context_settings=plugin.runtime.config.snapshot()["context"],
     )
 

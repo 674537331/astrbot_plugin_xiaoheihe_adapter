@@ -50,11 +50,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enable_image_understanding": True,
         "max_images_per_event": 6,
         "image_timeout_seconds": 15,
+        "image_total_timeout_seconds": 240,
     },
     "reply": {
         "dry_run_mark_processed": True,
         "max_reply_chars": 500,
         "reply_timeout_seconds": 120,
+        "provider_fallback_grace_seconds": 60,
         "max_retries": 3,
         "only_explicit_mentions": True,
         "reply_to_direct_replies": True,
@@ -245,10 +247,12 @@ class ConfigService:
         _bounded_int(context, "context_cache_ttl_seconds", 10, 86400)
         _bounded_int(context, "context_cache_max_entries", 1, 4096)
         _bounded_int(context, "image_timeout_seconds", 1, 120)
+        _bounded_int(context, "image_total_timeout_seconds", 15, 600)
 
         reply = _object(config, "reply")
         _bounded_int(reply, "max_reply_chars", 1, 5000)
         _bounded_int(reply, "reply_timeout_seconds", 5, 600)
+        _bounded_int(reply, "provider_fallback_grace_seconds", 0, 300)
         _bounded_int(reply, "max_retries", 0, 8)
 
         network = _object(config, "network")

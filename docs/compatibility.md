@@ -1,4 +1,4 @@
-# AstrBot 兼容性说明（v1.2.15）
+# AstrBot 兼容性说明（v1.2.16）
 
 ## 调查范围
 
@@ -7,8 +7,9 @@ AstrBot 4.27.2。v1.2.13 在 v1.2.12 焦点路由上增加被动长楼层的来�
 路由：当前消息/直接回复对象保持原文，原帖与楼层分开压缩，被动楼层的原帖原图在最终 Agent
 前强制转为硬限长描述或 fail-closed，主动浏览仍以原帖为主要话题。
 v1.2.14 在插件内部增加持久化通知回填以及压缩后的昵称/UID 身份锚点。v1.2.15 增加插件自有的
-视觉文字快照和评论 ID 绑定，并复用既有 `Provider.text_chat()`、SQLite 与事件 extra，不增加
-AstrBot API 依赖，也不修改 system prompt / 人格。2026-08-09 发布 v1.2.15 前再次核对：
+视觉文字快照和评论 ID 绑定。v1.2.16 新增 `on_waiting_llm_request` 早期图片路由，并继续复用
+`Provider.text_chat()`、事件 extra 与 AstrBot 原生 Agent，不修改 system prompt / 人格。
+2026-08-09 发布 v1.2.16 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -18,8 +19,9 @@ AstrBot API 依赖，也不修改 system prompt / 人格。2026-08-09 发布 v1.
 - `Platform`、`PlatformMetadata`、`register_platform_adapter`、`AstrBotMessage`、
   `AstrMessageEvent`、`MessageSession`、`commit_event()`、`send_by_session()`；
 - `AstrBotConfig.save_config()`、`StarTools.get_data_dir()`、插件 `terminate()`；
-- `Image` 消息组件、`on_agent_begin`、`on_agent_done`、`on_using_llm_tool`、
-  `on_llm_tool_respond`、`on_llm_request`、`AstrMessageEvent.get_sender_id()`、
+- `Image` 消息组件、`on_waiting_llm_request`、`on_agent_begin`、`on_agent_done`、
+  `on_using_llm_tool`、`on_llm_tool_respond`、`on_llm_request`、`Context.get_config()`、
+  `Context.get_provider_by_id()`、`AstrMessageEvent.get_sender_id()`、
   `extra_user_content_parts` 与 `TextPart.mark_as_temp()`；
 - Plugin Page 的 `window.AstrBotPluginPage`、`context.register_web_api()` 和
   `astrbot.api.web`。
@@ -38,18 +40,19 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
 | 多人楼层身份 | `MessageMember.user_id` + `AstrMessageEvent.get_sender_id()` + 非临时 `extra_user_content_parts` | session 仍按楼层共享；每轮真实 UID 随 `role=user` 历史持久化，避免不同参与者被压成同一匿名用户 |
 | Agent 回复聚合 | `on_agent_begin()` + `on_agent_done()` + `on_llm_response()` + `AstrMessageEvent.get_result()` | 无工具的普通回复直接完成；有工具时忽略 `tool_call` 控制消息、暂存中间文本，最终只提交一条小黑盒评论 |
-| Grok 带图查询兼容 | `on_using_llm_tool()` + `on_llm_tool_respond()` + `AstrMessageEvent.get_messages()` | 仅 `xiaoheihe + grok_web_search` 普通网页查询临时隔离顶层 `Image` 并恢复；明确搜图和其他工具保持原行为 |
+| Grok 带图查询兼容 | `on_using_llm_tool()` + `on_llm_tool_respond()` + `AstrMessageEvent.get_messages()` | 普通 `grok_web_search` 不接收早期隔离的原图；明确搜图只在工具调用期间临时恢复有界引用；其他工具保持原行为 |
 | 分段/流式回复 | 非流式平台 `send()` + `send_streaming()` | 分段清理前恢复完整文本，任意数量的分段或流式片段只提交一条小黑盒评论 |
 | 事件提交 | `Platform.commit_event(event)` | 进入 AstrBot 原生事件队列；模型调用由 AstrBot 核心负责 |
-| 固定 LLM Provider | 事件入队前设置 `selected_provider` extra | 兼容 4.24.2 与 4.26.2 的主 Agent Provider 选择时序；留空时继续使用会话或全局 Provider |
+| 固定 LLM Provider | 入队时预设并在 `on_waiting_llm_request` 校验 `selected_provider` extra | 有效配置进入 AstrBot 原生 Agent；无效配置在构建前清除选择并退回 AstrBot 主模型；留空直接使用会话或全局 Provider |
+| 主模型回退 | 读取 `provider_settings.fallback_chat_models` 并记录期望/实际链路 | AstrBot 4.x 的事件级选择只替换首选 Provider，回退仍来自全局列表；若配置主模型不是第一回退，管理页和日志明确提示，不修改其他平台共享配置 |
 | 上下文压缩 Provider | `Context.get_provider_by_id()` / `get_using_provider()` + `Provider.text_chat(persist=False)` | 仅长被动楼层额外调用；独立 Provider 留空时复用固定 LLM 或会话 Provider，任何异常回退 v1.2.12 临时背景 |
 | 主动发送 | `send_by_session(MessageSession, MessageChain)` | 从确定性 session ID 恢复路由；失败时抛出明确错误 |
 | 唤醒 | `event.is_wake` 和 `event.is_at_or_wake_command` | @ 与直接回复不依赖正文仍保留 `@昵称` |
 | 用户侧上下文 | `filter.on_llm_request()` + `request.extra_user_content_parts` | 发送者 UID 身份块保持非临时并随本轮历史保存；动态帖子/楼层背景保持临时；长被动楼层可先按来源语义压缩，最终焦点仍按“当前消息 → 直接回复对象 → 最近楼层 → 原帖” |
-| 图片 | `astrbot.api.message_components.Image(file=url, url=url)` | v1.0.0 只传经过安全校验的公开 HTTPS URL，交给 AstrBot 媒体链路 |
-| 被动楼层图片预处理 | `Context.get_provider_by_id()` / `get_using_provider()` + `Provider.text_chat(persist=False)` | 当前评论图/原帖图分组处理，按固定图片 → 固定 LLM → 当前会话逐级尝试；总预算按图片数联动并硬限 120 秒、单 Provider 最多 60 秒；原帖全部失败时移除原图，当前评论图失败时才保留原生视觉兜底 |
+| 图片 | `Image(file=url, url=url)` + `on_waiting_llm_request(priority=1000)` | 仅接收经过安全校验的公开 HTTPS URL；在 AstrBot 构建 `ProviderRequest` 和执行全局图片转述前移出原图 |
+| 小黑盒图片预处理 | `Context.get_config()` / `get_provider_by_id()` / `get_using_provider()` + `Provider.text_chat(persist=False)` | 所有事件按插件识图 → AstrBot 默认图片转述 → AstrBot 主模型逐级尝试；单候选最多 120 秒、整链默认 240 秒；全部失败统一移除原图并注入不可见说明 |
 | 主动视觉快照 | 既有 Provider API + 插件 SQLite repository | 主动图像描述保存 24 小时并绑定入站事件/真实机器人评论 ID；后续楼层只注入临时文字背景，不修改 Conversation、人格或 AstrBot 数据库 |
-| 视觉降级 | `Context.get_provider_by_id()` / `get_using_provider()` + provider `modalities` | 被动楼层明确声明纯文本的 Provider 不参与图片预处理；其他事件沿用主 Provider 能力检查，明确不含 `image` 时移除图片并保留文本 |
+| 视觉降级 | Provider `modalities` + 本地占位描述校验 | 明确只支持文本的候选不接收图片；超时、异常、无效/占位描述继续下一候选，最终主模型只收到描述或可信失败说明 |
 | 配置 | 构造参数中的 `AstrBotConfig` + `save_config()` | 原生设置和 Plugin Page 共用同一个对象，不写核心配置文件 |
 | 数据目录 | `StarTools.get_data_dir(plugin_name)` | 凭证与 SQLite 位于插件专属数据目录，覆盖更新后继续读取 |
 | Plugin Page | `window.AstrBotPluginPage` + `context.register_web_api()` + `astrbot.api.web` | 4.26.2 完整可用；页面只通过受限 bridge 通信 |
@@ -119,6 +122,20 @@ v1.2.15 的视觉快照通过插件自己的 repository 在 `on_llm_request` 辅
 识图/降级流程。无图片事件在分支入口跳过全部查询和 Provider 调用；Grok 钩子、其他工具和其他
 平台没有改动。
 
+v1.2.16 使用 `on_waiting_llm_request(priority=1000)` 修复 AstrBot 构建顺序带来的配置优先级问题。
+该钩子在 4.24.2、4.26.2、4.27.2 中都先于 `build_main_agent()`；插件因此能在 AstrBot 把 `Image`
+转成本地附件、调用全局图片转述或选择最终多模态 Provider 前，先按插件识图、AstrBot 默认识图、
+AstrBot 主模型顺序生成有来源的文字描述。最终 `on_llm_request` 仍发生在 AstrBot 已附加人格、
+会话、工具与安全配置之后，插件只追加用户侧临时文字和非临时 UID 身份块。无图片事件不会调用
+任何辅助模型；其他平台在早期钩子入口返回。
+
+AstrBot 4.x 的 `_select_provider()` 接受单个 `selected_provider`，而 `_get_fallback_chat_providers()`
+只读取全局 `provider_settings.fallback_chat_models`，没有事件级回退列表 extra。插件不能在不修改
+共享核心配置或替换 Agent Runner 的前提下自动插入 AstrBot 主模型，因此实现为：插件主模型有效时
+作为首选，后续严格采用 AstrBot 全局回退顺序；插件主模型无效时在构建前退回 AstrBot 主模型。
+若用户希望严格得到“插件主模型 → AstrBot 主模型 → 其他回退”，必须把 AstrBot 主模型配置为
+全局第一回退；不满足时 Plugin Page 与结构化日志会显示期望链、实际链和修正提示。
+
 `MessageSession` 与 `TextPart` 在目标版本尚未从更浅的 `astrbot.api` 门面导出，因此分别从
 `astrbot.core.platform.astr_message_event` 和 `astrbot.core.agent.message` 导入。这是 4.26.2
 实际运行接口，不是复制核心代码。若 AstrBot 后续在 4.x 中移动这两个类型，CI 的包级
@@ -147,7 +164,7 @@ Plugin Pages 使用当前官方文档描述的新桥接 API。平台适配器行
 
 最低版本 4.24.2 的本机端到端验证状态为“待验证”；仓库通过 CI 的 `astrbot-compat`
 矩阵持续检查 4.24.2 和 4.26.2，并由
-`astrbot-latest-stable` 任务动态安装 `<5` 的最新稳定包。当前 4.27.2 wheel 的 13 项
+`astrbot-latest-stable` 任务动态安装 `<5` 的最新稳定包。当前 4.27.2 wheel 的 14 项
 文件/符号契约也已在本机离线检查通过。发布前仍需在 4.24.2、4.26.2 和当前稳定版各完成
 一次插件加载、适配器创建和模拟运行人工验收。
 
@@ -162,7 +179,7 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.15 的最新迁移版本为 v9：v7 新增的
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.16 的最新迁移版本仍为 v9：v7 新增的
 `notification_backfills` 保存通知回填边界，v8 增加长期清理索引，v9 新增视觉快照、事件绑定、
 机器人评论绑定及到期查询索引。旧版按浏览量统计的 `proactive_count` 仍沿用既有 v6 迁移规则，其余
 已有记录原位保留；超过现有 `dedup_days` 保留期的已完成元数据会由日常清理分批回收。

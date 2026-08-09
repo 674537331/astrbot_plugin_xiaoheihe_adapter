@@ -25,11 +25,24 @@ from .xiaoheihe.context_compression import (
     render_compressed_thread_context,
     render_image_context,
 )
+from .xiaoheihe.provider_routing import (
+    ProviderRoutePlan,
+    build_provider_route_plan,
+    visual_chain_budget_seconds,
+)
 from .xiaoheihe.runtime import PLUGIN_NAME, RuntimeServices, bind_runtime
 from .xiaoheihe.security import clean_untrusted_text
 
 GROK_WEB_SEARCH_TOOL = "grok_web_search"
 GROK_IMAGE_ISOLATION_EXTRA = "xiaoheihe_grok_image_isolation"
+GROK_IMAGE_EXPOSURE_EXTRA = "xiaoheihe_grok_image_exposure"
+EARLY_IMAGE_PREPARED_EXTRA = "xiaoheihe_early_image_prepared"
+EARLY_IMAGE_BLOCKS_EXTRA = "xiaoheihe_early_image_blocks"
+EARLY_IMAGE_VAULT_EXTRA = "xiaoheihe_early_image_vault"
+EARLY_IMAGE_URLS_EXTRA = "xiaoheihe_early_image_urls"
+EARLY_IMAGE_SOURCES_EXTRA = "xiaoheihe_early_image_sources"
+EARLY_IMAGE_FAILURE_COUNT_EXTRA = "xiaoheihe_early_image_failure_count"
+EARLY_ROUTE_CONFIG_EXTRA = "xiaoheihe_early_route_config"
 IMAGE_SEARCH_INTENT_MARKERS = (
     "这张图",
     "这幅图",
@@ -57,8 +70,9 @@ GROK_QUERY_REQUIREMENT = (
     "不要只描述随事件附带的图片，也不要返回‘稍后再查’之类的占位回答。"
 )
 SENDER_IDENTITY_TAG = "xiaoheihe_sender_identity"
-MAX_IMAGE_PREPROCESS_BUDGET_SECONDS = 120.0
+MAX_IMAGE_PREPROCESS_BUDGET_SECONDS = 600.0
 MIN_IMAGE_REPLY_GRACE_SECONDS = 15.0
+MAX_IMAGE_ATTEMPT_SECONDS = 120.0
 IMAGE_CAPTION_CACHE_TTL_SECONDS = 24 * 60 * 60
 IMAGE_CAPTION_CACHE_MAX_ENTRIES = 512
 
@@ -94,7 +108,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.15",
+    "1.2.16",
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -104,6 +118,7 @@ class XiaoheiheAdapterPlugin(Star):
         self.runtime = RuntimeServices(config, data_dir)
         self._image_caption_cache: OrderedDict[str, ImageCaptionCacheEntry] = OrderedDict()
         self._image_caption_cache_lock = asyncio.Lock()
+        self._provider_route_signatures: dict[str, tuple[object, ...]] = {}
         bind_runtime(self.runtime)
         self.web = (
             WebApiController(self.runtime, provider_supplier=self._provider_options)
@@ -196,6 +211,340 @@ class XiaoheiheAdapterPlugin(Star):
                 details={"adapter_id": adapter_id},
             )
 
+    @staticmethod
+    def _provider_id(provider: object | None) -> str:
+        provider_config = getattr(provider, "provider_config", {})
+        if not isinstance(provider_config, dict):
+            return ""
+        return str(provider_config.get("id", "") or "").strip()[:256]
+
+    def _astrbot_provider_settings(self, event: AstrMessageEvent) -> dict:
+        get_config = getattr(self.context, "get_config", None)
+        if not callable(get_config):
+            return {}
+        try:
+            config = get_config(umo=event.unified_msg_origin)
+        except TypeError:
+            try:
+                config = get_config()
+            except Exception:
+                return {}
+        except Exception:
+            return {}
+        if not isinstance(config, dict):
+            return {}
+        settings = config.get("provider_settings", {})
+        return settings if isinstance(settings, dict) else {}
+
+    def _current_astrbot_provider(self, event: AstrMessageEvent) -> object | None:
+        get_using_provider = getattr(self.context, "get_using_provider", None)
+        if not callable(get_using_provider):
+            return None
+        try:
+            return get_using_provider(umo=event.unified_msg_origin)
+        except Exception:
+            return None
+
+    def _prepare_main_provider_route(
+        self,
+        event: AstrMessageEvent,
+        *,
+        provider_settings: dict,
+        profile_id: str,
+    ) -> ProviderRoutePlan:
+        configured_main_id = str(provider_settings.get("llm_provider_id", "") or "").strip()
+        selected_main_id = configured_main_id
+        route_warning = ""
+        if configured_main_id:
+            try:
+                selected = self.context.get_provider_by_id(configured_main_id)
+            except Exception as exc:
+                selected = None
+                route_warning = (
+                    f"固定 LLM Provider {configured_main_id} 解析失败（{type(exc).__name__}），"
+                    "本轮已退回 AstrBot 主模型。"
+                )
+            if selected is None or not callable(getattr(selected, "text_chat", None)):
+                selected_main_id = ""
+                event.set_extra("selected_provider", None)
+                if not route_warning:
+                    route_warning = (
+                        f"固定 LLM Provider {configured_main_id} 不存在、未启用或不是对话模型，"
+                        "本轮已退回 AstrBot 主模型。"
+                    )
+            else:
+                event.set_extra("selected_provider", configured_main_id)
+
+        current_provider = self._current_astrbot_provider(event)
+        astrbot_main_id = self._provider_id(current_provider)
+        astrbot_settings = self._astrbot_provider_settings(event)
+        plan = build_provider_route_plan(
+            provider_settings,
+            astrbot_settings,
+            astrbot_main_provider_id=astrbot_main_id,
+            plugin_main_provider_id=selected_main_id,
+        )
+        if not route_warning and plan.needs_main_fallback_configuration:
+            route_warning = (
+                f"固定 LLM Provider {selected_main_id} 启用时，AstrBot 4.x 不会自动把配置主模型 "
+                f"{astrbot_main_id} 插入事件回退链；请将 {astrbot_main_id} 放在 AstrBot“回退"
+                "对话模型列表”的第一位。当前实际链路已记录在运行日志。"
+            )
+        self.runtime.set_provider_route_warning(profile_id, route_warning)
+        signature = (
+            plan.plugin_main_provider_id,
+            plan.astrbot_main_provider_id,
+            plan.astrbot_image_provider_id,
+            plan.astrbot_fallback_provider_ids,
+            route_warning,
+        )
+        if self._provider_route_signatures.get(profile_id) != signature:
+            self._provider_route_signatures[profile_id] = signature
+            self.runtime.logging.emit(
+                "WARNING" if route_warning else "INFO",
+                "小黑盒 Provider 路由已解析",
+                profile_id=profile_id,
+                details={
+                    **plan.as_dict(),
+                    "route_warning": route_warning,
+                },
+            )
+        event.set_extra("xiaoheihe_provider_route", plan.as_dict())
+        return plan
+
+    @staticmethod
+    def _image_component_url(component: Image) -> str:
+        return str(getattr(component, "file", "") or getattr(component, "url", "") or "").strip()
+
+    @staticmethod
+    def _prepared_image_failure_notice(*, source: str, image_count: int) -> str:
+        if source == "current_comment":
+            label = "当前评论图片"
+            priority = "highest"
+        elif source == "original_post":
+            label = "原帖图片"
+            priority = "low"
+        else:
+            label = "本轮事件图片"
+            priority = "primary"
+        return "\n".join(
+            [
+                (
+                    '<xiaoheihe_image_preprocess trust="trusted" '
+                    f'source="{source}" priority="{priority}" status="unavailable">'
+                ),
+                f"{label} {image_count} 张未获得可用视觉描述，原图未发送给最终回答模型。",
+                "必须明确承认无法读取这些图片；不得猜测、补写或假装已经看见图片内容。",
+                "</xiaoheihe_image_preprocess>",
+            ]
+        )
+
+    @filter.on_waiting_llm_request(priority=1000)
+    async def prepare_xiaoheihe_before_agent(self, event: AstrMessageEvent) -> None:
+        """Resolve providers and caption images before AstrBot builds its Agent.
+
+        AstrBot's default image-caption step runs before ``on_llm_request``.  The
+        pre-build hook therefore removes Xiaoheihe image components only after
+        vaulting their URL components and performs the source-aware caption chain
+        itself.  This prevents a global caption provider from consuming or
+        clearing images before the plugin-selected provider can run.
+        """
+
+        if event.get_platform_name() != "xiaoheihe":
+            return
+        config = self.runtime.config.snapshot()
+        provider_settings = config["providers"]
+        context_settings = config["context"]
+        event.set_extra(
+            EARLY_ROUTE_CONFIG_EXTRA,
+            {
+                "providers": provider_settings,
+                "context": context_settings,
+            },
+        )
+        raw = self._event_raw_message(event)
+        route = raw.get("route", {})
+        route = route if isinstance(route, dict) else {}
+        profile_id = str(route.get("profile_id", "") or "default")
+        self._prepare_main_provider_route(
+            event,
+            provider_settings=provider_settings,
+            profile_id=profile_id,
+        )
+        if bool(event.get_extra(EARLY_IMAGE_PREPARED_EXTRA, False)):
+            return
+        if not bool(context_settings.get("enable_image_understanding", True)):
+            event.set_extra(EARLY_IMAGE_PREPARED_EXTRA, True)
+            return
+
+        messages = event.get_messages()
+        if not isinstance(messages, list):
+            event.set_extra(EARLY_IMAGE_PREPARED_EXTRA, True)
+            return
+        hidden = [
+            (index, component)
+            for index, component in enumerate(messages)
+            if isinstance(component, Image)
+        ]
+        if not hidden:
+            event.set_extra(EARLY_IMAGE_PREPARED_EXTRA, True)
+            return
+
+        configured_limit = max(
+            0,
+            min(20, int(context_settings.get("max_images_per_event", 6))),
+        )
+        raw_sources = event.get_extra("xiaoheihe_image_sources", raw.get("image_sources", []))
+        if not isinstance(raw_sources, list) or len(raw_sources) != len(hidden):
+            raw_sources = ["event_image"] * len(hidden)
+        normalized_sources = [
+            source if source in {"current_comment", "original_post"} else "event_image"
+            for source in raw_sources
+        ]
+        selected = hidden[:configured_limit]
+        urls: list[str] = []
+        sources: list[str] = []
+        selected_hidden: list[tuple[int, Image]] = []
+        omitted_counts = {
+            "current_comment": 0,
+            "original_post": 0,
+            "event_image": 0,
+        }
+        for (index, component), source in zip(
+            selected,
+            normalized_sources[:configured_limit],
+            strict=True,
+        ):
+            url = self._image_component_url(component)
+            if not url:
+                omitted_counts[source] += 1
+                continue
+            urls.append(url)
+            sources.append(source)
+            selected_hidden.append((index, component))
+        for source in normalized_sources[configured_limit:]:
+            omitted_counts[source] += 1
+
+        # Hide every image before AstrBot constructs ProviderRequest.  Only the
+        # bounded, URL-bearing subset is retained for an explicit Grok image
+        # search; no image bytes are copied into plugin memory.
+        messages[:] = [component for component in messages if not isinstance(component, Image)]
+        event.set_extra(
+            EARLY_IMAGE_VAULT_EXTRA,
+            {"hidden": selected_hidden, "exposed": False},
+        )
+        event.set_extra(EARLY_IMAGE_URLS_EXTRA, list(urls))
+        event.set_extra(EARLY_IMAGE_SOURCES_EXTRA, list(sources))
+        event.set_extra("xiaoheihe_image_sources", list(sources))
+
+        request = ProviderRequest()
+        request.image_urls = list(urls)
+        request.extra_user_content_parts = []
+        blocks = [
+            self._prepared_image_failure_notice(source=source, image_count=count)
+            for source in ("current_comment", "original_post", "event_image")
+            if (count := omitted_counts[source])
+        ]
+        failed_count = sum(omitted_counts.values())
+        try:
+            compression_source = self._coerce_compression_source(
+                event.get_extra("xiaoheihe_compression_source", None)
+            )
+            if compression_source is not None:
+                await self._prepare_visual_context_for_reply(
+                    event,
+                    request,
+                    profile_id=profile_id,
+                    post_id=compression_source.post_id,
+                )
+                event.set_extra("xiaoheihe_visual_cache_prepared", True)
+                failed_count += await self._preprocess_thread_images(
+                    event,
+                    request,
+                    provider_settings=provider_settings,
+                    profile_id=profile_id,
+                    context_settings=context_settings,
+                )
+            elif bool(raw.get("proactive", False)):
+                await self._caption_proactive_images(
+                    event,
+                    request,
+                    provider_settings=provider_settings,
+                    profile_id=profile_id,
+                    context_settings=context_settings,
+                )
+            else:
+                await self._caption_images(
+                    event,
+                    request,
+                    profile_id=profile_id,
+                    provider_settings=provider_settings,
+                    context_settings=context_settings,
+                )
+            blocks.extend(
+                str(getattr(part, "text", "") or "")
+                for part in request.extra_user_content_parts
+                if str(getattr(part, "text", "") or "").strip()
+            )
+            remaining_sources = event.get_extra("xiaoheihe_image_sources", sources)
+            if not isinstance(remaining_sources, list) or len(remaining_sources) != len(
+                request.image_urls
+            ):
+                remaining_sources = ["event_image"] * len(request.image_urls)
+            for source in ("current_comment", "original_post", "event_image"):
+                count = sum(1 for item in remaining_sources if item == source)
+                if count:
+                    blocks.append(
+                        self._prepared_image_failure_notice(
+                            source=source,
+                            image_count=count,
+                        )
+                    )
+                    failed_count += count
+        except Exception as exc:
+            failed_count = max(failed_count, len(urls))
+            blocks.append(
+                self._prepared_image_failure_notice(
+                    source="event_image",
+                    image_count=max(1, len(urls)),
+                )
+            )
+            self.runtime.logging.emit(
+                "ERROR",
+                f"Agent 构建前图片处理异常，已安全移除原图并继续纯文本回复: {exc}",
+                profile_id=profile_id,
+                details={
+                    **self._event_image_diagnostics(event),
+                    "exception_type": type(exc).__name__,
+                    "image_count": len(urls),
+                    **self._image_url_diagnostics(urls),
+                },
+            )
+        finally:
+            request.image_urls.clear()
+            event.set_extra("xiaoheihe_image_sources", [])
+
+        if failed_count:
+            self.runtime.report_vision_degraded(profile_id, failed_count)
+        else:
+            self.runtime.clear_vision_alert()
+        event.set_extra(EARLY_IMAGE_FAILURE_COUNT_EXTRA, failed_count)
+        event.set_extra(EARLY_IMAGE_BLOCKS_EXTRA, blocks)
+        event.set_extra(EARLY_IMAGE_PREPARED_EXTRA, True)
+        self.runtime.logging.emit(
+            "DEBUG",
+            "已在 AstrBot Agent 构建前完成小黑盒图片处理",
+            profile_id=profile_id,
+            details={
+                **self._event_image_diagnostics(event),
+                "image_count": len(urls),
+                "omitted_or_failed_count": failed_count,
+                "context_block_count": len(blocks),
+                "raw_images_forwarded_to_main": 0,
+                **self._image_url_diagnostics(urls),
+            },
+        )
+
     @filter.on_llm_request()
     async def inject_xiaoheihe_context(
         self, event: AstrMessageEvent, request: ProviderRequest
@@ -220,7 +569,13 @@ class XiaoheiheAdapterPlugin(Star):
                     )
                 )
             )
-        config = self.runtime.config.snapshot()
+        config = event.get_extra(EARLY_ROUTE_CONFIG_EXTRA, None)
+        if (
+            not isinstance(config, dict)
+            or not isinstance(config.get("providers"), dict)
+            or not isinstance(config.get("context"), dict)
+        ):
+            config = self.runtime.config.snapshot()
         provider_settings = config["providers"]
         context_settings = config["context"]
         profile_id = str(event.message_obj.raw_message.get("route", {}).get("profile_id", ""))
@@ -233,16 +588,26 @@ class XiaoheiheAdapterPlugin(Star):
             event.get_extra("xiaoheihe_compression_source", None)
         )
         if compression_source is not None:
-            cached_visual = await self._prepare_visual_context_for_reply(
-                event,
-                request,
-                profile_id=profile_id,
-                post_id=compression_source.post_id,
+            prepared_caption = clean_untrusted_text(
+                str(event.get_extra("xiaoheihe_cached_visual_caption", "") or ""),
+                max_chars=4000,
             )
-            if cached_visual is not None:
+            cached_visual = None
+            if not prepared_caption and not bool(
+                event.get_extra("xiaoheihe_visual_cache_prepared", False)
+            ):
+                cached_visual = await self._prepare_visual_context_for_reply(
+                    event,
+                    request,
+                    profile_id=profile_id,
+                    post_id=compression_source.post_id,
+                )
+            if cached_visual is not None or prepared_caption:
                 compression_source = replace(
                     compression_source,
-                    post_image_caption=cached_visual.caption,
+                    post_image_caption=(
+                        cached_visual.caption if cached_visual is not None else prepared_caption
+                    ),
                 )
         has_split_context = bool(runtime_context or community_context or focus_context)
         if has_split_context:
@@ -263,9 +628,17 @@ class XiaoheiheAdapterPlugin(Star):
         if dynamic_context:
             request.extra_user_content_parts.append(TextPart(text=dynamic_context).mark_as_temp())
 
+        early_image_prepared = bool(event.get_extra(EARLY_IMAGE_PREPARED_EXTRA, False))
+        if early_image_prepared:
+            prepared_blocks = event.get_extra(EARLY_IMAGE_BLOCKS_EXTRA, [])
+            if isinstance(prepared_blocks, list):
+                for block in prepared_blocks:
+                    text = str(block or "").strip()
+                    if text:
+                        request.extra_user_content_parts.append(TextPart(text=text).mark_as_temp())
+
         is_thread_reply = compression_source is not None
-        image_provider_id = str(provider_settings["image_provider_id"]).strip()
-        if request.image_urls and is_thread_reply:
+        if request.image_urls and is_thread_reply and not early_image_prepared:
             await self._preprocess_thread_images(
                 event,
                 request,
@@ -273,7 +646,11 @@ class XiaoheiheAdapterPlugin(Star):
                 profile_id=profile_id,
                 context_settings=context_settings,
             )
-        elif request.image_urls and bool(self._event_raw_message(event).get("proactive", False)):
+        elif (
+            request.image_urls
+            and bool(self._event_raw_message(event).get("proactive", False))
+            and not early_image_prepared
+        ):
             await self._caption_proactive_images(
                 event,
                 request,
@@ -281,12 +658,12 @@ class XiaoheiheAdapterPlugin(Star):
                 profile_id=profile_id,
                 context_settings=context_settings,
             )
-        elif request.image_urls and image_provider_id:
+        elif request.image_urls and not early_image_prepared:
             await self._caption_images(
                 event,
                 request,
-                provider_id=image_provider_id,
                 profile_id=profile_id,
+                provider_settings=provider_settings,
                 context_settings=context_settings,
             )
 
@@ -326,7 +703,11 @@ class XiaoheiheAdapterPlugin(Star):
                     TextPart(text=image_source_map).mark_as_temp()
                 )
         else:
-            self.runtime.clear_vision_alert()
+            if not (
+                early_image_prepared
+                and int(event.get_extra(EARLY_IMAGE_FAILURE_COUNT_EXTRA, 0) or 0) > 0
+            ):
+                self.runtime.clear_vision_alert()
 
         if has_split_context and focus_context:
             # Keep the trusted routing rule after both text compression and image
@@ -535,6 +916,71 @@ class XiaoheiheAdapterPlugin(Star):
                         candidates.append((provider, label))
         return candidates
 
+    def _image_provider_candidates(
+        self,
+        event: AstrMessageEvent,
+        provider_settings: dict,
+        *,
+        profile_id: str,
+    ) -> list[tuple[object, str]]:
+        """Resolve plugin image -> AstrBot image -> AstrBot main providers."""
+
+        astrbot_settings = self._astrbot_provider_settings(event)
+        configured_ids: list[str] = []
+        for provider_id in (
+            str(provider_settings.get("image_provider_id", "") or "").strip(),
+            str(astrbot_settings.get("default_image_caption_provider_id", "") or "").strip(),
+        ):
+            if provider_id and provider_id not in configured_ids:
+                configured_ids.append(provider_id)
+
+        candidates: list[tuple[object, str]] = []
+        seen: set[int] = set()
+        for provider_id in configured_ids:
+            if not self.runtime.auxiliary_provider_available(
+                profile_id,
+                "image",
+                provider_id,
+            ):
+                continue
+            try:
+                provider = self.context.get_provider_by_id(provider_id)
+            except Exception as exc:
+                self.runtime.report_auxiliary_provider_failure(
+                    profile_id,
+                    "image",
+                    provider_id,
+                    exc,
+                    details={
+                        **self._event_image_diagnostics(event),
+                        "stage": "resolve_image_route_provider",
+                    },
+                )
+                continue
+            if provider is None:
+                self.runtime.report_auxiliary_provider_failure(
+                    profile_id,
+                    "image",
+                    provider_id,
+                    RuntimeError("Provider 不存在或当前未启用"),
+                    details={
+                        **self._event_image_diagnostics(event),
+                        "stage": "resolve_image_route_provider",
+                    },
+                )
+                continue
+            if id(provider) in seen:
+                continue
+            seen.add(id(provider))
+            candidates.append((provider, self._provider_runtime_label(provider, provider_id)))
+
+        current_provider = self._current_astrbot_provider(event)
+        if current_provider is not None and id(current_provider) not in seen:
+            label = self._provider_runtime_label(current_provider, "astrbot-main")
+            if self.runtime.auxiliary_provider_available(profile_id, "image", label):
+                candidates.append((current_provider, label))
+        return candidates
+
     @staticmethod
     def _provider_runtime_label(provider: object, fallback: str) -> str:
         provider_config = getattr(provider, "provider_config", {})
@@ -552,7 +998,7 @@ class XiaoheiheAdapterPlugin(Star):
         provider_settings: dict,
         profile_id: str,
         context_settings: dict,
-    ) -> None:
+    ) -> int:
         sources = self._normalized_image_sources(event, request)
         grouped: dict[str, list[str]] = {
             "current_comment": [],
@@ -562,10 +1008,21 @@ class XiaoheiheAdapterPlugin(Star):
         for url, source in zip(request.image_urls, sources, strict=True):
             grouped[source].append(url)
 
+        candidates = self._image_provider_candidates(
+            event,
+            provider_settings,
+            profile_id=profile_id,
+        )
         budget_seconds = self._image_preprocess_budget_seconds(
             event,
             context_settings=context_settings,
             image_count=len(request.image_urls),
+            provider_candidate_count=len(candidates),
+            image_group_counts=tuple(
+                len(grouped[source])
+                for source in ("current_comment", "original_post", "event_image")
+                if grouped[source]
+            ),
         )
         self.runtime.logging.emit(
             "DEBUG",
@@ -577,6 +1034,7 @@ class XiaoheiheAdapterPlugin(Star):
                 "configured_image_limit": int(context_settings.get("max_images_per_event", 6)),
                 "image_timeout_seconds": int(context_settings.get("image_timeout_seconds", 15)),
                 "preprocess_budget_seconds": round(budget_seconds, 3),
+                "provider_candidates": [label for _, label in candidates],
                 "event_timeout_base_seconds": self._event_raw_message(event).get(
                     "reply_timeout_base_seconds",
                     0,
@@ -590,6 +1048,7 @@ class XiaoheiheAdapterPlugin(Star):
         deadline = asyncio.get_running_loop().time() + budget_seconds
         remaining_urls: list[str] = []
         remaining_sources: list[str] = []
+        unavailable_count = 0
         for source in ("current_comment", "original_post", "event_image"):
             urls = grouped[source]
             if not urls:
@@ -612,7 +1071,7 @@ class XiaoheiheAdapterPlugin(Star):
                     },
                 )
                 continue
-            rendered = await self._caption_thread_image_group(
+            result = await self._caption_thread_image_group(
                 event,
                 source=source,
                 urls=urls,
@@ -620,9 +1079,24 @@ class XiaoheiheAdapterPlugin(Star):
                 profile_id=profile_id,
                 context_settings=context_settings,
                 deadline=deadline,
+                candidates=candidates,
             )
-            if rendered:
-                request.extra_user_content_parts.append(TextPart(text=rendered).mark_as_temp())
+            if result:
+                if source == "original_post":
+                    self._set_event_extra(
+                        event,
+                        "xiaoheihe_cached_visual_caption",
+                        result.caption,
+                    )
+                    self._set_event_extra(
+                        event,
+                        "xiaoheihe_cached_visual_context_id",
+                        result.visual_context_id,
+                    )
+                else:
+                    request.extra_user_content_parts.append(
+                        TextPart(text=result.rendered).mark_as_temp()
+                    )
                 continue
 
             if source == "current_comment":
@@ -647,6 +1121,7 @@ class XiaoheiheAdapterPlugin(Star):
                     )
                 ).mark_as_temp()
             )
+            unavailable_count += len(urls)
             self.runtime.logging.emit(
                 "WARNING",
                 "低优先级楼层图片预处理失败，已阻止原图进入最终 LLM",
@@ -658,6 +1133,7 @@ class XiaoheiheAdapterPlugin(Star):
         set_extra = getattr(event, "set_extra", None)
         if callable(set_extra):
             set_extra("xiaoheihe_image_sources", remaining_sources)
+        return unavailable_count
 
     async def _caption_thread_image_group(
         self,
@@ -669,7 +1145,10 @@ class XiaoheiheAdapterPlugin(Star):
         profile_id: str,
         context_settings: dict,
         deadline: float,
-    ) -> str | None:
+        candidates: list[tuple[object, str]] | None = None,
+        max_chars_override: int | None = None,
+        priority_override: str | None = None,
+    ) -> ImageCaptionResult | None:
         compressed_image_chars = int(context_settings["thread_reply_compressed_image_chars"])
         if source == "original_post":
             max_chars = compressed_image_chars
@@ -683,55 +1162,19 @@ class XiaoheiheAdapterPlugin(Star):
             max_chars = compressed_image_chars
             priority = "low"
 
-        tried_providers: set[int] = set()
-        provider_ids = []
-        for key in ("image_provider_id", "llm_provider_id"):
-            provider_id = str(provider_settings.get(key, "") or "").strip()
-            if provider_id and provider_id not in provider_ids:
-                provider_ids.append(provider_id)
-        for provider_id in provider_ids:
-            provider_available = self.runtime.auxiliary_provider_available(
-                profile_id,
-                "image",
-                provider_id,
+        if max_chars_override is not None:
+            max_chars = max(1, int(max_chars_override))
+        if priority_override is not None:
+            priority = str(priority_override)
+
+        resolved_candidates = candidates
+        if resolved_candidates is None:
+            resolved_candidates = self._image_provider_candidates(
+                event,
+                provider_settings,
+                profile_id=profile_id,
             )
-            try:
-                provider = self.context.get_provider_by_id(provider_id)
-            except Exception as exc:
-                if provider_available:
-                    self.runtime.report_auxiliary_provider_failure(
-                        profile_id,
-                        "image",
-                        provider_id,
-                        exc,
-                        details={
-                            "stage": "resolve_provider",
-                            "source": source,
-                            "image_count": len(urls),
-                            **self._image_url_diagnostics(urls),
-                        },
-                    )
-                continue
-            if provider is None:
-                if provider_available:
-                    self.runtime.report_auxiliary_provider_failure(
-                        profile_id,
-                        "image",
-                        provider_id,
-                        RuntimeError("Provider 不存在或当前未启用"),
-                        details={
-                            "stage": "resolve_provider",
-                            "source": source,
-                            "image_count": len(urls),
-                            **self._image_url_diagnostics(urls),
-                        },
-                    )
-                continue
-            if id(provider) in tried_providers:
-                continue
-            tried_providers.add(id(provider))
-            if not provider_available:
-                continue
+        for provider, provider_id in resolved_candidates:
             result = await self._try_caption_thread_image_group(
                 provider,
                 event=event,
@@ -748,38 +1191,7 @@ class XiaoheiheAdapterPlugin(Star):
                 ),
             )
             if result:
-                return result.rendered
-
-        get_using_provider = getattr(self.context, "get_using_provider", None)
-        if callable(get_using_provider):
-            try:
-                provider = get_using_provider(umo=event.unified_msg_origin)
-            except Exception as exc:
-                self.runtime.logging.emit(
-                    "WARNING",
-                    f"无法获取当前会话图片预处理 Provider: {exc}",
-                    profile_id=profile_id,
-                    details={"source": source},
-                )
-            else:
-                if provider is not None and id(provider) not in tried_providers:
-                    result = await self._try_caption_thread_image_group(
-                        provider,
-                        event=event,
-                        provider_label="current-session",
-                        source=source,
-                        urls=urls,
-                        max_chars=max_chars,
-                        priority=priority,
-                        profile_id=profile_id,
-                        deadline=deadline,
-                        attempt_timeout_seconds=self._image_attempt_timeout_seconds(
-                            context_settings=context_settings,
-                            image_count=len(urls),
-                        ),
-                    )
-                    if result:
-                        return result.rendered
+                return result
         return None
 
     async def _try_caption_thread_image_group(
@@ -1333,10 +1745,21 @@ class XiaoheiheAdapterPlugin(Star):
         profile_id: str,
         post_id: str,
     ) -> ImageCaptionCacheEntry | None:
+        image_urls = list(request.image_urls)
         sources = self._normalized_image_sources(event, request)
+        if not image_urls:
+            early_urls = event.get_extra(EARLY_IMAGE_URLS_EXTRA, [])
+            early_sources = event.get_extra(EARLY_IMAGE_SOURCES_EXTRA, [])
+            if isinstance(early_urls, list) and isinstance(early_sources, list):
+                if len(early_urls) == len(early_sources):
+                    image_urls = [str(url) for url in early_urls]
+                    sources = [
+                        source if source in {"current_comment", "original_post"} else "event_image"
+                        for source in early_sources
+                    ]
         post_urls = [
             url
-            for url, source in zip(request.image_urls, sources, strict=True)
+            for url, source in zip(image_urls, sources, strict=True)
             if source == "original_post"
         ]
         raw = self._event_raw_message(event)
@@ -1561,19 +1984,28 @@ class XiaoheiheAdapterPlugin(Star):
         *,
         context_settings: dict,
         image_count: int,
+        provider_candidate_count: int = 3,
+        image_group_counts: tuple[int, ...] | list[int] | None = None,
     ) -> float:
-        """Bound image-caption calls to the extra image grace, capped per event."""
+        """Scale the shared visual budget by images and usable candidates."""
         configured_limit = max(0, min(20, int(context_settings.get("max_images_per_event", 6))))
         count = min(max(0, int(image_count)), configured_limit)
         if count == 0:
             return 0.0
 
-        image_timeout = max(1.0, float(context_settings.get("image_timeout_seconds", 15)))
-        per_image_grace = min(60.0, max(MIN_IMAGE_REPLY_GRACE_SECONDS, image_timeout * 2))
-        count_linked_budget = min(
-            MAX_IMAGE_PREPROCESS_BUDGET_SECONDS,
-            per_image_grace * count,
-            per_image_grace * configured_limit,
+        candidates = max(0, min(3, int(provider_candidate_count)))
+        if candidates == 0:
+            return 0.0
+        count_linked_budget = visual_chain_budget_seconds(
+            image_count=count,
+            max_images=configured_limit,
+            image_timeout_seconds=float(context_settings.get("image_timeout_seconds", 15)),
+            total_timeout_seconds=float(context_settings.get("image_total_timeout_seconds", 240)),
+            provider_candidate_count=candidates,
+            image_group_counts=image_group_counts,
+            min_attempt_seconds=MIN_IMAGE_REPLY_GRACE_SECONDS,
+            max_attempt_seconds=MAX_IMAGE_ATTEMPT_SECONDS,
+            max_total_seconds=MAX_IMAGE_PREPROCESS_BUDGET_SECONDS,
         )
 
         raw_message = getattr(getattr(event, "message_obj", None), "raw_message", {})
@@ -1583,10 +2015,12 @@ class XiaoheiheAdapterPlugin(Star):
                 effective_timeout = float(
                     raw_message.get("reply_timeout_effective_seconds", 0) or 0
                 )
+                fallback_grace = float(raw_message.get("provider_fallback_grace_seconds", 0) or 0)
             except (TypeError, ValueError):
                 base_timeout = 0.0
                 effective_timeout = 0.0
-            grace_seconds = effective_timeout - base_timeout
+                fallback_grace = 0.0
+            grace_seconds = effective_timeout - base_timeout - max(0.0, fallback_grace)
             if base_timeout > 0 and grace_seconds > 0:
                 return min(count_linked_budget, grace_seconds)
         return count_linked_budget
@@ -1600,7 +2034,7 @@ class XiaoheiheAdapterPlugin(Star):
         count = max(1, min(20, int(image_count)))
         per_image = max(1.0, float(context_settings.get("image_timeout_seconds", 15)))
         return min(
-            60.0,
+            MAX_IMAGE_ATTEMPT_SECONDS,
             max(MIN_IMAGE_REPLY_GRACE_SECONDS, per_image * count),
         )
 
@@ -1649,19 +2083,19 @@ class XiaoheiheAdapterPlugin(Star):
             ]
             if urls:
                 groups.append((source, urls))
+        candidates = self._image_provider_candidates(
+            event,
+            provider_settings,
+            profile_id=profile_id,
+        )
         budget_seconds = self._image_preprocess_budget_seconds(
             event,
             context_settings=context_settings,
             image_count=len(request.image_urls),
+            provider_candidate_count=len(candidates),
+            image_group_counts=tuple(len(urls) for _, urls in groups),
         )
         deadline = asyncio.get_running_loop().time() + budget_seconds
-        candidates = self._auxiliary_provider_candidates(
-            event,
-            provider_settings,
-            keys=("image_provider_id", "llm_provider_id"),
-            purpose="image",
-            profile_id=profile_id,
-        )
         self.runtime.logging.emit(
             "DEBUG",
             "主动帖子图片将按辅助 Provider 链生成可复用视觉快照",
@@ -1675,34 +2109,39 @@ class XiaoheiheAdapterPlugin(Star):
                 "configured_image_limit": int(context_settings.get("max_images_per_event", 6)),
             },
         )
-        for provider, provider_label in candidates:
-            rendered: list[str] = []
-            complete = True
-            for source, urls in groups:
-                result = await self._try_caption_thread_image_group(
-                    provider,
-                    event=event,
-                    provider_label=provider_label,
-                    source=source,
-                    urls=urls,
-                    max_chars=max(
-                        2400,
-                        int(context_settings["thread_reply_compressed_image_chars"]),
-                    ),
-                    priority="primary",
+        rendered: list[str] = []
+        for source, urls in groups:
+            result = await self._caption_thread_image_group(
+                event,
+                source=source,
+                urls=urls,
+                provider_settings=provider_settings,
+                profile_id=profile_id,
+                context_settings=context_settings,
+                deadline=deadline,
+                candidates=candidates,
+                max_chars_override=max(
+                    2400,
+                    int(context_settings["thread_reply_compressed_image_chars"]),
+                ),
+                priority_override="primary",
+            )
+            if result is None:
+                self.runtime.logging.emit(
+                    "WARNING",
+                    "主动帖子视觉快照生成失败，等待安全降级",
                     profile_id=profile_id,
-                    deadline=deadline,
-                    attempt_timeout_seconds=self._image_attempt_timeout_seconds(
-                        context_settings=context_settings,
-                        image_count=len(urls),
-                    ),
+                    details={
+                        **self._event_image_diagnostics(event),
+                        "source": source,
+                        "image_count": len(urls),
+                        "provider_candidates": [label for _, label in candidates],
+                        **self._image_url_diagnostics(urls),
+                    },
                 )
-                if result is None:
-                    complete = False
-                    break
-                rendered.append(result.rendered)
-            if not complete:
-                continue
+                return False
+            rendered.append(result.rendered)
+        if rendered:
             for block in rendered:
                 request.extra_user_content_parts.append(TextPart(text=block).mark_as_temp())
             request.image_urls.clear()
@@ -1726,41 +2165,10 @@ class XiaoheiheAdapterPlugin(Star):
         event: AstrMessageEvent,
         request: ProviderRequest,
         *,
-        provider_id: str,
         profile_id: str,
+        provider_settings: dict,
         context_settings: dict,
     ) -> bool:
-        if not self.runtime.auxiliary_provider_available(profile_id, "image", provider_id):
-            return False
-        try:
-            provider = self.context.get_provider_by_id(provider_id)
-        except Exception as exc:
-            self.runtime.report_auxiliary_provider_failure(
-                profile_id,
-                "image",
-                provider_id,
-                exc,
-                details={
-                    "stage": "resolve_fixed_image_provider",
-                    "image_count": len(request.image_urls),
-                    **self._image_url_diagnostics(request.image_urls),
-                },
-            )
-            return False
-        if provider is None:
-            self.runtime.report_auxiliary_provider_failure(
-                profile_id,
-                "image",
-                provider_id,
-                RuntimeError("固定图片 Provider 不存在或当前未启用"),
-                details={
-                    "stage": "resolve_fixed_image_provider",
-                    "image_count": len(request.image_urls),
-                    **self._image_url_diagnostics(request.image_urls),
-                },
-            )
-            return False
-        provider_label = self._provider_runtime_label(provider, provider_id)
         sources = self._normalized_image_sources(event, request)
         is_thread_reply = (
             self._coerce_compression_source(event.get_extra("xiaoheihe_compression_source", None))
@@ -1778,10 +2186,17 @@ class XiaoheiheAdapterPlugin(Star):
 
         rendered: list[str] = []
         compressed_image_chars = int(context_settings["thread_reply_compressed_image_chars"])
+        candidates = self._image_provider_candidates(
+            event,
+            provider_settings,
+            profile_id=profile_id,
+        )
         budget_seconds = self._image_preprocess_budget_seconds(
             event,
             context_settings=context_settings,
             image_count=len(request.image_urls),
+            provider_candidate_count=len(candidates),
+            image_group_counts=tuple(len(urls) for _, urls in groups),
         )
         deadline = asyncio.get_running_loop().time() + budget_seconds
         for source, urls in groups:
@@ -1794,20 +2209,17 @@ class XiaoheiheAdapterPlugin(Star):
             else:
                 max_chars = max(2400, compressed_image_chars)
                 priority = "primary"
-            result = await self._try_caption_thread_image_group(
-                provider,
+            result = await self._caption_thread_image_group(
                 event=event,
-                provider_label=provider_label,
                 source=source,
                 urls=urls,
-                max_chars=max_chars,
-                priority=priority,
+                provider_settings=provider_settings,
                 profile_id=profile_id,
+                context_settings=context_settings,
                 deadline=deadline,
-                attempt_timeout_seconds=self._image_attempt_timeout_seconds(
-                    context_settings=context_settings,
-                    image_count=len(urls),
-                ),
+                candidates=candidates,
+                max_chars_override=max_chars,
+                priority_override=priority,
             )
             if not result:
                 return False
@@ -1923,6 +2335,56 @@ class XiaoheiheAdapterPlugin(Star):
         event.set_extra(GROK_IMAGE_ISOLATION_EXTRA, None)
         return restored
 
+    @staticmethod
+    def _expose_prepared_event_images(event: AstrMessageEvent) -> int:
+        vault = event.get_extra(EARLY_IMAGE_VAULT_EXTRA, None)
+        if not isinstance(vault, dict):
+            return 0
+        messages = event.get_messages()
+        hidden = vault.get("hidden", [])
+        if not isinstance(messages, list) or not isinstance(hidden, list):
+            return 0
+        inserted: list[object] = []
+        for item in hidden:
+            if not isinstance(item, tuple) or len(item) != 2:
+                continue
+            index, component = item
+            if any(component is current for current in messages):
+                continue
+            try:
+                position = max(0, min(int(index), len(messages)))
+            except (TypeError, ValueError):
+                position = len(messages)
+            messages.insert(position, component)
+            inserted.append(component)
+        if inserted:
+            event.set_extra(GROK_IMAGE_EXPOSURE_EXTRA, {"inserted": inserted})
+            vault["exposed"] = True
+        return len(inserted)
+
+    @staticmethod
+    def _hide_prepared_event_images(event: AstrMessageEvent) -> int:
+        state = event.get_extra(GROK_IMAGE_EXPOSURE_EXTRA, None)
+        if not isinstance(state, dict):
+            return 0
+        inserted = state.get("inserted", [])
+        messages = event.get_messages()
+        removed = 0
+        if isinstance(inserted, list) and isinstance(messages, list):
+            identities = {id(component) for component in inserted}
+            kept = []
+            for component in messages:
+                if id(component) in identities:
+                    removed += 1
+                else:
+                    kept.append(component)
+            messages[:] = kept
+        vault = event.get_extra(EARLY_IMAGE_VAULT_EXTRA, None)
+        if isinstance(vault, dict):
+            vault["exposed"] = False
+        event.set_extra(GROK_IMAGE_EXPOSURE_EXTRA, None)
+        return removed
+
     @filter.on_using_llm_tool(priority=-1000)
     async def isolate_xiaoheihe_images_for_grok(
         self,
@@ -1940,6 +2402,13 @@ class XiaoheiheAdapterPlugin(Star):
             if query and GROK_QUERY_REQUIREMENT not in query:
                 tool_args["query"] = f"{query}\n\n{GROK_QUERY_REQUIREMENT}"
         if needs_event_images:
+            exposed = self._expose_prepared_event_images(event)
+            if exposed:
+                self.runtime.logging.emit(
+                    "DEBUG",
+                    "Grok 明确搜图期间已临时恢复预处理前的小黑盒原图",
+                    details={"image_count": exposed},
+                )
             return
 
         state = event.get_extra(GROK_IMAGE_ISOLATION_EXTRA, None)
@@ -1980,6 +2449,13 @@ class XiaoheiheAdapterPlugin(Star):
             return
         if self._grok_tool_name(tool) != GROK_WEB_SEARCH_TOOL:
             return
+        hidden = self._hide_prepared_event_images(event)
+        if hidden:
+            self.runtime.logging.emit(
+                "DEBUG",
+                "Grok 明确搜图完成后已重新隔离小黑盒原图",
+                details={"image_count": hidden},
+            )
         restored = self._restore_grok_event_images(event, force=False)
         if restored:
             self.runtime.logging.emit(
@@ -1997,6 +2473,13 @@ class XiaoheiheAdapterPlugin(Star):
     ) -> None:
         if event.get_platform_name() != "xiaoheihe":
             return
+        hidden = self._hide_prepared_event_images(event)
+        if hidden:
+            self.runtime.logging.emit(
+                "WARNING",
+                "Agent 完成时兜底移除了 Grok 搜图期间临时恢复的小黑盒原图",
+                details={"image_count": hidden},
+            )
         restored = self._restore_grok_event_images(event, force=True)
         if restored:
             self.runtime.logging.emit(
@@ -2004,6 +2487,11 @@ class XiaoheiheAdapterPlugin(Star):
                 "Agent 完成时兜底恢复了 Grok 调用期间隔离的小黑盒原图",
                 details={"image_count": restored},
             )
+        event.set_extra(EARLY_IMAGE_VAULT_EXTRA, None)
+        event.set_extra(EARLY_IMAGE_BLOCKS_EXTRA, None)
+        event.set_extra(EARLY_IMAGE_URLS_EXTRA, None)
+        event.set_extra(EARLY_IMAGE_SOURCES_EXTRA, None)
+        event.set_extra(EARLY_ROUTE_CONFIG_EXTRA, None)
 
     @filter.on_llm_response(priority=-1000)
     async def capture_xiaoheihe_complete_reply(
@@ -2048,4 +2536,5 @@ class XiaoheiheAdapterPlugin(Star):
     async def terminate(self) -> None:
         async with self._image_caption_cache_lock:
             self._image_caption_cache.clear()
+        self._provider_route_signatures.clear()
         await self.runtime.close()

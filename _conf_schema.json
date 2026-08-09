@@ -107,14 +107,14 @@
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "指定小黑盒适配器使用的 LLM Provider ID；留空则跟随当前配置文件或会话设置。"
+        "hint": "小黑盒主 Agent 的首选 Provider；无效时本轮退回 AstrBot 主模型，留空直接跟随配置文件或会话。AstrBot 4.x 的后续回退仍按全局回退列表执行。"
       },
       "image_provider_id": {
         "description": "固定图片 Provider",
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "指定小黑盒图片理解使用的 Provider ID；被动楼层留空或失败时会依次尝试固定 LLM、当前会话 Provider，原帖原图不会直接进入最终回答模型。其他事件留空时保持 AstrBot 原生图片流程。"
+        "hint": "小黑盒图片理解首选 Provider；留空或失败时依次尝试 AstrBot 默认图片转述模型、AstrBot 当前主模型。全部失败时隔离原图并禁止最终模型猜图。"
       },
       "context_provider_id": {
         "description": "上下文压缩 Provider",
@@ -177,7 +177,7 @@
         "description": "被动回复原帖图片/缓存描述字符上限",
         "type": "int",
         "default": 800,
-        "hint": "被动楼层的原帖图片或 24 小时视觉快照会按来源压到该长度以内，并作为低优先级背景；固定图片 Provider 留空或失败时会继续尝试固定 LLM、当前会话 Provider。"
+        "hint": "被动楼层的原帖图片或 24 小时视觉快照会按来源压到该长度以内，并作为低优先级背景；识图按插件图片、AstrBot 图片、AstrBot 主模型依次回退。"
       },
       "thread_reply_compression_timeout_seconds": {
         "description": "上下文压缩超时秒数",
@@ -205,13 +205,19 @@
         "description": "每事件最大图片数",
         "type": "int",
         "default": 6,
-        "hint": "实际接收图数不会超过此值；视觉预处理总预算也按实际图数和此上限共同计算，默认最多 120 秒。"
+        "hint": "实际处理图数不会超过此值；超限图片会在 Agent 构建前隔离。视觉预算也按实际图数和此上限共同计算。"
       },
       "image_timeout_seconds": {
         "description": "单图视觉处理时间基数",
         "type": "int",
         "default": 15,
-        "hint": "用于计算多图事件总截止时间和视觉预处理预算；单个辅助 Provider 最多占用 60 秒。"
+        "hint": "每个候选识图 Provider 按实际图片数获得处理时间；与总视觉预算共同限制，单次最多 120 秒。"
+      },
+      "image_total_timeout_seconds": {
+        "description": "单事件视觉处理总预算（秒）",
+        "type": "int",
+        "default": 240,
+        "hint": "插件识图、AstrBot 默认识图和 AstrBot 主模型共享该预算；实际截止时间同时按图片数和候选数量缩放。"
       }
     }
   },
@@ -235,6 +241,12 @@
         "description": "回复生成超时",
         "type": "int",
         "default": 120
+      },
+      "provider_fallback_grace_seconds": {
+        "description": "主模型回退宽限（秒）",
+        "type": "int",
+        "default": 60,
+        "hint": "额外留给插件主模型失败后执行 AstrBot 全局回退列表的时间；要让 AstrBot 主模型最先回退，请将其放在全局回退列表第一位。健康请求不会主动等待。"
       },
       "max_retries": {
         "description": "安全请求最大重试次数",

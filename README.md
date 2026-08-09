@@ -6,22 +6,21 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.15**
+当前版本：**v1.2.16**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.15 重点：
+v1.2.16 重点：
 
-- 主动刷帖识图结果现在形成 24 小时视觉快照：有界内存 LRU 加 SQLite 持久化，只保存图片指纹、来源主机与文字描述，不保存图片字节；
-- 视觉快照会先绑定入站事件，再在小黑盒确认真实发送后绑定机器人评论 ID；别人稍后回复该评论时，即使楼层接口没有再次返回原图，也能恢复机器人当时看到的图片内容；
-- 长楼层语义压缩可把缓存图片描述作为独立的低优先级来源压到 `thread_reply_compressed_image_chars`，不会与当前评论、直接回复对象或楼层参与者混写；压缩关闭、未触发或失败时使用本地硬截断兜底；
-- 图片 Provider 返回“无法加载/看不到/未收到图片”等占位描述时视为失败，不再缓存或伪装成成功识图；当前评论图、原帖图和主动帖子继续按各自降级规则处理；
-- 单事件视觉预处理预算按实际图片数、`max_images_per_event` 与 `image_timeout_seconds` 联动，默认 1/2/3/4–6 图分别最多使用 30/60/90/120 秒；单个 Provider 最多占 60 秒，为备用 Provider 和最终 Agent 留出时间；
-- 图片调用日志补充事件来源、图片数量、脱敏域名/指纹、Provider、模型、字符预算、时间预算、耗时、缓存层、快照 ID、HTTP 状态与异常根因；URL 用户信息/查询参数/片段、令牌、原图和完整描述不会写入日志；
-- 主动帖子未指定独立图片 Provider 时，会按固定 LLM / 当前会话 Provider 尝试生成快照；全部失败仍保留原图交回 AstrBot 原生视觉链路，不会阻断评论；
-- 无图片、短楼层、未安装/未调用 Grok、普通 @/评论回复和其他平台不新增视觉调用，AstrBot 主对话 Provider、人格、Agent 与回退链保持不变；
+- 小黑盒图片现在会在 AstrBot 构建主 Agent 前完成来源感知转述，避免全局图片模型抢先处理，也不会再把未经处理的图片交给纯文本主模型；
+- 识图顺序固定为“插件识图模型 → AstrBot 默认图片转述模型 → AstrBot 当前主模型”。候选模型明确不支持图片、超时、403、400、占位回答或其他异常时继续下一层；全部失败时移除原图并明确要求最终模型承认看不到图片、不得猜测；
+- 插件主模型仍通过 AstrBot 标准 `selected_provider` 进入完整人格、会话、Agent、工具和分段回复链。插件模型无效时本轮自动退回 AstrBot 主模型；若要严格得到“插件主模型 → AstrBot 主模型 → 其他回退”，需把 AstrBot 主模型放在全局“回退对话模型列表”第一位，配置不符合时管理页与日志会提示；
+- 新增单事件视觉总预算和主模型回退宽限；默认最多为每个识图候选分配按图数增长的 15–120 秒、整条识图链最多 240 秒，事件总截止时间最高 900 秒；
+- 24 小时原帖视觉快照、机器人评论 ID 绑定、长楼层图片压缩和来源权重继续生效；数据库仍只保存图片指纹、脱敏来源主机和文字描述，不保存图片字节；
+- 普通 Grok 网页查询继续隔离原图；明确搜图时只在工具执行期间临时开放本事件受限图片引用，工具结束或 Agent 异常完成后立即重新隔离；
+- 无图片事件不会调用识图模型；未安装/未调用 Grok、未配置插件模型、普通纯文本回复和其他平台不增加辅助模型调用；
 
 - 通知超过单轮分页上限时不再让旧 cursor 卡住后续轮询；未扫完区间持久化到 SQLite 并跨轮继续回填，实时新消息仍优先处理，插件重启后也能恢复进度；
 - 修复长楼层压缩链路中“小黑盒昵称 + UID”身份锚点在二次转换时丢失的问题；身份映射由程序附回，当前发言人和直接回复对象仍保留原文；
@@ -30,8 +29,8 @@ v1.2.15 重点：
 - 长楼层评论回复/@ 可先由 AstrBot Provider 按来源做语义压缩，原帖摘要与楼层摘要保持分离，并显式判断楼层是否已经歪楼；
 - 当前消息和直接回复对象不交给压缩结果替代，始终保留原文；最终可信焦点规则放在所有文字/图片背景之后，降低小模型被长原帖重新带偏的概率；
 - v1.2.12 的原帖 1600 字 / 最近 12 条窗口不删除，改为短上下文、关闭压缩或压缩失败时的确定性兜底；压缩器正常工作时可读取更宽但有硬上限的原帖/楼层窗口；
-- 被动楼层会强制把当前评论图片与原帖图片分组预处理：固定图片 Provider 留空或失败时继续尝试固定 LLM、当前会话 Provider；原帖图片只以较短的低优先级文字描述进入最终回答模型，预处理全部失败时不再把原帖原图交给最终模型；
-- 图片预处理只使用事件按图片增加的额外回复宽限，并额外设置单事件 120 秒硬上限；Provider 卡住或预算耗尽会立即降级并继续最终 Agent/工具链，无图片事件不增加任何图片 Provider 调用；
+- 小黑盒图片会在 Agent 构建前按来源分组，并依次尝试插件识图、AstrBot 默认图片转述和 AstrBot 主模型；原帖只以较短的低优先级描述进入最终模型，任意来源全部失败都隔离原图并禁止猜图；
+- 图片预处理按图片数和候选数计算共享预算，单候选最多 120 秒、默认整链最多 240 秒；Provider 卡住或预算耗尽会立即降级并继续最终 Agent/工具链，无图片事件不增加任何图片 Provider 调用；
 - 语义压缩默认只在可压缩背景超过 2400 字时触发，超时、Provider 不存在、返回异常 JSON 均自动回退，不阻断本轮回复；主动刷帖不使用这套被动楼层压缩；
 - 新增可选 `providers.context_provider_id`，可单独选择上下文压缩 Provider；留空依次复用固定 LLM Provider 和当前会话 Provider；
 - 主动刷帖不使用上述缩减预算，继续以完整原帖为主要话题；帖子级触发也继续以原帖作为主要背景；
@@ -213,8 +212,8 @@ reply 通知历史基线已建立
 | `polling.poll_interval_seconds` | `60` | 通知轮询间隔，最低 30 秒 |
 | `polling.max_pages_per_poll` | `3` | 每类通知每轮最大页数；超出后持久化并跨轮回填 |
 | `polling.initial_backfill_count` | `0` | 首次基线后回溯条数 |
-| `providers.llm_provider_id` | `""` | 固定小黑盒 LLM Provider；留空跟随当前配置或会话 |
-| `providers.image_provider_id` | `""` | 固定图片理解 Provider；被动楼层留空时自动尝试固定 LLM / 当前会话 Provider |
+| `providers.llm_provider_id` | `""` | 小黑盒主 Agent 首选 Provider；无效时退回 AstrBot 主模型，留空直接使用 AstrBot 主模型 |
+| `providers.image_provider_id` | `""` | 小黑盒首选识图 Provider；之后依次尝试 AstrBot 默认图片转述模型和 AstrBot 主模型 |
 | `providers.context_provider_id` | `""` | 长楼层语义压缩 Provider；留空复用固定 LLM，再留空则跟随当前会话 |
 | `context.enable_thread_reply_compression` | `true` | 仅为被动长楼层启用来源感知语义压缩 |
 | `context.thread_reply_compression_trigger_chars` | `2400` | 超过此可压缩背景长度才额外调用一次上下文 Provider |
@@ -224,8 +223,13 @@ reply 通知历史基线已建立
 | `context.thread_reply_post_chars` | `1600` | 压缩未触发/关闭/失败时的原帖兜底预算 |
 | `context.thread_reply_recent_comments` | `12` | 压缩未触发/关闭/失败时的最近楼层兜底窗口 |
 | `context.context_cache_ttl_seconds` | `60` | 帖子/楼层网络上下文缓存；同 key 并发 miss 自动合并 |
+| `context.max_images_per_event` | `6` | 每事件最多处理的图片数；允许 0–20 |
+| `context.image_timeout_seconds` | `15` | 每个识图候选按实际图数计算的时间基数；单候选最多 120 秒 |
+| `context.image_total_timeout_seconds` | `240` | 单事件整条识图链总预算；允许 15–600 秒 |
 | `reply.dry_run_mark_processed` | `true` | 模拟结果保存后标记完成 |
 | `reply.max_reply_chars` | `500` | 回复字符上限 |
+| `reply.reply_timeout_seconds` | `120` | 最终 Agent/工具链基础截止时间 |
+| `reply.provider_fallback_grace_seconds` | `60` | 为 AstrBot 主对话 Provider 回退额外预留的事件时间 |
 | `reply.only_explicit_mentions` | `true` | 只处理明确 @ |
 | `network.max_reply_concurrency` | `2` | 回复 worker 数 |
 | `network.max_pending_events` | `50` | 总待处理上限 |
@@ -289,25 +293,30 @@ v1.2.15 会在机器人主动评论带图帖子时保存一份 24 小时的原�
 公开 HTTPS 图片 URL 会转换为 AstrBot 原生 `Image` 组件。默认每个事件最多 6 张图片。插件
 会检查协议、认证信息、主机和 DNS 结果，过滤本地地址、内网地址与保留地址；同一事件同一域名
 只重复使用一次 DNS 校验结果。插件不下载或缓存图片字节，因此不再暴露无法实际执行的单图/总图
-MB 和图片缓存 MB 配置；真实图片下载/压缩由 AstrBot/Provider 媒体链路负责。被动楼层回复在
-最终回答前强制按“当前评论图片 / 原帖图片”分组做一次视觉预处理，Provider 顺序为“固定图片
-Provider → 固定 LLM Provider → 当前会话 Provider”；每次预处理均使用独立临时 session 且
-`persist=False`；AstrBot 4.26.2+ 的 Provider 请求同时限制为单次尝试，旧版则由外层总时间预算
-兜底。原帖图片描述默认由本地代码再次硬限制到最多 800 字并作为低优先级背景，
-原帖原图不会进入最终回答模型；如果所有可用 Provider 都无法完成预处理，适配器移除原帖原图并
-注入“视觉预处理不可用”的可信系统说明，不允许模型猜图。
+MB 和图片缓存 MB 配置；图片内容由所选 AstrBot Provider 读取。
 
-图片 LLM 预处理共享本事件已经按图片数量增加的回复宽限，并设置单事件最多 120 秒的硬预算。
-默认配置下 1/2/3/4–6 张图片分别得到最多 30/60/90/120 秒预处理预算；预算同时受事件实际图数、
-`max_images_per_event` 和 `image_timeout_seconds` 约束。顺序 Provider fallback 会共同消耗这一预算，
-单个 Provider 最多占用 60 秒；任一调用卡住时由 `asyncio.wait_for()` 在对应预算处
-取消，随后直接走相同降级路径，把基础回复时间留给最终 Agent、Grok 或其他工具。没有图片时
-不会进入该逻辑，也不会因此多调用一次 Provider。
+v1.2.16 使用 `on_waiting_llm_request(priority=1000)` 在 AstrBot 构建主 Agent 之前处理小黑盒图片。
+插件先保存最多 `max_images_per_event` 个 URL 组件引用，再从事件消息链移除全部原图，随后按
+“插件 `image_provider_id` → AstrBot `default_image_caption_provider_id` → 当前会话/配置主模型”
+顺序转述。每次调用使用独立临时 session、`persist=False` 和单次 Provider 请求；同一 Provider
+对象在链内去重，明确声明只支持文本的候选会被跳过。这样即使最终主模型是纯文本模型，也只会
+收到有来源标签的文字描述，不会收到可能触发 `Unexpected item type in content` 的原始图片内容。
 
-当前评论自己的图片属于最高相关性，也优先转成临时视觉描述；只有所有预处理 Provider 都失败时
-才保留当前评论原图，交给 AstrBot 原生视觉链路兜底，并继续附带可信来源/优先级映射。帖子级
-触发保持原有图片流程。主动刷帖会先按图片 Provider、固定 LLM、当前会话 Provider 生成可复用
-视觉快照；全部失败仍保留原图交给 AstrBot 主对话视觉链路，不套用被动楼层的 fail-closed 规则。
+当前评论图片描述标为最高相关性，原帖图片描述默认由本地代码硬限制到最多 800 字并标为低优先级；
+主动帖子描述作为主要图片背景，并继续写入 24 小时视觉快照。任一候选超时、异常或返回“无法加载、
+看不到图片”等占位文字时继续下一候选；整条链失败、图片超出上限或引用无效时，原图不会进入最终
+回答模型，插件会加入明确的不可见说明，要求模型承认无法读取且不得猜图。该安全降级统一适用于
+帖子内 @、楼层回复和主动浏览。
+
+每个候选的时间上限按 `image_timeout_seconds × 实际图片数` 计算，最低 15 秒、最高 120 秒；候选
+共享 `image_total_timeout_seconds`，默认整条识图链最多 240 秒。事件截止时间等于基础回复时间、
+视觉预算与 `provider_fallback_grace_seconds` 的有界组合，最高 900 秒；这些值只是取消上限，健康
+请求完成后会立即继续，不会人为等待。没有图片时只解析 Provider 路由，不调用任何识图模型。
+
+普通 `grok_web_search` 不接收事件原图；查询明确要求“搜这张图/识图/图片出处”时，插件只在该
+工具调用期间临时恢复受上限约束的原图组件，工具返回或 Agent 完成后立即重新隔离。未安装 Grok、
+本轮未调用 Grok 或调用其他工具时不触发这条兼容路径。
+
 返回“无法加载/看不到图片”的短占位文字不算成功识图，也不会进入缓存。
 
 v1.2.2 的图片能力范围是接收和理解；评论图片上传列为待真实账号验证项。
@@ -376,7 +385,7 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.2.15 数据库迁移版本为 **v9**：新增 24 小时视觉快照、入站事件与机器人评论绑定表；
+- v1.2.16 数据库迁移版本仍为 **v9**：v1.2.15 新增的 24 小时视觉快照、入站事件与机器人评论绑定表保持兼容；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
 
@@ -412,8 +421,11 @@ SQLite、去重记录、通知游标、审核候选和日志；插件配置继�
 | 评论区已经歪楼，机器人却仍围着原帖答非所问 | 升级 v1.2.13；长楼层会按来源语义压缩原帖/评论，当前消息与直接回复对象保留原文，原帖图片降为低优先级；压缩失败自动回退 v1.2.12 预算 |
 | 持续出现“新通知超过单轮最大页数”且重复扫描 | 升级 v1.2.14；超出窗口的连续区间会持久化并跨轮回填，实时 cursor 不再被旧积压永久卡住 |
 | 机器人主动评论时看过图，半小时后回复该楼层却说看不到图 | 升级 v1.2.15；主动识图快照保留 24 小时并绑定机器人评论 ID。查看日志中的 `cache_hit`、`visual_context_id` 与脱敏图片指纹 |
-| 图片模型返回“无法加载图片”却被当成识图结果 | 升级 v1.2.15；此类短占位描述会被拒绝并走备用 Provider/原生视觉降级 |
-| 多图总结在 120 秒进入 `dead_letter` | 升级 v1.2.2；基础超时保持原配置，适配器按图片数量自动增加视觉处理时间，6 图默认截止时间为 300 秒 |
+| 插件选了识图模型，日志却先显示 AstrBot 全局图片转述模型 | 升级 v1.2.16；插件会在主 Agent 构建前按“插件识图 → AstrBot 识图 → AstrBot 主模型”处理 |
+| 图片导致 `Unexpected item type in content` | 升级 v1.2.16，并确认至少一个识图链候选支持多模态；最终纯文本主模型只接收文字描述或安全失败说明 |
+| 图片模型返回“无法加载图片”却被当成识图结果 | v1.2.15+ 会拒绝此类短占位描述；v1.2.16 会继续完整识图链，全部失败后隔离原图并禁止猜图 |
+| 固定主模型失败后没有先切到 AstrBot 主模型 | AstrBot 4.x 的事件选择会直接使用全局回退列表；把 AstrBot 主模型放到“回退对话模型列表”第一位。v1.2.16 会在管理页和日志提示不一致 |
+| 多图总结在基础截止时间进入 `dead_letter` | 升级 v1.2.16；按需调整 `image_total_timeout_seconds`、`provider_fallback_grace_seconds` 与基础回复超时，事件总上限为 900 秒 |
 | @ 数量增加但事件为空 | 检查 `message_type`、接收条数、权限过滤和基线日志 |
 | `status=failed / code 1000` | 该发送尝试记录为失败终态；结合 API 契约核对评论请求字段 |
 | 图片按纯文本处理 | 检查模型视觉能力、图片 HTTPS 地址和 SSRF 校验提示 |

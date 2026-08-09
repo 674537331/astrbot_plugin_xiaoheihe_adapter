@@ -30,6 +30,8 @@ def test_config_defaults_and_profile(fake_config) -> None:
     assert service.snapshot()["context"]["thread_reply_compressed_comments_chars"] == 1400
     assert service.snapshot()["context"]["thread_reply_compressed_image_chars"] == 800
     assert service.snapshot()["context"]["context_cache_ttl_seconds"] == 60
+    assert service.snapshot()["context"]["image_total_timeout_seconds"] == 240
+    assert service.snapshot()["reply"]["provider_fallback_grace_seconds"] == 60
 
 
 def test_legacy_unused_image_byte_limit_settings_are_dropped(fake_config) -> None:
@@ -100,6 +102,16 @@ def test_config_rejects_unsafe_storage_and_timeout_values(fake_config) -> None:
     invalid_compression["context"]["thread_reply_compressed_post_chars"] = 100
     with pytest.raises(ConfigValidationError, match="thread_reply_compressed_post_chars"):
         ConfigService(invalid_compression)
+
+    invalid_image_budget = copy.deepcopy(DEFAULT_CONFIG)
+    invalid_image_budget["context"]["image_total_timeout_seconds"] = 601
+    with pytest.raises(ConfigValidationError, match="image_total_timeout_seconds"):
+        ConfigService(invalid_image_budget)
+
+    invalid_fallback_grace = copy.deepcopy(DEFAULT_CONFIG)
+    invalid_fallback_grace["reply"]["provider_fallback_grace_seconds"] = 301
+    with pytest.raises(ConfigValidationError, match="provider_fallback_grace_seconds"):
+        ConfigService(invalid_fallback_grace)
 
 
 def test_config_rejects_invalid_provider_ids() -> None:
