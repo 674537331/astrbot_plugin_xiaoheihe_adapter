@@ -8,6 +8,7 @@ from xiaoheihe.context_compression import (
     ThreadCompressionSource,
     build_image_compression_prompt,
     build_thread_compression_prompt,
+    is_unusable_image_caption,
     parse_thread_compression,
     render_compressed_thread_context,
     render_image_context,
@@ -113,3 +114,61 @@ def test_image_compression_marks_source_and_hard_priority() -> None:
     )
     assert 'source="original_post" priority="low"' in block
     assert "原帖图片的视觉压缩描述" in block
+
+
+def test_cached_image_description_is_compressed_separately_from_thread() -> None:
+    value = source()
+    value = ThreadCompressionSource(
+        **{
+            field: getattr(value, field)
+            for field in (
+                "post_id",
+                "post_author",
+                "post_title",
+                "post_body",
+                "recent_comments",
+                "reply_target",
+                "current_sender",
+                "current_message",
+                "recent_participants",
+            )
+        },
+        post_image_caption="图片里是显卡价格表" * 200,
+    )
+    prompt = build_thread_compression_prompt(
+        value,
+        post_chars=500,
+        comments_chars=900,
+        image_chars=80,
+    )
+    assert '"cached_image_description"' in prompt
+    assert "post_image_summary 最多 80" in prompt
+
+    parsed = parse_thread_compression(
+        json.dumps(
+            {
+                "post_summary": "显卡价格讨论",
+                "thread_summary": "楼层转而讨论电影",
+                "post_image_summary": "图表列出三款显卡价格" * 30,
+                "local_topic": "电影",
+                "relation_to_post": "drifted",
+            },
+            ensure_ascii=False,
+        ),
+        post_chars=500,
+        comments_chars=900,
+        image_chars=80,
+    )
+    assert len(parsed.post_image_summary) == 80
+    rendered = render_compressed_thread_context(value, parsed)
+    assert "缓存视觉描述经 LLM 压缩" in rendered
+    assert "最近楼层对话（中相关性" in rendered
+
+
+def test_unusable_image_caption_detection_rejects_provider_placeholders() -> None:
+    assert is_unusable_image_caption("没加载出来，是崩坏的图还是抽象艺术？")
+    assert is_unusable_image_caption("I cannot access or view the image.")
+    assert not is_unusable_image_caption("图片中是一张价格表，写有 20 美元和 8 月 8 日。")
+    assert not is_unusable_image_caption(
+        "截图中可见一个网页错误界面，中央文字为‘图片加载失败’，右上角还有刷新按钮。"
+    )

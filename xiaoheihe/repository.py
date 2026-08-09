@@ -471,6 +471,170 @@ class Repository:
         )
         return row is not None
 
+    async def cache_visual_context(
+        self,
+        *,
+        profile_id: str,
+        post_id: str,
+        source: str,
+        image_fingerprint: str,
+        image_hosts: list[str],
+        image_count: int,
+        caption: str,
+        provider_id: str,
+        model: str,
+        ttl_seconds: int,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Reuse or persist one immutable, bounded visual description."""
+        current = float(now if now is not None else time.time())
+        safe_ttl = max(60, min(int(ttl_seconds), 7 * 86400))
+        safe_caption = str(caption or "").strip()[:4000]
+        if not safe_caption:
+            raise ValueError("视觉上下文描述不能为空")
+        if not profile_id or not post_id or not image_fingerprint:
+            raise ValueError("视觉上下文缺少账号、帖子或图片指纹")
+        caption_hash = hashlib.sha256(safe_caption.encode("utf-8")).hexdigest()
+        async with self.db.transaction() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT * FROM visual_contexts
+                WHERE profile_id = ? AND post_id = ? AND source = ?
+                  AND image_fingerprint = ? AND caption_hash = ? AND expires_at > ?
+                ORDER BY expires_at DESC, id DESC
+                LIMIT 1
+                """,
+                (
+                    profile_id,
+                    post_id,
+                    source,
+                    image_fingerprint,
+                    caption_hash,
+                    current,
+                ),
+            )
+            existing = await cursor.fetchone()
+            if existing is not None:
+                return dict(existing)
+            insert = await connection.execute(
+                """
+                INSERT INTO visual_contexts(
+                    profile_id, post_id, source, image_fingerprint,
+                    image_hosts_json, image_count, caption, caption_hash,
+                    provider_id, model, created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    profile_id,
+                    post_id,
+                    source,
+                    image_fingerprint,
+                    json.dumps(image_hosts[:20], ensure_ascii=False, separators=(",", ":")),
+                    max(0, min(int(image_count), 20)),
+                    safe_caption,
+                    caption_hash,
+                    str(provider_id or "")[:256],
+                    str(model or "")[:256],
+                    current,
+                    current + safe_ttl,
+                ),
+            )
+            if insert.lastrowid is None:
+                raise RuntimeError("视觉上下文写入未返回记录 ID")
+            visual_context_id = int(insert.lastrowid)
+            row = await connection.execute(
+                "SELECT * FROM visual_contexts WHERE id = ?",
+                (visual_context_id,),
+            )
+            created = await row.fetchone()
+            if created is None:
+                raise RuntimeError("视觉上下文写入后无法读取")
+            return dict(created)
+
+    async def link_visual_context_to_event(
+        self,
+        incoming_event_id: int,
+        visual_context_id: int,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        current = float(now if now is not None else time.time())
+        result = await self.db.execute(
+            """
+            INSERT INTO visual_context_event_links(
+                incoming_event_id, visual_context_id, created_at
+            )
+            SELECT ?, id, ? FROM visual_contexts
+            WHERE id = ? AND expires_at > ?
+            ON CONFLICT(incoming_event_id) DO UPDATE SET
+                visual_context_id = excluded.visual_context_id,
+                created_at = excluded.created_at
+            """,
+            (int(incoming_event_id), current, int(visual_context_id), current),
+        )
+        return result.rowcount > 0
+
+    async def visual_context_for_comment(
+        self,
+        profile_id: str,
+        external_comment_ids: list[str] | tuple[str, ...],
+        *,
+        now: float | None = None,
+    ) -> dict[str, Any] | None:
+        candidates = tuple(
+            dict.fromkeys(
+                str(value).strip() for value in external_comment_ids if str(value).strip()
+            )
+        )
+        if not profile_id or not candidates:
+            return None
+        current = float(now if now is not None else time.time())
+        placeholders = ",".join("?" for _ in candidates)
+        priority_sql = " ".join(f"WHEN ? THEN {index}" for index, _ in enumerate(candidates))
+        row = await self.db.fetchone(
+            f"""
+            SELECT visual_contexts.*,
+                   visual_context_comment_links.external_comment_id AS bound_comment_id
+            FROM visual_context_comment_links
+            JOIN visual_contexts
+              ON visual_contexts.id = visual_context_comment_links.visual_context_id
+            WHERE visual_context_comment_links.profile_id = ?
+              AND visual_context_comment_links.external_comment_id IN ({placeholders})
+              AND visual_contexts.expires_at > ?
+            ORDER BY CASE visual_context_comment_links.external_comment_id
+                         {priority_sql}
+                         ELSE {len(candidates)}
+                     END,
+                     visual_context_comment_links.created_at DESC
+            LIMIT 1
+            """,
+            (profile_id, *candidates, current, *candidates),
+        )
+        return dict(row) if row is not None else None
+
+    async def visual_context_for_post(
+        self,
+        profile_id: str,
+        post_id: str,
+        image_fingerprint: str,
+        *,
+        now: float | None = None,
+    ) -> dict[str, Any] | None:
+        if not profile_id or not post_id or not image_fingerprint:
+            return None
+        current = float(now if now is not None else time.time())
+        row = await self.db.fetchone(
+            """
+            SELECT * FROM visual_contexts
+            WHERE profile_id = ? AND post_id = ? AND source = 'original_post'
+              AND image_fingerprint = ? AND expires_at > ?
+            ORDER BY expires_at DESC, id DESC
+            LIMIT 1
+            """,
+            (profile_id, post_id, image_fingerprint, current),
+        )
+        return dict(row) if row is not None else None
+
     async def record_outgoing_attempt(
         self,
         profile_id: str,
@@ -520,11 +684,24 @@ class Repository:
         )
         return dict(row) if row is not None else None
 
-    async def confirm_outgoing(self, outgoing_id: int, external_comment_id: str) -> None:
+    async def confirm_outgoing(
+        self,
+        outgoing_id: int,
+        external_comment_id: str,
+    ) -> dict[str, Any]:
         row = await self.db.fetchone(
             """
-            SELECT profile_id, post_id, root_comment_id, content_hash
-            FROM outgoing_replies WHERE id = ?
+            SELECT outgoing_replies.profile_id,
+                   outgoing_replies.incoming_event_id,
+                   outgoing_replies.post_id,
+                   outgoing_replies.root_comment_id,
+                   outgoing_replies.content_hash,
+                   visual_context_event_links.visual_context_id
+            FROM outgoing_replies
+            LEFT JOIN visual_context_event_links
+              ON visual_context_event_links.incoming_event_id =
+                 outgoing_replies.incoming_event_id
+            WHERE outgoing_replies.id = ?
             """,
             (outgoing_id,),
         )
@@ -557,6 +734,52 @@ class Repository:
                         now,
                     ),
                 )
+        result: dict[str, Any] = {
+            "incoming_event_id": row["incoming_event_id"],
+            "profile_id": row["profile_id"],
+            "visual_context_id": None,
+            "visual_context_error": "",
+        }
+        if external_comment_id and row["visual_context_id"] is not None:
+            try:
+                visual_context_id = int(row["visual_context_id"])
+                await self.bind_visual_context_to_comment(
+                    str(row["profile_id"]),
+                    external_comment_id,
+                    visual_context_id,
+                    now=now,
+                )
+                result["visual_context_id"] = visual_context_id
+            except Exception as exc:
+                # Sending has already been durably confirmed. Visual context is
+                # optional metadata and must never roll back or misclassify a
+                # successful Xiaoheihe comment.
+                result["visual_context_error"] = redact_text(str(exc))[:1000]
+                result["visual_context_exception_type"] = type(exc).__name__
+        return result
+
+    async def bind_visual_context_to_comment(
+        self,
+        profile_id: str,
+        external_comment_id: str,
+        visual_context_id: int,
+        *,
+        now: float | None = None,
+    ) -> None:
+        if not external_comment_id:
+            return
+        current = float(now if now is not None else time.time())
+        await self.db.execute(
+            """
+            INSERT INTO visual_context_comment_links(
+                profile_id, external_comment_id, visual_context_id, created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(profile_id, external_comment_id) DO UPDATE SET
+                visual_context_id = excluded.visual_context_id,
+                created_at = excluded.created_at
+            """,
+            (profile_id, external_comment_id, visual_context_id, current),
+        )
 
     async def recent_outgoing_match(
         self,
@@ -1036,6 +1259,16 @@ class Repository:
         safe_batch = max(1, min(batch_size, 500))
         operations = (
             (
+                "visual_contexts",
+                """
+                DELETE FROM visual_contexts
+                WHERE id IN (
+                    SELECT id FROM visual_contexts
+                    ORDER BY expires_at ASC, id ASC LIMIT ?
+                )
+                """,
+            ),
+            (
                 "rejected_feed_candidates",
                 """
                 DELETE FROM feed_candidates
@@ -1099,6 +1332,11 @@ class Repository:
         dedup_day = datetime.fromtimestamp(dedup_cutoff, UTC).date().isoformat()
         error_cutoff = now - 30 * day
         return [
+            (
+                "visual_contexts",
+                "SELECT rowid FROM visual_contexts WHERE expires_at <= ?",
+                (now,),
+            ),
             (
                 "processed_event_keys",
                 "SELECT rowid FROM processed_event_keys WHERE created_at < ?",
@@ -1212,6 +1450,9 @@ class Repository:
             "daily_counters",
             "notification_cursors",
             "notification_backfills",
+            "visual_contexts",
+            "visual_context_event_links",
+            "visual_context_comment_links",
         )
         counts: dict[str, int] = {}
         for table in tables:

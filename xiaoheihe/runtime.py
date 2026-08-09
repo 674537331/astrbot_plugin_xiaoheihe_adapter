@@ -22,7 +22,7 @@ from .logging_service import LoggingService
 from .models import EventState, RoutingTarget
 from .repository import Repository
 from .request_signing import ensure_client_identity
-from .security import redact_text, sanitize_reply_text
+from .security import redact_log_text, redact_text, sanitize_reply_text
 from .task_manager import TaskManager
 
 PLUGIN_NAME = "astrbot_plugin_xiaoheihe_adapter"
@@ -90,6 +90,10 @@ class RuntimeServices:
         self._configured_adapters: dict[str, dict[str, Any]] = {}
         self.last_cleanup_at: str | None = None
         self.config.add_restart_callback(self._on_config_changed)
+
+    @property
+    def started(self) -> bool:
+        return self._started and not self._closed
 
     async def ensure_started(self) -> None:
         if self._started:
@@ -463,7 +467,15 @@ class RuntimeServices:
                         error=str(exc),
                     )
                 raise
-            await self.repository.confirm_outgoing(outgoing_id, result.external_comment_id)
+            confirmation = await self.repository.confirm_outgoing(
+                outgoing_id,
+                result.external_comment_id,
+            )
+            self._log_visual_context_binding(
+                outgoing_id,
+                result.external_comment_id,
+                confirmation,
+            )
             if event_id is not None:
                 await self.repository.mark_event(event_id, EventState.SENT, reply_text=text)
             if not proactive:
@@ -473,6 +485,42 @@ class RuntimeServices:
                 "external_comment_id": result.external_comment_id,
                 "text": text,
             }
+
+    def _log_visual_context_binding(
+        self,
+        outgoing_id: int,
+        external_comment_id: str,
+        confirmation: dict[str, Any],
+    ) -> None:
+        error = str(confirmation.get("visual_context_error", "") or "")
+        profile_id = str(confirmation.get("profile_id", "") or "")
+        details = {
+            "outgoing_id": outgoing_id,
+            "incoming_event_id": confirmation.get("incoming_event_id"),
+            "external_comment_id": external_comment_id,
+            "visual_context_id": confirmation.get("visual_context_id"),
+        }
+        if error:
+            self.logging.emit(
+                "ERROR",
+                f"评论已确认发送成功，但视觉上下文绑定失败: {error}",
+                profile_id=profile_id,
+                details={
+                    **details,
+                    "exception_type": confirmation.get(
+                        "visual_context_exception_type",
+                        "",
+                    ),
+                    "send_confirmation_preserved": True,
+                },
+            )
+        elif confirmation.get("visual_context_id") is not None:
+            self.logging.emit(
+                "DEBUG",
+                "已将机器人评论 ID 绑定到视觉上下文快照",
+                profile_id=profile_id,
+                details=details,
+            )
 
     async def capture_feed_candidate(
         self,
@@ -656,7 +704,12 @@ class RuntimeServices:
                 and comment_id
                 and within_window
             ):
-                await self.repository.confirm_outgoing(outgoing_id, comment_id)
+                confirmation = await self.repository.confirm_outgoing(outgoing_id, comment_id)
+                self._log_visual_context_binding(
+                    outgoing_id,
+                    comment_id,
+                    confirmation,
+                )
                 self.logging.emit(
                     "WARNING",
                     "发送超时后在目标楼层核对到相同机器人评论，已确认成功",
@@ -751,7 +804,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.14",
+            "version": "v1.2.15",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),
@@ -831,12 +884,21 @@ class RuntimeServices:
         purpose: str,
         provider_id: str,
         error: BaseException,
+        *,
+        details: dict[str, Any] | None = None,
     ) -> None:
         key = self._aux_provider_key(profile_id, purpose, provider_id)
         now = time.time()
         cooldown_seconds = self._aux_provider_cooldown_seconds(error)
         existing = self._aux_provider_cooldowns.get(key)
-        safe_error = redact_text(str(error))[:500] or type(error).__name__
+        safe_error = redact_log_text(str(error))[:1000] or type(error).__name__
+        status_code = getattr(error, "status_code", None)
+        if not isinstance(status_code, int):
+            status_code = getattr(getattr(error, "response", None), "status_code", None)
+        cause = error.__cause__ or error.__context__
+        safe_cause = (
+            redact_log_text(str(cause))[:500] if cause is not None and cause is not error else ""
+        )
         state = {
             "profile_id": key[0],
             "purpose": key[1],
@@ -857,16 +919,26 @@ class RuntimeServices:
             ),
         }
         if existing is None or float(existing.get("until", 0)) <= now:
+            failure_details = dict(details or {})
+            failure_details.update(
+                {
+                    "purpose": key[1],
+                    "provider_id": key[2],
+                    "cooldown_seconds": cooldown_seconds,
+                    "cooldown_until_epoch": round(now + cooldown_seconds, 3),
+                    "exception_type": type(error).__name__,
+                    "exception_module": type(error).__module__,
+                    "error_message": safe_error,
+                    "http_status_code": status_code if isinstance(status_code, int) else None,
+                    "cause_exception_type": type(cause).__name__ if cause is not None else "",
+                    "cause_error_message": safe_cause,
+                }
+            )
             self.logging.emit(
                 "WARNING",
                 f"{label}辅助模型调用失败，已进入冷却: {safe_error}",
                 profile_id=key[0],
-                details={
-                    "purpose": key[1],
-                    "provider_id": key[2],
-                    "cooldown_seconds": cooldown_seconds,
-                    "exception_type": type(error).__name__,
-                },
+                details=failure_details,
             )
 
     def report_auxiliary_provider_success(

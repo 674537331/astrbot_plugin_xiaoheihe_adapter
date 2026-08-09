@@ -174,10 +174,10 @@
         "default": 1400
       },
       "thread_reply_compressed_image_chars": {
-        "description": "被动回复原帖图片描述字符上限",
+        "description": "被动回复原帖图片/缓存描述字符上限",
         "type": "int",
         "default": 800,
-        "hint": "被动楼层的原帖图片会先按来源压成该长度以内的低优先级视觉描述；固定图片 Provider 留空或失败时会继续尝试固定 LLM、当前会话 Provider。"
+        "hint": "被动楼层的原帖图片或 24 小时视觉快照会按来源压到该长度以内，并作为低优先级背景；固定图片 Provider 留空或失败时会继续尝试固定 LLM、当前会话 Provider。"
       },
       "thread_reply_compression_timeout_seconds": {
         "description": "上下文压缩超时秒数",
@@ -204,12 +204,14 @@
       "max_images_per_event": {
         "description": "每事件最大图片数",
         "type": "int",
-        "default": 6
+        "default": 6,
+        "hint": "实际接收图数不会超过此值；视觉预处理总预算也按实际图数和此上限共同计算，默认最多 120 秒。"
       },
       "image_timeout_seconds": {
-        "description": "图片读取超时",
+        "description": "单图视觉处理时间基数",
         "type": "int",
-        "default": 15
+        "default": 15,
+        "hint": "用于计算多图事件总截止时间和视觉预处理预算；单个辅助 Provider 最多占用 60 秒。"
       }
     }
   },

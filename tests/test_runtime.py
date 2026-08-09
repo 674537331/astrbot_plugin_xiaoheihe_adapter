@@ -86,7 +86,7 @@ async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
         ]
     )
     status = await runtime.status()
-    assert status["version"] == "v1.2.14"
+    assert status["version"] == "v1.2.15"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     assert status["adapters"] == [
@@ -221,11 +221,14 @@ async def test_auxiliary_provider_cooldown_is_visible_logged_once_and_manual_cle
 
     assert RuntimeServices._aux_provider_cooldown_seconds(RuntimeError("Error code: 403")) == 300
 
+    first_error = ForbiddenError("403 forbidden")
+    first_error.__cause__ = TimeoutError("upstream handshake timed out")
     runtime.report_auxiliary_provider_failure(
         "default",
         "image",
         "vision-fixed",
-        ForbiddenError("403 forbidden"),
+        first_error,
+        details={"event_type": "reply", "image_count": 2},
     )
     runtime.report_auxiliary_provider_failure(
         "default",
@@ -248,6 +251,12 @@ async def test_auxiliary_provider_cooldown_is_visible_logged_once_and_manual_cle
         if "辅助模型调用失败，已进入冷却" in entry["message"]
     ]
     assert len(matching_logs) == 1
+    details = matching_logs[0]["details"]
+    assert details["http_status_code"] == 403
+    assert details["exception_type"] == "ForbiddenError"
+    assert details["cause_exception_type"] == "TimeoutError"
+    assert details["event_type"] == "reply"
+    assert details["image_count"] == 2
 
     assert runtime.clear_auxiliary_provider_cooldown("default", "image", "vision-fixed") is True
     assert runtime.auxiliary_provider_available("default", "image", "vision-fixed") is True
@@ -522,4 +531,28 @@ async def test_runtime_capture_candidate_and_floor_lock_bound(tmp_path, fake_con
     )
     await runtime._on_auth_invalid("default", 403)
     assert (await runtime.repository.account_state("default"))["consecutive_403"] == 1
+    await runtime.close()
+
+
+async def test_runtime_logs_visual_binding_failure_without_reclassifying_send(
+    tmp_path,
+    fake_config,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    runtime._log_visual_context_binding(
+        42,
+        "confirmed-comment",
+        {
+            "profile_id": "default",
+            "incoming_event_id": 7,
+            "visual_context_id": None,
+            "visual_context_error": "database is full",
+            "visual_context_exception_type": "OperationalError",
+        },
+    )
+
+    entry = runtime.logging.list(limit=1)[0]
+    assert entry["level"] == "ERROR"
+    assert entry["details"]["send_confirmation_preserved"] is True
+    assert entry["details"]["external_comment_id"] == "confirmed-comment"
     await runtime.close()

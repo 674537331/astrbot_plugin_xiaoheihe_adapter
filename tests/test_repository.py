@@ -68,6 +68,128 @@ async def test_confirmed_send_without_returned_comment_id_does_not_store_blank_s
     assert self_row is None
 
 
+async def test_visual_context_survives_send_binding_and_expires_after_24_hours(
+    repository,
+) -> None:
+    now = time.time()
+    event_id = await repository.claim_event(make_notification("visual", post="post-visual"))
+    record = await repository.cache_visual_context(
+        profile_id="default",
+        post_id="post-visual",
+        source="original_post",
+        image_fingerprint="fingerprint-1",
+        image_hosts=["cdn.example.test"],
+        image_count=1,
+        caption="图中是价格调整公告，包含 8 月 8 日和 20 美元。",
+        provider_id="vision-fixed",
+        model="vision-model",
+        ttl_seconds=86400,
+        now=now,
+    )
+    reused = await repository.cache_visual_context(
+        profile_id="default",
+        post_id="post-visual",
+        source="original_post",
+        image_fingerprint="fingerprint-1",
+        image_hosts=["cdn.example.test"],
+        image_count=1,
+        caption="图中是价格调整公告，包含 8 月 8 日和 20 美元。",
+        provider_id="other",
+        model="other",
+        ttl_seconds=86400,
+        now=now + 1,
+    )
+    assert reused["id"] == record["id"]
+    assert reused["caption"] == record["caption"]
+    changed_caption = await repository.cache_visual_context(
+        profile_id="default",
+        post_id="post-visual",
+        source="original_post",
+        image_fingerprint="fingerprint-1",
+        image_hosts=["cdn.example.test"],
+        image_count=1,
+        caption="同一图片的新识别结果不会覆盖旧评论已绑定的快照",
+        provider_id="other",
+        model="other",
+        ttl_seconds=86400,
+        now=now + 1,
+    )
+    assert changed_caption["id"] != record["id"]
+
+    await repository.link_visual_context_to_event(event_id, record["id"], now=now + 2)
+    route = RoutingTarget("default", "post-visual", "", "")
+    outgoing_id = await repository.record_outgoing_attempt(
+        "default",
+        event_id,
+        route,
+        "主动评论",
+        "sending",
+    )
+    await repository.confirm_outgoing(outgoing_id, "bot-comment-visual")
+
+    restored = await repository.visual_context_for_comment(
+        "default",
+        ["unrelated", "bot-comment-visual"],
+        now=now + 3600,
+    )
+    assert restored is not None
+    assert restored["id"] == record["id"]
+    assert restored["bound_comment_id"] == "bot-comment-visual"
+    assert (
+        await repository.visual_context_for_comment(
+            "default",
+            ["bot-comment-visual"],
+            now=now + 86401,
+        )
+        is None
+    )
+
+
+async def test_visual_binding_failure_cannot_roll_back_confirmed_send(
+    repository,
+    monkeypatch,
+) -> None:
+    event_id = await repository.claim_event(make_notification("binding-failure"))
+    visual = await repository.cache_visual_context(
+        profile_id="default",
+        post_id="post",
+        source="original_post",
+        image_fingerprint="binding-failure-fingerprint",
+        image_hosts=["cdn.example.test"],
+        image_count=1,
+        caption="可用视觉描述",
+        provider_id="vision",
+        model="vision-model",
+        ttl_seconds=86400,
+    )
+    await repository.link_visual_context_to_event(event_id, visual["id"])
+    outgoing_id = await repository.record_outgoing_attempt(
+        "default",
+        event_id,
+        RoutingTarget("default", "post", "root", "parent"),
+        "reply already accepted by API",
+        "sending",
+    )
+
+    async def fail_optional_binding(*args, **kwargs):
+        raise RuntimeError("simulated visual metadata failure")
+
+    monkeypatch.setattr(
+        repository,
+        "bind_visual_context_to_comment",
+        fail_optional_binding,
+    )
+    confirmation = await repository.confirm_outgoing(outgoing_id, "confirmed-comment")
+
+    row = await repository.db.fetchone(
+        "SELECT status, external_comment_id FROM outgoing_replies WHERE id = ?",
+        (outgoing_id,),
+    )
+    assert row["status"] == "sent"
+    assert row["external_comment_id"] == "confirmed-comment"
+    assert "simulated visual metadata failure" in confirmation["visual_context_error"]
+
+
 async def test_event_filters_counters_and_recovery(repository) -> None:
     first_id = await repository.claim_event(make_notification("first", "100", "p1"))
     second_id = await repository.claim_event(make_notification("second", "200", "p2"))
@@ -196,7 +318,7 @@ async def test_account_error_feed_and_diagnostics(repository) -> None:
     assert await repository.review_feed_candidate(candidate_id, "approved", "edited")
     assert (await repository.feed_candidate(candidate_id))["edited_text"] == "edited"
     snapshot = await repository.diagnostic_snapshot()
-    assert snapshot["schema_version"] == 8
+    assert snapshot["schema_version"] == 9
     assert snapshot["counts"]["feed_candidates"] == 1
     assert snapshot["account_states"][0]["nickname"] == "Bot"
     assert snapshot["recent_errors"][0]["category"] == "response_shape"

@@ -64,6 +64,50 @@ async def test_cleanup_removes_old_sessions_and_runtime_errors(repository) -> No
     assert removed["runtime_errors"] == 1
 
 
+async def test_cleanup_expires_visual_context_and_cascades_links(repository) -> None:
+    now = time.time()
+    event_id = await repository.claim_event(old_notification("visual-expired", now - 90000))
+    visual = await repository.cache_visual_context(
+        profile_id="default",
+        post_id="post",
+        source="original_post",
+        image_fingerprint="expired-fingerprint",
+        image_hosts=["cdn.example.test"],
+        image_count=1,
+        caption="过期视觉描述",
+        provider_id="vision",
+        model="vision-model",
+        ttl_seconds=60,
+        now=now - 120,
+    )
+    await repository.link_visual_context_to_event(event_id, visual["id"], now=now - 119)
+    await repository.bind_visual_context_to_comment(
+        "default",
+        "bot-comment-expired",
+        visual["id"],
+        now=now - 118,
+    )
+
+    preview = await repository.cleanup_preview(DEFAULT_CONFIG["retention"], now=now)
+    assert preview["visual_contexts"] == 1
+    removed = await repository.cleanup(DEFAULT_CONFIG["retention"], now=now)
+    assert removed["visual_contexts"] == 1
+    assert (
+        await repository.db.fetchone(
+            "SELECT 1 FROM visual_context_event_links WHERE incoming_event_id = ?",
+            (event_id,),
+        )
+        is None
+    )
+    assert (
+        await repository.db.fetchone(
+            "SELECT 1 FROM visual_context_comment_links WHERE external_comment_id = ?",
+            ("bot-comment-expired",),
+        )
+        is None
+    )
+
+
 async def test_cleanup_deletes_failed_reply_before_linked_dead_letter(repository) -> None:
     now = time.time()
     notification = old_notification("linked", now - 40 * 86400)
