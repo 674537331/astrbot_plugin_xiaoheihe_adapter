@@ -27,11 +27,41 @@ async def test_database_migrations_and_pragmas(tmp_path) -> None:
         "daily_counters",
         "notification_cursors",
         "notification_backfills",
+        "visual_contexts",
+        "visual_context_event_links",
+        "visual_context_comment_links",
     } <= names
     self_indexes = await database.fetchall("PRAGMA index_list(self_comment_ids)")
     assert {"idx_self_comment_post", "idx_self_comment_created"} <= {
         row["name"] for row in self_indexes
     }
+    visual_indexes = await database.fetchall("PRAGMA index_list(visual_contexts)")
+    assert {"idx_visual_context_lookup", "idx_visual_context_expiry"} <= {
+        row["name"] for row in visual_indexes
+    }
+    lookup_columns = await database.fetchall("PRAGMA index_info(idx_visual_context_lookup)")
+    assert [row["name"] for row in lookup_columns] == [
+        "profile_id",
+        "post_id",
+        "source",
+        "image_fingerprint",
+        "expires_at",
+        "id",
+    ]
+    plan = await database.fetchall(
+        """
+        EXPLAIN QUERY PLAN
+        SELECT * FROM visual_contexts
+        WHERE profile_id = ? AND post_id = ? AND source = 'original_post'
+          AND image_fingerprint = ? AND expires_at > ?
+        ORDER BY expires_at DESC, id DESC
+        LIMIT 1
+        """,
+        ("default", "post", "fingerprint", 0),
+    )
+    details = [str(row["detail"]) for row in plan]
+    assert any("idx_visual_context_lookup" in detail for detail in details)
+    assert not any("TEMP B-TREE" in detail for detail in details)
     await database.close()
 
 

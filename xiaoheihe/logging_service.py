@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-from .security import redact_data, redact_text
+from .security import redact_log_data, redact_log_text
 from .task_manager import TaskManager
 
 try:
@@ -64,13 +64,13 @@ class LoggingService:
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_level = level.upper()
-        safe_message = redact_text(message).replace("\r", "\\r").replace("\n", "\\n")
+        safe_message = redact_log_text(message).replace("\r", "\\r").replace("\n", "\\n")
         entry = {
             "time": datetime.now(UTC).isoformat(),
             "level": normalized_level,
             "profile_id": profile_id,
             "message": safe_message,
-            "details": redact_data(details or {}),
+            "details": redact_log_data(details or {}),
         }
         self._entries.append(entry)
         log_method = getattr(self._logger, normalized_level.lower(), self._logger.info)

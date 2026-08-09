@@ -38,6 +38,7 @@ class BuiltContext:
     focus_context: str = ""
     compression_source: ThreadCompressionSource | None = None
     image_sources: list[str] = field(default_factory=list)
+    reply_target_comment_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +276,7 @@ class ContextBuilder:
             focus_context=focus,
             compression_source=compression_source,
             image_sources=image_sources,
+            reply_target_comment_id=reply_target_id,
         )
 
     async def _get_thread(

@@ -12,12 +12,20 @@ async def test_logging_redacts_and_rotates_service_closes(tmp_path) -> None:
     service = LoggingService(tmp_path, tasks, max_memory_entries=100)
     entry = service.emit(
         "INFO",
-        "Authorization: Bearer secret-value",
-        details={"cookie": "private"},
+        (
+            "Authorization: Bearer secret-value; "
+            "https://cdn.example.test/image.png?signature=private"
+        ),
+        details={
+            "cookie": "private",
+            "error": "fetch https://cdn.example.test/a.png?expires=1&sig=private failed",
+        },
     )
     assert "secret-value" not in entry["message"]
+    assert "signature=private" not in entry["message"]
     assert entry["details"]["cookie"] == "[REDACTED]"
-    assert logging_module.redact_data({"session_mappings": 2}) == {"session_mappings": 2}
+    assert "sig=private" not in entry["details"]["error"]
+    assert logging_module.redact_log_data({"session_mappings": 2}) == {"session_mappings": 2}
     assert service.list(limit=1)[0] == entry
     assert service.total_size() >= 0
     service.reconfigure(level="ERROR", max_memory_entries=250, total_limit_mb=50)

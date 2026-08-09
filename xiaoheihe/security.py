@@ -50,6 +50,32 @@ def redact_text(value: str) -> str:
     return SECRET_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", text)
 
 
+def redact_log_text(value: str) -> str:
+    """Redact secrets plus URL credentials, queries and fragments from diagnostics."""
+
+    def _redact_url(match: re.Match[str]) -> str:
+        parsed = urlsplit(match.group(0))
+        hostname = parsed.hostname or ""
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        try:
+            port = f":{parsed.port}" if parsed.port is not None else ""
+        except ValueError:
+            port = ""
+        netloc = f"{hostname}{port}" if hostname else parsed.netloc.split("@")[-1]
+        return urlunsplit(
+            (
+                parsed.scheme,
+                netloc,
+                parsed.path,
+                "[REDACTED]" if parsed.query else "",
+                "[REDACTED]" if parsed.fragment else "",
+            )
+        )
+
+    return URL_RE.sub(_redact_url, redact_text(value))
+
+
 def redact_data(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
@@ -62,6 +88,21 @@ def redact_data(value: Any) -> Any:
         return tuple(redact_data(item) for item in value)
     if isinstance(value, str):
         return redact_text(value)
+    return value
+
+
+def redact_log_data(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): ("[REDACTED]" if SENSITIVE_KEY_RE.search(str(key)) else redact_log_data(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_log_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_log_data(item) for item in value)
+    if isinstance(value, str):
+        return redact_log_text(value)
     return value
 
 

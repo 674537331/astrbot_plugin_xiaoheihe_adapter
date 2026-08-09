@@ -309,6 +309,8 @@ class XiaoheihePlatformAdapter(Platform):
         message.timestamp = int(notification.created_at or time.time())
         message.raw_message = {
             "event_type": notification.event_type.value,
+            "incoming_event_id": event_id,
+            "proactive": bool(proactive),
             "route": notification.route.as_dict(),
             "external_event_id": notification.external_event_id,
             "external_comment_id": notification.external_comment_id,
@@ -316,6 +318,7 @@ class XiaoheihePlatformAdapter(Platform):
             "post_author_uid": str(notification.post_author_uid),
             "image_urls": list(context.image_urls),
             "image_sources": list(context.image_sources),
+            "reply_target_comment_id": context.reply_target_comment_id,
             "warnings": list(context.warnings),
             "reply_timeout_base_seconds": base_reply_timeout,
             "reply_timeout_effective_seconds": effective_reply_timeout,

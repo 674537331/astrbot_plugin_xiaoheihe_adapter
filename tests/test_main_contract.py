@@ -44,6 +44,60 @@ def test_no_independent_model_endpoint_configuration() -> None:
     assert all(item not in source for item in forbidden)
 
 
+def test_image_preprocess_budget_tracks_count_and_configured_limit(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    event = type(
+        "Event",
+        (),
+        {"message_obj": type("Message", (), {"raw_message": {}})()},
+    )()
+    settings = {"max_images_per_event": 6, "image_timeout_seconds": 15}
+
+    assert (
+        module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
+            event, context_settings=settings, image_count=1
+        )
+        == 30
+    )
+    assert (
+        module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
+            event, context_settings=settings, image_count=2
+        )
+        == 60
+    )
+    assert (
+        module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
+            event, context_settings=settings, image_count=3
+        )
+        == 90
+    )
+    assert (
+        module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
+            event, context_settings=settings, image_count=6
+        )
+        == 120
+    )
+    assert (
+        module.XiaoheiheAdapterPlugin._image_preprocess_budget_seconds(
+            event,
+            context_settings={"max_images_per_event": 2, "image_timeout_seconds": 15},
+            image_count=6,
+        )
+        == 60
+    )
+
+
 async def test_plugin_main_import_and_explicit_vision_fallback(isolated_smoke_import) -> None:
     root = Path.cwd()
     spec = importlib.util.spec_from_file_location(
@@ -872,6 +926,81 @@ async def test_plugin_uses_fixed_image_provider_and_keeps_caption_temporary(
     await plugin.terminate()
 
 
+async def test_proactive_image_uses_fixed_main_provider_when_image_provider_is_empty(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Provider:
+        def __init__(self) -> None:
+            self.provider_config = {"id": "main-fixed", "modalities": ["text", "image"]}
+            self.calls = []
+
+        async def text_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return LLMResponse(completion_text="主动帖子图片显示一张价格公告")
+
+    provider = Provider()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return provider if provider_id == "main-fixed" else None
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("fixed main provider should satisfy proactive captioning")
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig({"providers": {"llm_provider_id": "main-fixed"}}),
+    )
+    extras = {"xiaoheihe_image_sources": ["original_post"]}
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": "xiaoheihe:GroupMessage:xhh_post_post-1",
+            "message_obj": type(
+                "Message",
+                (),
+                {
+                    "raw_message": {
+                        "proactive": True,
+                        "route": {"profile_id": "default", "post_id": "post-1"},
+                    }
+                },
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "author",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/post.png"]
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    assert len(provider.calls) == 1
+    assert provider.calls[0]["persist"] is False
+    assert any(
+        "主动帖子图片显示一张价格公告" in part.text for part in request.extra_user_content_parts
+    )
+    await plugin.terminate()
+
+
 async def test_thread_reply_image_provider_compresses_sources_before_final_focus(
     isolated_smoke_import,
 ) -> None:
@@ -984,6 +1113,133 @@ async def test_thread_reply_image_provider_compresses_sources_before_final_focus
     assert [call["image_urls"] for call in image_provider.calls].count(
         ["https://images.example.test/post.png"]
     ) == 1
+    await plugin.terminate()
+
+
+async def test_reply_restores_bound_visual_snapshot_even_when_api_returns_no_image(
+    isolated_smoke_import,
+    repository,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    source_notification = __import__(
+        "tests.test_repository",
+        fromlist=["make_notification"],
+    ).make_notification("visual-source", post="post-visual")
+    source_event_id = await repository.claim_event(source_notification)
+    record = await repository.cache_visual_context(
+        profile_id="default",
+        post_id="post-visual",
+        source="original_post",
+        image_fingerprint="fingerprint-bound",
+        image_hosts=["cdn.example.test"],
+        image_count=1,
+        caption="图片显示 API 价格上涨，并标有 20 美元。",
+        provider_id="vision-fixed",
+        model="vision-model",
+        ttl_seconds=86400,
+    )
+    await repository.link_visual_context_to_event(source_event_id, record["id"])
+    outgoing_id = await repository.record_outgoing_attempt(
+        "default",
+        source_event_id,
+        source_notification.route,
+        "主动评论",
+        "sending",
+    )
+    await repository.confirm_outgoing(outgoing_id, "bot-comment-bound")
+
+    reply_notification = __import__(
+        "tests.test_repository",
+        fromlist=["make_notification"],
+    ).make_notification("visual-reply", post="post-visual")
+    reply_event_id = await repository.claim_event(reply_notification)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_using_provider(self, umo=None):
+            raise AssertionError("cached no-image reply must not call a vision provider")
+
+    plugin = module.XiaoheiheAdapterPlugin(
+        Context(),
+        AstrBotConfig({"context": {"enable_thread_reply_compression": False}}),
+    )
+    plugin.runtime.repository = repository
+    plugin.runtime._started = True
+    extras = {
+        "xiaoheihe_runtime_context": "RUNTIME",
+        "xiaoheihe_community_context": "COMMUNITY",
+        "xiaoheihe_focus_context": "FINAL-FOCUS",
+        "xiaoheihe_compression_source": ThreadCompressionSource(
+            "post-visual",
+            "楼主",
+            "标题",
+            "正文",
+            "楼层",
+            "直接回复",
+            "当前用户",
+            "当前消息",
+        ),
+        "xiaoheihe_image_sources": [],
+    }
+    event = type(
+        "Event",
+        (),
+        {
+            "unified_msg_origin": (
+                "xiaoheihe:GroupMessage:xhh_thread_post-visual_bot-comment-bound"
+            ),
+            "message_obj": type(
+                "Message",
+                (),
+                {
+                    "raw_message": {
+                        "incoming_event_id": reply_event_id,
+                        "reply_target_comment_id": "bot-comment-bound",
+                        "route": {
+                            "profile_id": "default",
+                            "post_id": "post-visual",
+                            "root_comment_id": "bot-comment-bound",
+                            "parent_comment_id": "current-user-comment",
+                        },
+                    }
+                },
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "user",
+            "get_extra": lambda self, key, default="": extras.get(key, default),
+            "set_extra": lambda self, key, value: extras.__setitem__(key, value),
+        },
+    )()
+    request = ProviderRequest()
+
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    assert request.image_urls == []
+    visual = next(
+        part.text
+        for part in request.extra_user_content_parts
+        if 'source="original_post" priority="low"' in part.text
+    )
+    assert "API 价格上涨" in visual
+    assert request.extra_user_content_parts[-1].text == "FINAL-FOCUS"
+    linked = await repository.db.fetchone(
+        "SELECT visual_context_id FROM visual_context_event_links WHERE incoming_event_id = ?",
+        (reply_event_id,),
+    )
+    assert linked["visual_context_id"] == record["id"]
+    plugin.runtime._started = False
     await plugin.terminate()
 
 
@@ -1644,6 +1900,65 @@ async def test_fixed_image_provider_timeout_returns_to_native_image_fallback(
 
     assert handled is False
     assert request.image_urls == ["https://images.example.test/post.png"]
+    await plugin.terminate()
+
+
+async def test_unusable_image_placeholder_is_not_cached_as_success(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class PlaceholderProvider:
+        def __init__(self) -> None:
+            self.provider_config = {
+                "id": "image-fixed",
+                "modalities": ["text", "image"],
+            }
+
+        async def text_chat(self, **kwargs):
+            return LLMResponse(completion_text="没加载出来，是崩坏的图还是抽象艺术？")
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return PlaceholderProvider() if provider_id == "image-fixed" else None
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = type(
+        "Event",
+        (),
+        {
+            "message_obj": type("Message", (), {"raw_message": {}})(),
+            "get_extra": lambda self, key, default="": default,
+        },
+    )()
+    request = ProviderRequest()
+    request.image_urls = ["https://images.example.test/post.png"]
+
+    handled = await plugin._caption_images(
+        event,
+        request,
+        provider_id="image-fixed",
+        profile_id="default",
+        context_settings=plugin.runtime.config.snapshot()["context"],
+    )
+
+    assert handled is False
+    assert request.image_urls == ["https://images.example.test/post.png"]
+    assert plugin._image_caption_cache == {}
+    logs = plugin.runtime.logging.list(limit=20)
+    assert any(entry["details"].get("caption_rejected") is True for entry in logs)
     await plugin.terminate()
 
 

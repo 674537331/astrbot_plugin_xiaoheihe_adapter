@@ -379,7 +379,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.14"},
+            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.15"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),

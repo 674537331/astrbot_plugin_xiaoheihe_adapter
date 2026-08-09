@@ -263,6 +263,58 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON daily_counters(day);
         """,
     ),
+    (
+        9,
+        """
+        CREATE TABLE IF NOT EXISTS visual_contexts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id TEXT NOT NULL,
+            post_id TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'original_post',
+            image_fingerprint TEXT NOT NULL,
+            image_hosts_json TEXT NOT NULL DEFAULT '[]',
+            image_count INTEGER NOT NULL DEFAULT 0,
+            caption TEXT NOT NULL,
+            caption_hash TEXT NOT NULL,
+            provider_id TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS visual_context_event_links (
+            incoming_event_id INTEGER PRIMARY KEY,
+            visual_context_id INTEGER NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(incoming_event_id) REFERENCES incoming_events(id)
+                ON DELETE CASCADE,
+            FOREIGN KEY(visual_context_id) REFERENCES visual_contexts(id)
+                ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS visual_context_comment_links (
+            profile_id TEXT NOT NULL,
+            external_comment_id TEXT NOT NULL,
+            visual_context_id INTEGER NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY(profile_id, external_comment_id),
+            FOREIGN KEY(visual_context_id) REFERENCES visual_contexts(id)
+                ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visual_context_lookup
+            ON visual_contexts(
+                profile_id, post_id, source, image_fingerprint,
+                expires_at DESC, id DESC
+            );
+        CREATE INDEX IF NOT EXISTS idx_visual_context_expiry
+            ON visual_contexts(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_visual_event_context
+            ON visual_context_event_links(visual_context_id);
+        CREATE INDEX IF NOT EXISTS idx_visual_comment_context
+            ON visual_context_comment_links(visual_context_id);
+        """,
+    ),
 )
 
 MIGRATION_MARKERS = {
@@ -274,6 +326,7 @@ MIGRATION_MARKERS = {
     6: "INSERT INTO schema_migrations(version) VALUES (6);",
     7: "INSERT INTO schema_migrations(version) VALUES (7);",
     8: "INSERT INTO schema_migrations(version) VALUES (8);",
+    9: "INSERT INTO schema_migrations(version) VALUES (9);",
 }
 
 
