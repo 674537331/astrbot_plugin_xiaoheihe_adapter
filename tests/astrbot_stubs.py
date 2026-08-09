@@ -206,6 +206,7 @@ def install() -> None:
         on_llm_tool_respond=passthrough_filter,
         on_llm_response=passthrough_filter,
         on_using_llm_tool=passthrough_filter,
+        on_waiting_llm_request=passthrough_filter,
     )
     components.Plain = Plain
     components.Image = Image

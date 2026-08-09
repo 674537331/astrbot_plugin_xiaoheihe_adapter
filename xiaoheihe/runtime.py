@@ -804,7 +804,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.15",
+            "version": "v1.2.16",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),
@@ -1043,18 +1043,36 @@ class RuntimeServices:
         if key not in self._alerts:
             self.logging.emit(
                 "WARNING",
-                "当前模型明确未声明图片输入能力，本轮已降级为纯文本",
+                "图片理解链未获得可用描述，本轮已安全降级为纯文本",
                 profile_id=profile_id,
                 details={"omitted_image_count": image_count},
             )
         self._alerts[key] = {
             "key": key,
             "level": "warning",
-            "message": "当前模型不支持图片输入；小黑盒事件已自动降级为纯文本",
+            "message": "本轮图片理解链未获得可用描述；原图已隔离，主模型不会据此猜图",
         }
 
     def clear_vision_alert(self) -> None:
         self._alerts.pop("vision_unsupported", None)
+
+    def set_provider_route_warning(self, profile_id: str, message: str) -> None:
+        key = f"{str(profile_id or 'default')[:128]}:provider_route"
+        previous = self._alerts.get(key)
+        if not message:
+            if previous is not None:
+                self._alerts.pop(key, None)
+                self.logging.emit(
+                    "INFO",
+                    "Provider 路由配置警告已解除",
+                    profile_id=profile_id,
+                )
+            return
+        self._alerts[key] = {
+            "key": key,
+            "level": "warning",
+            "message": str(message)[:1000],
+        }
 
     def report_segmented_reply_aggregated(self, profile_id: str) -> None:
         key = "astrbot_segmented_reply"

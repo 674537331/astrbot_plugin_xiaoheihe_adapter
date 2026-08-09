@@ -40,6 +40,17 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
+## 2026-08-09 v1.2.16 本地结果
+
+- Pytest：`236 passed`；Coverage：`82%`（branch，达到 `fail_under = 80`）；
+- Ruff Check/Format、Python compileall、前端 `node --check`、JSON/YAML、仓库静态校验、stub import、`git diff --check`：通过；
+- AstrBot 包级契约：PyPI wheel 4.24.2、4.26.2 与源码 4.27.2 均通过 13/14 项文件与符号检查；新增检查确认 `on_waiting_llm_request` 先于 `build_main_agent()` 和 `on_llm_request`；
+- 识图执行回归覆盖插件图片 → AstrBot 图片 → AstrBot 主模型顺序、去重、明确纯文本模型跳过、超时/异常/占位结果继续回退、全失败隔离原图，以及纯文本最终请求不含 `Image`；
+- 主模型回归覆盖有效 `selected_provider`、无效插件模型构建前退回、期望/原生回退链差异提示；无图片事件不调用辅助模型，未安装/未调用 Grok 和其他工具保持零介入，明确 Grok 搜图只临时打开早期图片引用；
+- 时间边界覆盖图片数 × 候选数、视觉总预算、主模型回退宽限与 900 秒事件硬上限；健康模型完成后无额外等待；
+- 开销审计确认：回复 worker 默认 2、待处理队列默认 50、网络上下文 LRU 默认 256、图片文字 LRU 硬限 512、内存日志默认 2000；每事件图片引用硬限 20 且 Agent 完成即释放，不保存图片字节。早期配置快照在同一事件复用，视觉缓存 miss 不在后续钩子重复查 SQLite；
+- 仓库校验统计 99 个打包文件、约 2.04 MB；v1.2.16 无数据库迁移、无新增运行依赖。
+
 ## 2026-08-09 v1.2.15 本地结果
 
 - Pytest：`227 passed`；

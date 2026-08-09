@@ -115,7 +115,7 @@ def test_image_events_receive_bounded_vision_processing_grace() -> None:
             image_count=6,
             image_timeout_seconds=15,
         )
-        == 300
+        == 360
     )
     assert (
         effective_reply_timeout_seconds(
@@ -123,7 +123,18 @@ def test_image_events_receive_bounded_vision_processing_grace() -> None:
             image_count=6,
             image_timeout_seconds=120,
         )
-        == 900
+        == 840
+    )
+    assert (
+        effective_reply_timeout_seconds(
+            base_timeout_seconds=120,
+            image_count=20,
+            image_timeout_seconds=15,
+            image_total_timeout_seconds=600,
+            image_group_counts=[10, 10],
+            provider_fallback_grace_seconds=60,
+        )
+        == 780
     )
 
 

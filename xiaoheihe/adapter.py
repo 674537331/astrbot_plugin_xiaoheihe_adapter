@@ -28,11 +28,11 @@ from .models import (
 )
 from .notification_service import NotificationService
 from .permission_service import PermissionService
+from .provider_routing import visual_chain_budget_seconds
 from .runtime import get_runtime
 
 MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS = 900
-MIN_IMAGE_REPLY_GRACE_SECONDS = 15
-MAX_IMAGE_REPLY_GRACE_SECONDS = 60
+MAX_IMAGE_PROVIDER_CANDIDATES = 3
 
 
 def effective_reply_timeout_seconds(
@@ -40,19 +40,34 @@ def effective_reply_timeout_seconds(
     base_timeout_seconds: int,
     image_count: int,
     image_timeout_seconds: int,
+    image_total_timeout_seconds: int = 240,
+    image_provider_candidates: int = MAX_IMAGE_PROVIDER_CANDIDATES,
+    image_group_counts: tuple[int, ...] | list[int] | None = None,
+    provider_fallback_grace_seconds: int = 0,
 ) -> int:
-    """Add bounded processing time for AstrBot's per-image vision preprocessing."""
+    """Reserve bounded vision-chain and main-provider fallback time."""
     base_timeout = max(5, int(base_timeout_seconds))
+    fallback_grace = max(0, min(300, int(provider_fallback_grace_seconds)))
     count = max(0, int(image_count))
     if count == 0:
-        return base_timeout
-    per_image_grace = min(
-        MAX_IMAGE_REPLY_GRACE_SECONDS,
-        max(MIN_IMAGE_REPLY_GRACE_SECONDS, int(image_timeout_seconds) * 2),
+        return min(
+            MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS,
+            base_timeout + fallback_grace,
+        )
+    candidate_count = max(1, min(MAX_IMAGE_PROVIDER_CANDIDATES, int(image_provider_candidates)))
+    visual_budget = int(
+        visual_chain_budget_seconds(
+            image_count=count,
+            max_images=count,
+            image_timeout_seconds=image_timeout_seconds,
+            total_timeout_seconds=image_total_timeout_seconds,
+            provider_candidate_count=candidate_count,
+            image_group_counts=image_group_counts,
+        )
     )
     return min(
         MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS,
-        base_timeout + count * per_image_grace,
+        base_timeout + fallback_grace + visual_budget,
     )
 
 
@@ -299,10 +314,22 @@ class XiaoheihePlatformAdapter(Platform):
         if image_understanding_enabled:
             components.extend(Image(file=url, url=url) for url in context.image_urls)
         base_reply_timeout = int(runtime_config["reply"]["reply_timeout_seconds"])
+        image_group_counts: dict[str, int] = {}
+        if image_understanding_enabled and len(context.image_sources) == len(context.image_urls):
+            for source in context.image_sources:
+                key = str(source or "event_image")
+                image_group_counts[key] = image_group_counts.get(key, 0) + 1
         effective_reply_timeout = effective_reply_timeout_seconds(
             base_timeout_seconds=base_reply_timeout,
             image_count=len(context.image_urls) if image_understanding_enabled else 0,
             image_timeout_seconds=int(runtime_config["context"]["image_timeout_seconds"]),
+            image_total_timeout_seconds=int(
+                runtime_config["context"].get("image_total_timeout_seconds", 240)
+            ),
+            image_group_counts=list(image_group_counts.values()),
+            provider_fallback_grace_seconds=int(
+                runtime_config["reply"].get("provider_fallback_grace_seconds", 60)
+            ),
         )
         message.message = components
         message.message_str = context.user_text
@@ -322,6 +349,9 @@ class XiaoheihePlatformAdapter(Platform):
             "warnings": list(context.warnings),
             "reply_timeout_base_seconds": base_reply_timeout,
             "reply_timeout_effective_seconds": effective_reply_timeout,
+            "provider_fallback_grace_seconds": int(
+                runtime_config["reply"].get("provider_fallback_grace_seconds", 60)
+            ),
         }
         profile = runtime.config.profile(notification.profile_id)
         dry_run = (

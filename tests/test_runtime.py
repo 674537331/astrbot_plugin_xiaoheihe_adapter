@@ -86,7 +86,7 @@ async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
         ]
     )
     status = await runtime.status()
-    assert status["version"] == "v1.2.15"
+    assert status["version"] == "v1.2.16"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     assert status["adapters"] == [
@@ -555,4 +555,27 @@ async def test_runtime_logs_visual_binding_failure_without_reclassifying_send(
     assert entry["level"] == "ERROR"
     assert entry["details"]["send_confirmation_preserved"] is True
     assert entry["details"]["external_comment_id"] == "confirmed-comment"
+    await runtime.close()
+
+
+async def test_runtime_provider_route_warning_is_visible_and_clearable(
+    tmp_path,
+    fake_config,
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+
+    runtime.set_provider_route_warning("default", "把 AstrBot 主模型放到第一回退")
+    status = await runtime.status()
+    assert any(
+        alert["key"] == "default:provider_route" and alert["level"] == "warning"
+        for alert in status["alerts"]
+    )
+
+    runtime.set_provider_route_warning("default", "")
+    status = await runtime.status()
+    assert all(alert["key"] != "default:provider_route" for alert in status["alerts"])
+    assert any(
+        entry["message"] == "Provider 路由配置警告已解除"
+        for entry in runtime.logging.list(limit=10)
+    )
     await runtime.close()
