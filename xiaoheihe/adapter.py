@@ -21,7 +21,9 @@ from astrbot.core.platform.astr_message_event import MessageSession
 from .context_builder import BuiltContext, ContextBuilder
 from .event import XiaoheiheMessageEvent, aggregate_text
 from .models import (
+    ContentOwnerRole,
     EventState,
+    ImageAttribution,
     Notification,
     PermissionDecision,
     RoutingTarget,
@@ -33,6 +35,50 @@ from .runtime import get_runtime
 
 MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS = 900
 MAX_IMAGE_PROVIDER_CANDIDATES = 3
+
+
+def _bound_image_attributions(
+    context: BuiltContext,
+    notification: Notification,
+) -> list[ImageAttribution]:
+    """Return one explicit owner binding per image, including legacy contexts."""
+    if len(context.image_attributions) == len(context.image_urls):
+        return list(context.image_attributions)
+    sources = (
+        context.image_sources
+        if len(context.image_sources) == len(context.image_urls)
+        else ["event_image"] * len(context.image_urls)
+    )
+    result: list[ImageAttribution] = []
+    for source in sources:
+        if source == "current_comment":
+            result.append(
+                ImageAttribution(
+                    source=source,
+                    owner_uid=str(notification.sender_uid or "未知"),
+                    owner_nickname=str(notification.sender_nickname or "未知昵称"),
+                    owner_role=ContentOwnerRole.CURRENT_SENDER.value,
+                )
+            )
+        elif source == "original_post":
+            result.append(
+                ImageAttribution(
+                    source=source,
+                    owner_uid=str(context.thread.author_uid or "未知"),
+                    owner_nickname=str(context.thread.author_name or "未知昵称"),
+                    owner_role=ContentOwnerRole.POST_AUTHOR.value,
+                )
+            )
+        else:
+            result.append(
+                ImageAttribution(
+                    source="event_image",
+                    owner_uid="未知",
+                    owner_nickname="未知昵称",
+                    owner_role=ContentOwnerRole.UNKNOWN.value,
+                )
+            )
+    return result
 
 
 def effective_reply_timeout_seconds(
@@ -313,11 +359,18 @@ class XiaoheihePlatformAdapter(Platform):
         image_understanding_enabled = bool(runtime_config["context"]["enable_image_understanding"])
         if image_understanding_enabled:
             components.extend(Image(file=url, url=url) for url in context.image_urls)
+        image_attributions = _bound_image_attributions(context, notification)
+        image_sources = [item.source for item in image_attributions]
         base_reply_timeout = int(runtime_config["reply"]["reply_timeout_seconds"])
-        image_group_counts: dict[str, int] = {}
-        if image_understanding_enabled and len(context.image_sources) == len(context.image_urls):
-            for source in context.image_sources:
-                key = str(source or "event_image")
+        image_group_counts: dict[tuple[str, str, str, str], int] = {}
+        if image_understanding_enabled:
+            for attribution in image_attributions:
+                key = (
+                    attribution.source,
+                    attribution.owner_role,
+                    attribution.owner_uid,
+                    attribution.owner_nickname,
+                )
                 image_group_counts[key] = image_group_counts.get(key, 0) + 1
         effective_reply_timeout = effective_reply_timeout_seconds(
             base_timeout_seconds=base_reply_timeout,
@@ -342,9 +395,12 @@ class XiaoheihePlatformAdapter(Platform):
             "external_event_id": notification.external_event_id,
             "external_comment_id": notification.external_comment_id,
             "sender_uid": str(notification.sender_uid),
-            "post_author_uid": str(notification.post_author_uid),
+            "sender_nickname": str(notification.sender_nickname),
+            "post_author_uid": str(context.thread.author_uid or notification.post_author_uid),
+            "post_author_nickname": str(context.thread.author_name),
             "image_urls": list(context.image_urls),
-            "image_sources": list(context.image_sources),
+            "image_sources": image_sources,
+            "image_attributions": [item.as_dict() for item in image_attributions],
             "reply_target_comment_id": context.reply_target_comment_id,
             "warnings": list(context.warnings),
             "reply_timeout_base_seconds": base_reply_timeout,
@@ -382,7 +438,11 @@ class XiaoheihePlatformAdapter(Platform):
         event.set_extra("xiaoheihe_community_context", context.community_context)
         event.set_extra("xiaoheihe_focus_context", context.focus_context)
         event.set_extra("xiaoheihe_compression_source", context.compression_source)
-        event.set_extra("xiaoheihe_image_sources", list(context.image_sources))
+        event.set_extra("xiaoheihe_image_sources", image_sources)
+        event.set_extra(
+            "xiaoheihe_image_attributions",
+            [item.as_dict() for item in image_attributions],
+        )
         event.set_extra("xiaoheihe_route", notification.route.as_dict())
         fixed_llm_provider_id = str(runtime_config["providers"]["llm_provider_id"]).strip()
         if fixed_llm_provider_id:

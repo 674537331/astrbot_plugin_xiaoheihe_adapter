@@ -47,7 +47,10 @@ async def test_context_is_clean_bounded_and_cached() -> None:
     assert "触发评论发布时间:" in result.dynamic_context
     assert "插件发现并读取时间:" in result.dynamic_context
     assert "AI 开始生成回复时间:" in result.dynamic_context
-    assert f"当前触发发言人 UID: {notification.sender_uid}" in result.dynamic_context
+    assert (
+        f"当前触发发言人: {notification.sender_nickname} (UID {notification.sender_uid})"
+        in result.dynamic_context
+    )
     assert "不得因共享会话历史把不同 UID 当成同一人" in result.dynamic_context
     assert "不得把系统处理时间归因给作者" in result.dynamic_context
     assert result_again.thread.post_id == result.thread.post_id
@@ -135,16 +138,30 @@ async def test_image_host_resolution_is_reused_within_one_event() -> None:
         return {"203.0.113.10"}
 
     builder = ContextBuilder(max_images=4, host_resolver=counting_resolver)
-    urls, sources, warnings = await builder._collect_images(
+    from xiaoheihe.models import ContentOwnerRole, ImageAttribution
+
+    current = ImageAttribution(
+        "current_comment",
+        "user-1",
+        "用户",
+        ContentOwnerRole.CURRENT_SENDER.value,
+    )
+    post = ImageAttribution(
+        "original_post",
+        "author-1",
+        "作者",
+        ContentOwnerRole.POST_AUTHOR.value,
+    )
+    urls, attributions, warnings = await builder._collect_images(
         [
-            ("https://cdn.example.com/a.png", "current_comment"),
-            ("https://cdn.example.com/b.png", "original_post"),
-            ("https://cdn.example.com/a.png", "original_post"),
+            ("https://cdn.example.com/a.png", current),
+            ("https://cdn.example.com/b.png", post),
+            ("https://cdn.example.com/a.png", post),
         ]
     )
 
     assert urls == ["https://cdn.example.com/a.png", "https://cdn.example.com/b.png"]
-    assert sources == ["current_comment", "original_post"]
+    assert attributions == [current, post]
     assert warnings == []
     assert calls == ["cdn.example.com"]
 
@@ -216,6 +233,55 @@ async def test_comment_mention_includes_comment_and_original_post_media() -> Non
         "https://cdn.example.com/post-1.png",
     ]
     assert result.image_sources == ["current_comment", "original_post"]
+    assert [item.owner_uid for item in result.image_attributions] == ["user-1", "author-1"]
+    assert [item.owner_nickname for item in result.image_attributions] == ["用户", "作者"]
+    assert [item.owner_role for item in result.image_attributions] == [
+        "current_sender",
+        "post_author",
+    ]
+
+
+async def test_reply_without_own_image_keeps_post_image_bound_to_post_author() -> None:
+    notification = Notification(
+        profile_id="default",
+        external_event_id="reply-no-image",
+        external_comment_id="comment-current",
+        notification_id="reply-no-image",
+        event_type=NotificationType.REPLY,
+        sender_uid="commenter-1",
+        sender_nickname="评论者",
+        post_id="post-owner",
+        root_comment_id="root-owner",
+        parent_comment_id="root-owner",
+        content="我只是在回复文字",
+        created_at=1_800_000_000,
+        image_urls=[],
+    )
+
+    class Client:
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
+            return ThreadContext(
+                post_id=post_id,
+                title="带图原帖",
+                body="楼主正文",
+                author_uid="author-1",
+                author_name="楼主",
+                comments=[],
+                image_urls=["https://cdn.example.com/post.png"],
+            )
+
+    result = await ContextBuilder(host_resolver=public_resolver).build(notification, Client())
+
+    assert result.image_sources == ["original_post"]
+    assert len(result.image_attributions) == 1
+    attribution = result.image_attributions[0]
+    assert attribution.owner_uid == "author-1"
+    assert attribution.owner_nickname == "楼主"
+    assert attribution.owner_role == "post_author"
+    assert "当前发言人: 评论者 (UID commenter-1)" in result.dynamic_context
+    assert "原帖标题（发言人 楼主 (UID author-1)）" in result.dynamic_context
 
 
 async def test_proactive_context_strictly_separates_author_and_system_times(

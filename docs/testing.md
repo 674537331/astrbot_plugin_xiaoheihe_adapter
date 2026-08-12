@@ -40,6 +40,16 @@ Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web AP
 但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
 发布包的文件/符号契约检查。
 
+## 2026-08-12 v1.2.17 本地结果
+
+- Pytest：`242 passed`；Coverage：`82%`（branch，达到 `fail_under = 80`）；
+- Ruff Check/Format、Python compileall、前端 `node --check`、JSON/YAML、仓库静态校验、stub import、`git diff --check`：通过；
+- AstrBot 包级契约：4.24.2 通过 13 项核心文件检查，4.26.2 与 4.27.2 均通过 14 项含 Plugin Page API 的检查；没有新增 AstrBot API 依赖；
+- 身份回归覆盖当前消息、原帖、楼层、直接回复对象、逐图归属、缓存描述和压缩摘要；UID/昵称篡改、来源数组错位、压缩器编造 speaker、无图评论引用原帖图均 fail-closed；
+- 数据库从 v9 升级到 v10 的旧视觉快照保留但标为未知所有者；新快照持久化 UID、昵称和角色，跨帖子相同图片指纹不会命中内存缓存，查询计划继续使用 `idx_visual_context_lookup` 且不创建临时排序；
+- 开销审计确认：普通无图消息不新增模型或数据库调用；身份处理为有界字符串和每事件最多 20 张图片的线性遍历，楼层压缩输出最多解析 64 项；视觉 LRU 仍最多 512 条、TTL 24 小时且不保存图片字节；
+- 仓库校验统计 99 个打包文件、约 2.08 MB；无新增运行依赖，新增迁移只为现有视觉快照表补充三个短文本字段。
+
 ## 2026-08-09 v1.2.16 本地结果
 
 - Pytest：`236 passed`；Coverage：`82%`（branch，达到 `fail_under = 80`）；

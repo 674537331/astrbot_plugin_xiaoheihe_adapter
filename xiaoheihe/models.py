@@ -23,6 +23,12 @@ class NotificationType(StrEnum):
     PROACTIVE_FEED = "proactive_feed"
 
 
+class ContentOwnerRole(StrEnum):
+    CURRENT_SENDER = "current_sender"
+    POST_AUTHOR = "post_author"
+    UNKNOWN = "unknown"
+
+
 class EventState(StrEnum):
     DISCOVERED = "discovered"
     CLAIMED = "claimed"
@@ -161,6 +167,24 @@ class Notification:
             f"xhh_{self.event_type.value}_"
             f"{self.notification_id or 'none'}_{self.external_comment_id or 'none'}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ImageAttribution:
+    """Program-owned identity binding for one image or homogeneous image group."""
+
+    source: str
+    owner_uid: str
+    owner_nickname: str
+    owner_role: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "source": self.source,
+            "owner_uid": self.owner_uid,
+            "owner_nickname": self.owner_nickname,
+            "owner_role": self.owner_role,
+        }
 
 
 @dataclass(slots=True)

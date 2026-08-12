@@ -6,14 +6,19 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.2.16**
+当前版本：**v1.2.17**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。回复
 继续使用当前 AstrBot 模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权
 工具。插件只负责平台接入，不单独配置模型接口。
 
-v1.2.16 重点：
+v1.2.17 重点：
 
+- 当前消息、原帖、楼层评论、直接回复对象和压缩摘要统一显示“昵称 + UID”；未知身份明确保留为未知，不会自动套用当前发言人；
+- 每张图片都有由本地代码生成的来源与所有者标签。原帖图片归原帖作者，当前评论图片归当前发送者；只有所有者 UID 完全匹配时，模型才能称为“你发的图”；
+- 长楼层 LLM 压缩使用“整体主题 + 逐人发言摘要”，逐人 speaker 必须匹配本地身份白名单；模型编造或交换昵称/UID 的条目会被丢弃并进入确定性降级；
+- 24 小时视觉快照同时保存并校验所有者 UID、昵称和角色，内存缓存按帖子隔离；旧版无身份快照或跨帖子/跨作者命中不会复用，也不会把楼主的图说成评论者的图；
+- 以上归属校验不新增 LLM 调用；无图片、未安装/未调用 Grok、关闭压缩和其他平台仍走原链路；
 - 小黑盒图片现在会在 AstrBot 构建主 Agent 前完成来源感知转述，避免全局图片模型抢先处理，也不会再把未经处理的图片交给纯文本主模型；
 - 识图顺序固定为“插件识图模型 → AstrBot 默认图片转述模型 → AstrBot 当前主模型”。候选模型明确不支持图片、超时、403、400、占位回答或其他异常时继续下一层；全部失败时移除原图并明确要求最终模型承认看不到图片、不得猜测；
 - 插件主模型仍通过 AstrBot 标准 `selected_provider` 进入完整人格、会话、Agent、工具和分段回复链。插件模型无效时本轮自动退回 AstrBot 主模型；若要严格得到“插件主模型 → AstrBot 主模型 → 其他回退”，需把 AstrBot 主模型放在全局“回退对话模型列表”第一位，配置不符合时管理页与日志会提示；
@@ -385,7 +390,7 @@ data/plugin_data/astrbot_plugin_xiaoheihe_adapter/
 - Windows 建议使用 AstrBot 运行账号 ACL 保护数据目录；
 - Cookie、Token、设备 ID 和敏感响应经过日志脱敏；
 - SQLite 使用 WAL、参数化 SQL、唯一索引和迁移；
-- v1.2.16 数据库迁移版本仍为 **v9**：v1.2.15 新增的 24 小时视觉快照、入站事件与机器人评论绑定表保持兼容；
+- v1.2.17 数据库迁移版本为 **v10**：视觉快照新增所有者 UID、昵称和角色；旧记录原位保留，但没有可靠归属的旧图片描述不会被复用；
 - 自动清理启动后延迟执行，之后每 24 小时执行一次；
 - 清理范围限定在插件自己的数据库、日志和缓存。
 
