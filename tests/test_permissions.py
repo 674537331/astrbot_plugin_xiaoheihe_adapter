@@ -65,3 +65,17 @@ def test_keyword_and_author_filters() -> None:
     policy = service(keyword_blacklist=["spam"], author_blacklist=["bad-author"])
     assert policy.decide(notification(content="SPAM here")).allowed is False
     assert policy.decide(notification(author="bad-author")).allowed is False
+
+
+def test_missing_uid_never_gains_uid_permissions_but_normal_mode_keeps_content() -> None:
+    anonymous = notification("")
+    normal = service(user_whitelist=[""], user_blacklist=[""], whitelist_mode=False)
+    decision = normal.decide(anonymous)
+    assert decision.allowed is True
+    assert decision.is_owner is False
+    assert decision.map_as_admin is False
+
+    restricted = service(whitelist_mode=True, user_whitelist=["owner"])
+    blocked = restricted.decide(anonymous)
+    assert blocked.allowed is False
+    assert "UID 缺失" in blocked.reason

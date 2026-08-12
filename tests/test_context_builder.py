@@ -284,6 +284,64 @@ async def test_reply_without_own_image_keeps_post_image_bound_to_post_author() -
     assert "原帖标题（发言人 楼主 (UID author-1)）" in result.dynamic_context
 
 
+async def test_missing_uids_keep_text_and_use_distinct_local_identity_anchors() -> None:
+    notification = Notification(
+        profile_id="default",
+        external_event_id="event-current",
+        external_comment_id="comment-current",
+        notification_id="event-current",
+        event_type=NotificationType.REPLY,
+        sender_uid="",
+        sender_nickname="同名用户",
+        post_id="post-anonymous",
+        root_comment_id="root-anonymous",
+        parent_comment_id="comment-current",
+        content="这是当前消息",
+        created_at=1_800_000_000,
+        raw={"comment_b_id": "comment-2"},
+    )
+
+    class Client:
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ):
+            return ThreadContext(
+                post_id=post_id,
+                title="匿名作者标题",
+                body="匿名作者正文",
+                author_uid="",
+                author_name="匿名作者",
+                comments=[
+                    {
+                        "id": "comment-1",
+                        "user": {"nickname": "同名用户"},
+                        "content": "第一人的消息",
+                    },
+                    {
+                        "id": "comment-2",
+                        "user": {"nickname": "同名用户"},
+                        "content": "第二人的消息",
+                    },
+                ],
+            )
+
+    result = await ContextBuilder(host_resolver=public_resolver).build(notification, Client())
+
+    assert "同名用户 (UID 未提供；本地身份 event:default:comment-current)" in (
+        result.dynamic_context
+    )
+    assert "匿名作者 (UID 未提供；本地身份 post:default:post-anonymous:author)" in (
+        result.dynamic_context
+    )
+    assert result.compression_source is not None
+    assert result.compression_source.recent_participants == (
+        "同名用户 (UID 未提供；本地身份 comment:comment-1)",
+    )
+    assert "第二人的消息" in result.compression_source.reply_target
+    assert "UID 未提供；本地身份 comment:comment-2" in result.compression_source.reply_target
+    assert "第一人的消息" in result.compression_source.recent_comments
+
+
 async def test_proactive_context_strictly_separates_author_and_system_times(
     monkeypatch,
 ) -> None:

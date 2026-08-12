@@ -31,10 +31,11 @@ class PermissionService:
 
     def decide(self, notification: Notification) -> PermissionDecision:
         sender_uid = str(notification.sender_uid)
+        sender_uid_verified = notification.sender_uid_verified
         author_uid = str(notification.post_author_uid)
-        if self.self_uid and sender_uid == self.self_uid:
+        if sender_uid_verified and self.self_uid and sender_uid == self.self_uid:
             return PermissionDecision(False, "机器人自身消息")
-        if sender_uid in self.user_blacklist:
+        if sender_uid_verified and sender_uid in self.user_blacklist:
             return PermissionDecision(False, "用户 UID 黑名单")
         if author_uid and author_uid in self.author_blacklist:
             return PermissionDecision(False, "帖子作者 UID 黑名单")
@@ -42,7 +43,7 @@ class PermissionService:
         if any(keyword in content_folded for keyword in self.keyword_blacklist):
             return PermissionDecision(False, "关键词黑名单")
 
-        is_owner = bool(self.owner_uid and sender_uid == self.owner_uid)
+        is_owner = bool(sender_uid_verified and self.owner_uid and sender_uid == self.owner_uid)
         if is_owner:
             return PermissionDecision(
                 True,
@@ -51,8 +52,15 @@ class PermissionService:
                 map_as_admin=self.map_owner_to_admin,
             )
 
-        if self.whitelist_mode and sender_uid not in self.user_whitelist:
-            return PermissionDecision(False, "不在用户白名单")
+        if self.whitelist_mode and (
+            not sender_uid_verified or sender_uid not in self.user_whitelist
+        ):
+            return PermissionDecision(
+                False,
+                "发送者 UID 缺失，无法通过用户白名单"
+                if not sender_uid_verified
+                else "不在用户白名单",
+            )
         if self.author_whitelist and author_uid not in self.author_whitelist:
             return PermissionDecision(False, "帖子作者不在白名单")
         if self.only_explicit_mentions and not notification.explicit_wake:

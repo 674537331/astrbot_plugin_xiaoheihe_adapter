@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -168,6 +169,42 @@ class Notification:
             f"{self.notification_id or 'none'}_{self.external_comment_id or 'none'}"
         )
 
+    @property
+    def sender_uid_verified(self) -> bool:
+        """Whether Xiaoheihe supplied a real sender UID for this event."""
+        return bool(str(self.sender_uid or "").strip())
+
+    @property
+    def sender_identity_key(self) -> str:
+        """Program-owned identity key used when Xiaoheihe omits the UID.
+
+        The local key is deliberately scoped to one stable notification/comment
+        anchor.  It separates otherwise anonymous speakers without pretending
+        to be a Xiaoheihe UID or granting UID-based permissions.
+        """
+        uid = str(self.sender_uid or "").strip()
+        if uid:
+            return f"uid:{' '.join(uid.split())[:160]}"
+        anchor = (
+            str(self.external_comment_id or "").strip()
+            or str(self.notification_id or "").strip()
+            or str(self.external_event_id or "").strip()
+            or str(self.post_id or "").strip()
+            or "unknown-event"
+        )
+        safe_profile = " ".join(str(self.profile_id or "default").split())[:64]
+        safe_anchor = " ".join(anchor.split())[:160]
+        return f"event:{safe_profile}:{safe_anchor}"
+
+    @property
+    def sender_runtime_id(self) -> str:
+        """Return a non-empty AstrBot sender ID without inventing a real UID."""
+        uid = str(self.sender_uid or "").strip()
+        if uid:
+            return uid
+        digest = hashlib.sha256(self.sender_identity_key.encode("utf-8")).hexdigest()[:24]
+        return f"xhh_unverified_{digest}"
+
 
 @dataclass(frozen=True, slots=True)
 class ImageAttribution:
@@ -177,6 +214,7 @@ class ImageAttribution:
     owner_uid: str
     owner_nickname: str
     owner_role: str
+    owner_identity_key: str = ""
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -184,6 +222,7 @@ class ImageAttribution:
             "owner_uid": self.owner_uid,
             "owner_nickname": self.owner_nickname,
             "owner_role": self.owner_role,
+            "owner_identity_key": self.owner_identity_key,
         }
 
 

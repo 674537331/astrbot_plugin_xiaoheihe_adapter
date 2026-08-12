@@ -32,6 +32,10 @@ class Repository:
             "source_created_at": notification.created_at,
             "observed_at": observed_at,
         }
+        raw["_adapter_identity"] = {
+            "sender_uid_verified": notification.sender_uid_verified,
+            "sender_identity_key": notification.sender_identity_key,
+        }
         raw_json = json.dumps(
             redact_data(raw),
             ensure_ascii=False,

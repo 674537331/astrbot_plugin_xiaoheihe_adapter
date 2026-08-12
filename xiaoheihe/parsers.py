@@ -355,7 +355,15 @@ def parse_notifications(
             "user_id",
             "userid",
             "id",
-        ) or _id(raw, "userid_a", "user_id_a", "sender_uid")
+        ) or _id(
+            raw,
+            "userid_a",
+            "user_id_a",
+            "uid_a",
+            "heybox_id_a",
+            "heyboxid_a",
+            "sender_uid",
+        )
         # The message center returns both post mentions (16) and comment
         # mentions (17) for the message_type=16 query. Post mentions have no
         # comment target: they are routed to the deterministic post session and
@@ -365,8 +373,6 @@ def parse_notifications(
             raise ResponseShapeError("通知项缺少稳定通知 ID 或帖子 ID")
         if not is_post_mention and not comment_id:
             raise ResponseShapeError("评论通知项缺少稳定评论 ID")
-        if not sender_uid:
-            raise ResponseShapeError("通知项缺少发送者 UID")
         external_comment_id = comment_id
         root_id = ""
         parent_id = ""
@@ -407,7 +413,9 @@ def parse_notifications(
             notification_id=event_id,
             event_type=event_type,
             sender_uid=sender_uid,
-            sender_nickname=str(_first(sender_obj, "nickname", "username", "name")),
+            sender_nickname=str(
+                _first(sender_obj, "nickname", "username", "name", default="") or ""
+            ),
             post_id=post_id,
             root_comment_id=root_id,
             parent_comment_id=parent_id,
@@ -446,6 +454,7 @@ def parse_notifications(
                     post_author_obj,
                     "uid",
                     "heybox_id",
+                    "heyboxid",
                     "user_id",
                     "userid",
                     "id",

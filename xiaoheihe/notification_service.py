@@ -4,6 +4,7 @@ import asyncio
 import itertools
 import json
 import random
+import time
 from collections import Counter, OrderedDict
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -333,14 +334,16 @@ class NotificationService:
         summary = summaries.get(event_type.value, {})
         raw_count = int(summary.get("raw_count") or 0)
         accepted_count = int(summary.get("accepted_count") or 0)
+        missing_sender_uid_count = int(summary.get("missing_sender_uid_count") or 0)
         message_types = tuple(str(value) for value in summary.get("message_types", []))
-        signature = (raw_count, accepted_count, message_types)
+        signature = (raw_count, accepted_count, missing_sender_uid_count, message_types)
         if self._poll_summary_signatures.get(event_type.value) == signature:
             return
         self._poll_summary_signatures[event_type.value] = signature
         level = (
             "WARNING"
-            if event_type is NotificationType.MENTION and raw_count > 0 and not accepted_count
+            if missing_sender_uid_count
+            or (event_type is NotificationType.MENTION and raw_count > 0 and not accepted_count)
             else "INFO"
         )
         self.logger.emit(
@@ -352,6 +355,12 @@ class NotificationService:
                 "page": page_index,
                 "raw_count": raw_count,
                 "accepted_count": accepted_count,
+                "missing_sender_uid_count": missing_sender_uid_count,
+                "missing_uid_fallback": (
+                    "稳定评论/通知本地身份锚点；不参与主人、管理员或 UID 黑白名单匹配"
+                    if missing_sender_uid_count
+                    else ""
+                ),
                 "message_types": list(message_types),
                 "result_type": summary.get("result_type", ""),
                 "list_field": summary.get("list_field", ""),
@@ -359,7 +368,7 @@ class NotificationService:
         )
 
     async def enqueue(self, notification: Notification, *, recovered: bool = False) -> bool:
-        uid = str(notification.sender_uid)
+        uid = notification.sender_runtime_id
         event_key = notification.external_event_id
         if event_key in self._pending_event_keys:
             return False
@@ -384,7 +393,11 @@ class NotificationService:
                     "WARNING",
                     "单用户待处理事件达到上限，保留通知供后续轮询处理",
                     profile_id=self.profile_id,
-                    details={"sender_uid": uid},
+                    details={
+                        "sender_uid": str(notification.sender_uid or "未提供"),
+                        "sender_uid_verified": notification.sender_uid_verified,
+                        "sender_identity_key": notification.sender_identity_key,
+                    },
                 )
             return False
         if self._queue.full():
@@ -503,7 +516,7 @@ class NotificationService:
                 _, _, notification = await self._queue.get()
             except asyncio.CancelledError:
                 raise
-            uid = str(notification.sender_uid)
+            uid = notification.sender_runtime_id
             try:
                 existing_id = self._recovery_ids.pop(notification.external_event_id, None)
                 await self._handle(notification, event_id=existing_id)
@@ -552,6 +565,27 @@ class NotificationService:
             event_id = await self.repository.claim_retry_event(notification)
         if event_id is None:
             return
+        if await self._matches_uidless_self_message(notification):
+            await self.repository.mark_event(
+                event_id,
+                EventState.IGNORED,
+                error="发送者 UID 缺失，但昵称、内容、楼层和发送时间匹配近期机器人评论",
+                should_filter=True,
+            )
+            self.logger.emit(
+                "WARNING",
+                "缺 UID 通知匹配近期机器人评论，已阻止潜在自身回复循环",
+                profile_id=self.profile_id,
+                details={
+                    "external_event_id": notification.external_event_id,
+                    "external_comment_id": notification.external_comment_id,
+                    "sender_nickname": notification.sender_nickname,
+                    "sender_identity_key": notification.sender_identity_key,
+                    "post_id": notification.post_id,
+                    "root_comment_id": notification.root_comment_id,
+                },
+            )
+            return
         decision = self.permissions.decide(notification)
         if not decision.allowed:
             await self.repository.mark_event(
@@ -585,6 +619,50 @@ class NotificationService:
                 max_retries=int(self.config["reply"]["max_retries"]),
             )
             raise
+
+    async def _matches_uidless_self_message(self, notification: Notification) -> bool:
+        if notification.sender_uid_verified:
+            return False
+        credentials = getattr(self.client, "credentials", None)
+        self_nickname = str(getattr(credentials, "nickname", "") or "").strip()
+        sender_nickname = str(notification.sender_nickname or "").strip()
+        if not self_nickname or sender_nickname != self_nickname:
+            return False
+        source_time = float(notification.created_at or 0)
+        since = max(0.0, source_time - 600) if source_time > 0 else time.time() - 900
+        try:
+            outgoing = await self.repository.recent_outgoing_match(
+                notification.profile_id,
+                notification.route,
+                notification.content,
+                since=since,
+            )
+        except Exception as exc:
+            self.logger.emit(
+                "ERROR",
+                f"缺 UID 自身消息兜底核对失败，继续普通权限链: {exc}",
+                profile_id=self.profile_id,
+                details={
+                    "exception_type": type(exc).__name__,
+                    "sender_identity_key": notification.sender_identity_key,
+                    "post_id": notification.post_id,
+                    "root_comment_id": notification.root_comment_id,
+                },
+            )
+            return False
+        if not outgoing or str(outgoing.get("status") or "") not in {
+            "sent",
+            "send_unknown",
+            "sending",
+        }:
+            return False
+        if source_time <= 0:
+            return True
+        try:
+            attempted_at = float(outgoing.get("attempted_at") or 0)
+        except (TypeError, ValueError):
+            return False
+        return source_time - 600 <= attempted_at <= source_time + 600
 
     def _floor_lock(self, session_id: str) -> asyncio.Lock:
         lock = self._floor_locks.get(session_id)

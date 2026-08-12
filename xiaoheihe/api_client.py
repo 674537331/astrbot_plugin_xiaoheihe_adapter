@@ -261,6 +261,9 @@ class XiaoheiheApiClient:
             self._remember_error(error)
             raise error from exc
         summary["accepted_count"] = len(parsed.items)
+        summary["missing_sender_uid_count"] = sum(
+            1 for wrapper in parsed.items if not wrapper["notification"].sender_uid_verified
+        )
         self.last_notification_polls[event_type.value] = summary
         return parsed
 

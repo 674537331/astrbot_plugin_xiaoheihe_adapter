@@ -682,7 +682,16 @@ class RuntimeServices:
             user = comment.get("user", comment.get("sender", {}))
             user = user if isinstance(user, dict) else {}
             uid = str(
-                user.get("uid", user.get("heybox_id", user.get("user_id", user.get("id", ""))))
+                user.get(
+                    "uid",
+                    user.get(
+                        "heybox_id",
+                        user.get(
+                            "heyboxid",
+                            user.get("user_id", user.get("userid", user.get("id", ""))),
+                        ),
+                    ),
+                )
             )
             candidate = str(comment.get("content", comment.get("text", ""))).strip()
             comment_id = str(comment.get("comment_id", comment.get("id", "")))
