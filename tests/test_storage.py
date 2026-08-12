@@ -39,6 +39,8 @@ async def test_database_migrations_and_pragmas(tmp_path) -> None:
     assert {"idx_visual_context_lookup", "idx_visual_context_expiry"} <= {
         row["name"] for row in visual_indexes
     }
+    visual_columns = await database.fetchall("PRAGMA table_info(visual_contexts)")
+    assert {"owner_uid", "owner_nickname", "owner_role"} <= {row["name"] for row in visual_columns}
     lookup_columns = await database.fetchall("PRAGMA index_info(idx_visual_context_lookup)")
     assert [row["name"] for row in lookup_columns] == [
         "profile_id",
@@ -100,4 +102,42 @@ async def test_database_upgrades_v2_to_latest(tmp_path) -> None:
         "SELECT proactive_count FROM daily_counters WHERE profile_id = 'default'"
     )
     assert counter["proactive_count"] == 0
+    await database.close()
+
+
+async def test_database_upgrades_v9_visual_records_with_unknown_owner(tmp_path) -> None:
+    path = tmp_path / "upgrade-v9.db"
+    connection = await aiosqlite.connect(path)
+    for _version, script in MIGRATIONS[:-1]:
+        await connection.executescript(script)
+    await connection.executemany(
+        "INSERT INTO schema_migrations(version) VALUES (?)",
+        [(version,) for version, _script in MIGRATIONS[:-1]],
+    )
+    await connection.execute(
+        """
+        INSERT INTO visual_contexts(
+            profile_id, post_id, source, image_fingerprint,
+            image_hosts_json, image_count, caption, caption_hash,
+            provider_id, model, created_at, expires_at
+        ) VALUES ('default', 'post-old', 'original_post', 'fingerprint-old',
+                  '[]', 1, '旧版图片描述', 'hash-old',
+                  'vision', 'model', 1, 9999999999)
+        """
+    )
+    await connection.commit()
+    await connection.close()
+
+    database = Database(path)
+    await database.open()
+    assert await database.schema_version() == 10
+    record = await database.fetchone(
+        "SELECT owner_uid, owner_nickname, owner_role FROM visual_contexts WHERE post_id = ?",
+        ("post-old",),
+    )
+    assert dict(record) == {
+        "owner_uid": "",
+        "owner_nickname": "",
+        "owner_role": "unknown",
+    }
     await database.close()

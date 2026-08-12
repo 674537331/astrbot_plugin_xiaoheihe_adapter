@@ -84,6 +84,9 @@ async def test_visual_context_survives_send_binding_and_expires_after_24_hours(
         provider_id="vision-fixed",
         model="vision-model",
         ttl_seconds=86400,
+        owner_uid="author-visual",
+        owner_nickname="视觉楼主",
+        owner_role="post_author",
         now=now,
     )
     reused = await repository.cache_visual_context(
@@ -97,10 +100,16 @@ async def test_visual_context_survives_send_binding_and_expires_after_24_hours(
         provider_id="other",
         model="other",
         ttl_seconds=86400,
+        owner_uid="author-visual",
+        owner_nickname="视觉楼主",
+        owner_role="post_author",
         now=now + 1,
     )
     assert reused["id"] == record["id"]
     assert reused["caption"] == record["caption"]
+    assert reused["owner_uid"] == "author-visual"
+    assert reused["owner_nickname"] == "视觉楼主"
+    assert reused["owner_role"] == "post_author"
     changed_caption = await repository.cache_visual_context(
         profile_id="default",
         post_id="post-visual",
@@ -112,6 +121,9 @@ async def test_visual_context_survives_send_binding_and_expires_after_24_hours(
         provider_id="other",
         model="other",
         ttl_seconds=86400,
+        owner_uid="author-visual",
+        owner_nickname="视觉楼主",
+        owner_role="post_author",
         now=now + 1,
     )
     assert changed_caption["id"] != record["id"]
@@ -318,7 +330,7 @@ async def test_account_error_feed_and_diagnostics(repository) -> None:
     assert await repository.review_feed_candidate(candidate_id, "approved", "edited")
     assert (await repository.feed_candidate(candidate_id))["edited_text"] == "edited"
     snapshot = await repository.diagnostic_snapshot()
-    assert snapshot["schema_version"] == 9
+    assert snapshot["schema_version"] == 10
     assert snapshot["counts"]["feed_candidates"] == 1
     assert snapshot["account_states"][0]["nickname"] == "Bot"
     assert snapshot["recent_errors"][0]["category"] == "response_shape"

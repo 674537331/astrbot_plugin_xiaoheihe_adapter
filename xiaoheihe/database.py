@@ -315,6 +315,17 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON visual_context_comment_links(visual_context_id);
         """,
     ),
+    (
+        10,
+        """
+        ALTER TABLE visual_contexts
+            ADD COLUMN owner_uid TEXT NOT NULL DEFAULT '';
+        ALTER TABLE visual_contexts
+            ADD COLUMN owner_nickname TEXT NOT NULL DEFAULT '';
+        ALTER TABLE visual_contexts
+            ADD COLUMN owner_role TEXT NOT NULL DEFAULT 'unknown';
+        """,
+    ),
 )
 
 MIGRATION_MARKERS = {
@@ -327,6 +338,7 @@ MIGRATION_MARKERS = {
     7: "INSERT INTO schema_migrations(version) VALUES (7);",
     8: "INSERT INTO schema_migrations(version) VALUES (8);",
     9: "INSERT INTO schema_migrations(version) VALUES (9);",
+    10: "INSERT INTO schema_migrations(version) VALUES (10);",
 }
 
 

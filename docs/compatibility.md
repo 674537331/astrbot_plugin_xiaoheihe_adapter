@@ -1,4 +1,4 @@
-# AstrBot 兼容性说明（v1.2.16）
+# AstrBot 兼容性说明（v1.2.17）
 
 ## 调查范围
 
@@ -9,7 +9,8 @@ AstrBot 4.27.2。v1.2.13 在 v1.2.12 焦点路由上增加被动长楼层的来�
 v1.2.14 在插件内部增加持久化通知回填以及压缩后的昵称/UID 身份锚点。v1.2.15 增加插件自有的
 视觉文字快照和评论 ID 绑定。v1.2.16 新增 `on_waiting_llm_request` 早期图片路由，并继续复用
 `Provider.text_chat()`、事件 extra 与 AstrBot 原生 Agent，不修改 system prompt / 人格。
-2026-08-09 发布 v1.2.16 前再次核对：
+v1.2.17 在同一事件 extra、临时上下文和视觉快照上增加程序生成的昵称/UID 所有者绑定，不增加
+AstrBot API 依赖或额外模型调用。2026-08-12 发布 v1.2.17 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -38,7 +39,7 @@ PyPI 获取最低版本与重点版本包，核验实际 API 文件和所需符�
 | 元数据 | `PlatformMetadata` | 声明内部名、实例 ID、展示名、默认配置和非流式能力 |
 | 入站消息 | `AstrBotMessage` + `MessageMember` + `Plain/Image` | 设置稳定消息 ID、会话、群组、发送者、自身 UID 和结构化 `raw_message` |
 | 事件 | `XiaoheiheMessageEvent(AstrMessageEvent)` | `send()` 完成平台处理后调用父类 `send()` |
-| 多人楼层身份 | `MessageMember.user_id` + `AstrMessageEvent.get_sender_id()` + 非临时 `extra_user_content_parts` | session 仍按楼层共享；每轮真实 UID 随 `role=user` 历史持久化，避免不同参与者被压成同一匿名用户 |
+| 多人楼层身份 | `MessageMember.user_id` + `AstrMessageEvent.get_sender_id()` + 非临时 `extra_user_content_parts` | session 仍按楼层共享；每轮真实昵称与 UID 随 `role=user` 历史持久化，评论、回复对象及图片描述均带程序校验的身份归属 |
 | Agent 回复聚合 | `on_agent_begin()` + `on_agent_done()` + `on_llm_response()` + `AstrMessageEvent.get_result()` | 无工具的普通回复直接完成；有工具时忽略 `tool_call` 控制消息、暂存中间文本，最终只提交一条小黑盒评论 |
 | Grok 带图查询兼容 | `on_using_llm_tool()` + `on_llm_tool_respond()` + `AstrMessageEvent.get_messages()` | 普通 `grok_web_search` 不接收早期隔离的原图；明确搜图只在工具调用期间临时恢复有界引用；其他工具保持原行为 |
 | 分段/流式回复 | 非流式平台 `send()` + `send_streaming()` | 分段清理前恢复完整文本，任意数量的分段或流式片段只提交一条小黑盒评论 |
@@ -179,9 +180,10 @@ AstrBot 4.26.8 的插件更新器替换 `data/plugins/<插件目录>`。本项�
 - 插件日志与缓存；
 - AstrBot 保存的同一个 `AstrBotConfig`。
 
-数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.16 的最新迁移版本仍为 v9：v7 新增的
+数据库打开时按 `schema_migrations` 顺序执行增量迁移。v1.2.17 的最新迁移版本为 v10：v7 新增的
 `notification_backfills` 保存通知回填边界，v8 增加长期清理索引，v9 新增视觉快照、事件绑定、
-机器人评论绑定及到期查询索引。旧版按浏览量统计的 `proactive_count` 仍沿用既有 v6 迁移规则，其余
+机器人评论绑定及到期查询索引，v10 为视觉快照增加所有者 UID、昵称和角色。旧版按浏览量统计的
+`proactive_count` 仍沿用既有 v6 迁移规则，其余
 已有记录原位保留；超过现有 `dedup_days` 保留期的已完成元数据会由日常清理分批回收。
 卸载时显式删除插件数据、手动删除数据目录或更改插件内部名称属于新的数据边界；更新前备份
 插件数据目录可用于回滚。

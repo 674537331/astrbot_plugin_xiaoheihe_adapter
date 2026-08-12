@@ -484,6 +484,9 @@ class Repository:
         provider_id: str,
         model: str,
         ttl_seconds: int,
+        owner_uid: str = "",
+        owner_nickname: str = "",
+        owner_role: str = "unknown",
         now: float | None = None,
     ) -> dict[str, Any]:
         """Reuse or persist one immutable, bounded visual description."""
@@ -494,6 +497,11 @@ class Repository:
             raise ValueError("视觉上下文描述不能为空")
         if not profile_id or not post_id or not image_fingerprint:
             raise ValueError("视觉上下文缺少账号、帖子或图片指纹")
+        safe_owner_uid = str(owner_uid or "")[:80]
+        safe_owner_nickname = str(owner_nickname or "")[:80]
+        safe_owner_role = str(owner_role or "unknown")[:32]
+        if safe_owner_role not in {"current_sender", "post_author", "unknown"}:
+            safe_owner_role = "unknown"
         caption_hash = hashlib.sha256(safe_caption.encode("utf-8")).hexdigest()
         async with self.db.transaction() as connection:
             cursor = await connection.execute(
@@ -501,6 +509,7 @@ class Repository:
                 SELECT * FROM visual_contexts
                 WHERE profile_id = ? AND post_id = ? AND source = ?
                   AND image_fingerprint = ? AND caption_hash = ? AND expires_at > ?
+                  AND owner_uid = ? AND owner_nickname = ? AND owner_role = ?
                 ORDER BY expires_at DESC, id DESC
                 LIMIT 1
                 """,
@@ -511,6 +520,9 @@ class Repository:
                     image_fingerprint,
                     caption_hash,
                     current,
+                    safe_owner_uid,
+                    safe_owner_nickname,
+                    safe_owner_role,
                 ),
             )
             existing = await cursor.fetchone()
@@ -521,8 +533,9 @@ class Repository:
                 INSERT INTO visual_contexts(
                     profile_id, post_id, source, image_fingerprint,
                     image_hosts_json, image_count, caption, caption_hash,
-                    provider_id, model, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider_id, model, created_at, expires_at,
+                    owner_uid, owner_nickname, owner_role
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_id,
@@ -537,6 +550,9 @@ class Repository:
                     str(model or "")[:256],
                     current,
                     current + safe_ttl,
+                    safe_owner_uid,
+                    safe_owner_nickname,
+                    safe_owner_role,
                 ),
             )
             if insert.lastrowid is None:

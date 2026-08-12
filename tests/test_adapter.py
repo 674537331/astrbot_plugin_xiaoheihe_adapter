@@ -18,7 +18,9 @@ from xiaoheihe.adapter import (
 from xiaoheihe.context_builder import BuiltContext
 from xiaoheihe.event import XiaoheiheMessageEvent
 from xiaoheihe.models import (
+    ContentOwnerRole,
     Credentials,
+    ImageAttribution,
     Notification,
     NotificationType,
     PermissionDecision,
@@ -298,6 +300,74 @@ async def test_dispatch_keeps_shared_floor_session_but_distinct_senders(monkeypa
         assert event_b.message_obj.sender.user_id == "222"
         assert event_a.message_obj.sender.nickname == "A"
         assert event_b.message_obj.sender.nickname == "B"
+    finally:
+        unbind_runtime(runtime)
+
+
+async def test_dispatch_serializes_one_owner_binding_per_image(monkeypatch) -> None:
+    async def finish_immediately(self):
+        return None
+
+    monkeypatch.setattr(XiaoheiheMessageEvent, "wait_finished", finish_immediately)
+    runtime = FakeRuntime()
+    bind_runtime(runtime)
+    queue = asyncio.Queue()
+    adapter = XiaoheihePlatformAdapter(
+        {"id": "xhh-1", "profile_id": "default"},
+        {},
+        queue,
+    )
+    notification = Notification(
+        profile_id="default",
+        external_event_id="event-bound-image",
+        external_comment_id="comment-bound-image",
+        notification_id="notification-bound-image",
+        event_type=NotificationType.REPLY,
+        sender_uid="commenter-1",
+        sender_nickname="评论者",
+        post_id="post-1",
+        root_comment_id="root-1",
+        parent_comment_id="root-1",
+        content="文字回复",
+        created_at=123.0,
+    )
+    attribution = ImageAttribution(
+        source="original_post",
+        owner_uid="author-1",
+        owner_nickname="楼主",
+        owner_role=ContentOwnerRole.POST_AUTHOR.value,
+    )
+    context = BuiltContext(
+        user_text="文字回复",
+        dynamic_context="背景",
+        image_urls=["https://cdn.example.com/post.png"],
+        warnings=[],
+        thread=ThreadContext(
+            post_id="post-1",
+            title="标题",
+            body="正文",
+            author_uid="author-1",
+            author_name="楼主",
+            comments=[],
+        ),
+        image_sources=["original_post"],
+        image_attributions=[attribution],
+    )
+    try:
+        await adapter._dispatch(
+            1,
+            notification,
+            context,
+            PermissionDecision(True, "测试"),
+        )
+        event = queue.get_nowait()
+        raw = event.message_obj.raw_message
+        assert raw["sender_uid"] == "commenter-1"
+        assert raw["sender_nickname"] == "评论者"
+        assert raw["post_author_uid"] == "author-1"
+        assert raw["post_author_nickname"] == "楼主"
+        assert raw["image_attributions"] == [attribution.as_dict()]
+        assert event.get_extra("xiaoheihe_image_attributions") == [attribution.as_dict()]
     finally:
         unbind_runtime(runtime)
 
