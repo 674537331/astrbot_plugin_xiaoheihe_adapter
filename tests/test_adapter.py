@@ -372,6 +372,65 @@ async def test_dispatch_serializes_one_owner_binding_per_image(monkeypatch) -> N
         unbind_runtime(runtime)
 
 
+async def test_dispatch_missing_uid_uses_non_authoritative_runtime_identity(monkeypatch) -> None:
+    async def finish_immediately(self):
+        return None
+
+    monkeypatch.setattr(XiaoheiheMessageEvent, "wait_finished", finish_immediately)
+    runtime = FakeRuntime()
+    bind_runtime(runtime)
+    queue = asyncio.Queue()
+    adapter = XiaoheihePlatformAdapter(
+        {"id": "xhh-1", "profile_id": "default"},
+        {},
+        queue,
+    )
+    notification = Notification(
+        profile_id="default",
+        external_event_id="event-anonymous",
+        external_comment_id="comment-anonymous",
+        notification_id="notification-anonymous",
+        event_type=NotificationType.REPLY,
+        sender_uid="",
+        sender_nickname="匿名用户",
+        post_id="post-1",
+        root_comment_id="root-1",
+        parent_comment_id="comment-anonymous",
+        content="仍然需要处理的消息",
+        created_at=123.0,
+    )
+    context = BuiltContext(
+        user_text=notification.content,
+        dynamic_context="背景",
+        image_urls=[],
+        warnings=[],
+        thread=ThreadContext(
+            post_id="post-1",
+            title="标题",
+            body="正文",
+            author_uid="author-1",
+            author_name="楼主",
+            comments=[],
+        ),
+    )
+    try:
+        await adapter._dispatch(
+            1,
+            notification,
+            context,
+            PermissionDecision(True, "测试"),
+        )
+        event = queue.get_nowait()
+        raw = event.message_obj.raw_message
+        assert event.message_obj.sender.user_id.startswith("xhh_unverified_")
+        assert raw["sender_uid"] == ""
+        assert raw["sender_uid_verified"] is False
+        assert raw["sender_identity_key"] == "event:default:comment-anonymous"
+        assert raw["sender_runtime_id"] == event.message_obj.sender.user_id
+    finally:
+        unbind_runtime(runtime)
+
+
 async def test_synthetic_dispatch_routes_unreviewed_mode_to_real_delivery() -> None:
     runtime = FakeRuntime(
         proactive_dry_run=False,

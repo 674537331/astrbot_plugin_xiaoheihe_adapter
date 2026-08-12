@@ -179,8 +179,14 @@ class ContextBuilder:
         current_identity = _render_identity(
             notification.sender_nickname,
             notification.sender_uid,
+            identity_key=notification.sender_identity_key,
         )
-        post_identity = _render_identity(thread.author_name, thread.author_uid)
+        post_identity_key = _post_author_identity_key(notification.profile_id, thread.post_id)
+        post_identity = _render_identity(
+            thread.author_name,
+            thread.author_uid,
+            identity_key=post_identity_key,
+        )
         timing = "\n".join(
             [
                 '<xiaoheihe_runtime_metadata trust="trusted">',
@@ -209,8 +215,9 @@ class ContextBuilder:
                     "必须依据作者内容发布时间。"
                 ),
                 (
-                    "4. 同一楼层会话可能有多个不同 UID 的发言人；每条消息中的第一人称"
-                    "只属于该条消息标注的发言人，不得因共享会话历史把不同 UID 当成同一人。"
+                    "4. 同一楼层会话可能有多个发言人；每条消息中的第一人称只属于该条消息标注的"
+                    "发言人，不得因共享会话历史把不同 UID 当成同一人；UID 缺失时也不得把不同"
+                    "本地身份锚点当成同一人。"
                 ),
                 "</xiaoheihe_runtime_metadata>",
             ]
@@ -280,6 +287,7 @@ class ContextBuilder:
                     fallback="未知昵称",
                 ),
                 owner_role=ContentOwnerRole.CURRENT_SENDER.value,
+                owner_identity_key=notification.sender_identity_key,
             )
             if is_thread_reply
             else ImageAttribution(
@@ -287,6 +295,7 @@ class ContextBuilder:
                 owner_uid=_clean_identity_part(thread.author_uid, fallback="未知"),
                 owner_nickname=_clean_identity_part(thread.author_name, fallback="未知昵称"),
                 owner_role=ContentOwnerRole.POST_AUTHOR.value,
+                owner_identity_key=post_identity_key,
             )
         )
         post_attribution = ImageAttribution(
@@ -294,6 +303,7 @@ class ContextBuilder:
             owner_uid=_clean_identity_part(thread.author_uid, fallback="未知"),
             owner_nickname=_clean_identity_part(thread.author_name, fallback="未知昵称"),
             owner_role=ContentOwnerRole.POST_AUTHOR.value,
+            owner_identity_key=post_identity_key,
         )
         image_urls, image_attributions, warnings = await self._collect_images(
             _interleave_attributed_images(
@@ -438,13 +448,21 @@ class ContextBuilder:
                         "uid",
                         user.get(
                             "heybox_id",
-                            user.get("user_id", user.get("userid", user.get("id", ""))),
+                            user.get(
+                                "heyboxid",
+                                user.get("user_id", user.get("userid", user.get("id", ""))),
+                            ),
                         ),
                     )
                 ),
                 max_chars=80,
             ).replace("\n", " ")
-            identity = _render_identity(nickname, uid)
+            comment_id = _comment_id(item)
+            identity = _render_identity(
+                nickname,
+                uid,
+                identity_key=(f"comment:{comment_id}" if comment_id else f"thread-item:{index}"),
+            )
             content = clean_untrusted_text(
                 str(item.get("content", item.get("text", ""))),
                 bot_names=bot_names,
@@ -550,13 +568,24 @@ class ContextBuilder:
                 target_user.get(
                     "heybox_id",
                     target_user.get(
-                        "user_id",
-                        target_user.get("userid", target_user.get("id", "")),
+                        "heyboxid",
+                        target_user.get(
+                            "user_id",
+                            target_user.get("userid", target_user.get("id", "")),
+                        ),
                     ),
                 ),
             )
         )
-        identity = _render_identity(nickname, uid)
+        identity = _render_identity(
+            nickname,
+            uid,
+            identity_key=(
+                f"comment:{target_id}"
+                if target_id
+                else f"reply-target:{notification.sender_identity_key}"
+            ),
+        )
         id_label = f"评论 {target_id}" if target_id else "直接回复对象"
         return target_id, f"{id_label}，{identity}: {target_text or '[无可读文本]'}"
 
@@ -731,11 +760,26 @@ def _clean_identity_part(value: object, *, fallback: str) -> str:
     )
 
 
-def _render_identity(nickname: object, uid: object) -> str:
-    return (
-        f"{_clean_identity_part(nickname, fallback='未知昵称')} "
-        f"(UID {_clean_identity_part(uid, fallback='未知')})"
+def _render_identity(
+    nickname: object,
+    uid: object,
+    *,
+    identity_key: object = "",
+) -> str:
+    safe_nickname = _clean_identity_part(nickname, fallback="未知昵称")
+    safe_uid = _clean_identity_part(uid, fallback="")
+    if safe_uid:
+        return f"{safe_nickname} (UID {safe_uid})"
+    safe_key = clean_untrusted_text(str(identity_key or ""), max_chars=72).replace("\n", " ")
+    return f"{safe_nickname} (UID 未提供；本地身份 {safe_key or '当前记录'})"
+
+
+def _post_author_identity_key(profile_id: object, post_id: object) -> str:
+    safe_profile = clean_untrusted_text(str(profile_id or "default"), max_chars=40).replace(
+        "\n", " "
     )
+    safe_post = clean_untrusted_text(str(post_id or "unknown"), max_chars=72).replace("\n", " ")
+    return f"post:{safe_profile}:{safe_post}:author"
 
 
 def _interleave_attributed_images(

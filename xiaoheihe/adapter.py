@@ -58,6 +58,7 @@ def _bound_image_attributions(
                     owner_uid=str(notification.sender_uid or "未知"),
                     owner_nickname=str(notification.sender_nickname or "未知昵称"),
                     owner_role=ContentOwnerRole.CURRENT_SENDER.value,
+                    owner_identity_key=notification.sender_identity_key,
                 )
             )
         elif source == "original_post":
@@ -67,6 +68,9 @@ def _bound_image_attributions(
                     owner_uid=str(context.thread.author_uid or "未知"),
                     owner_nickname=str(context.thread.author_name or "未知昵称"),
                     owner_role=ContentOwnerRole.POST_AUTHOR.value,
+                    owner_identity_key=(
+                        f"post:{notification.profile_id}:{notification.post_id}:author"
+                    ),
                 )
             )
         else:
@@ -352,8 +356,8 @@ class XiaoheihePlatformAdapter(Platform):
         message.message_id = notification.message_id
         message.group_id = notification.route.group_id
         message.sender = MessageMember(
-            user_id=str(notification.sender_uid),
-            nickname=notification.sender_nickname,
+            user_id=notification.sender_runtime_id,
+            nickname=notification.sender_nickname or "未知昵称",
         )
         components = [Plain(context.user_text)]
         image_understanding_enabled = bool(runtime_config["context"]["enable_image_understanding"])
@@ -387,6 +391,7 @@ class XiaoheihePlatformAdapter(Platform):
         message.message = components
         message.message_str = context.user_text
         message.timestamp = int(notification.created_at or time.time())
+        post_author_uid = str(context.thread.author_uid or notification.post_author_uid or "")
         message.raw_message = {
             "event_type": notification.event_type.value,
             "incoming_event_id": event_id,
@@ -395,8 +400,15 @@ class XiaoheihePlatformAdapter(Platform):
             "external_event_id": notification.external_event_id,
             "external_comment_id": notification.external_comment_id,
             "sender_uid": str(notification.sender_uid),
+            "sender_uid_verified": notification.sender_uid_verified,
+            "sender_identity_key": notification.sender_identity_key,
+            "sender_runtime_id": notification.sender_runtime_id,
             "sender_nickname": str(notification.sender_nickname),
-            "post_author_uid": str(context.thread.author_uid or notification.post_author_uid),
+            "post_author_uid": post_author_uid,
+            "post_author_uid_verified": bool(post_author_uid),
+            "post_author_identity_key": (
+                f"post:{notification.profile_id}:{notification.post_id}:author"
+            ),
             "post_author_nickname": str(context.thread.author_name),
             "image_urls": list(context.image_urls),
             "image_sources": image_sources,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from xiaoheihe.models import EventState, Notification, NotificationType, RoutingTarget
@@ -41,6 +42,24 @@ async def test_outgoing_confirmation_self_loop_and_recent_match(repository) -> N
     )
     assert row["status"] == "sent"
     assert row["external_comment_id"] == "self-comment"
+
+
+async def test_claim_event_persists_missing_uid_content_and_local_identity(repository) -> None:
+    notification = make_notification("anonymous", uid="")
+    event_id = await repository.claim_event(notification)
+    assert event_id is not None
+
+    row = await repository.db.fetchone(
+        "SELECT sender_uid, content, raw_json FROM incoming_events WHERE id = ?",
+        (event_id,),
+    )
+    raw = json.loads(row["raw_json"])
+    assert row["sender_uid"] == ""
+    assert row["content"] == "content anonymous"
+    assert raw["_adapter_identity"] == {
+        "sender_uid_verified": False,
+        "sender_identity_key": "event:default:comment-anonymous",
+    }
 
 
 async def test_confirmed_send_without_returned_comment_id_does_not_store_blank_self_id(

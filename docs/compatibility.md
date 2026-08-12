@@ -9,8 +9,9 @@ AstrBot 4.27.2。v1.2.13 在 v1.2.12 焦点路由上增加被动长楼层的来�
 v1.2.14 在插件内部增加持久化通知回填以及压缩后的昵称/UID 身份锚点。v1.2.15 增加插件自有的
 视觉文字快照和评论 ID 绑定。v1.2.16 新增 `on_waiting_llm_request` 早期图片路由，并继续复用
 `Provider.text_chat()`、事件 extra 与 AstrBot 原生 Agent，不修改 system prompt / 人格。
-v1.2.17 在同一事件 extra、临时上下文和视觉快照上增加程序生成的昵称/UID 所有者绑定，不增加
-AstrBot API 依赖或额外模型调用。2026-08-12 发布 v1.2.17 前再次核对：
+v1.2.17 在同一事件 extra、临时上下文和视觉快照上增加程序生成的昵称/UID 所有者绑定；UID 缺失
+时使用不可授权的本地事件锚点，不丢弃通知，也不增加 AstrBot API 依赖或额外模型调用。2026-08-12
+发布 v1.2.17 前再次核对：
 
 - AstrBot 4.26.2 标签对应源码快照（提交 `a619988d2d181c884f7bf04e24f30c0ea0928ff6`）；
 - AstrBot 4.26.8 标签中的 `Platform`、平台管理器、注册器、消息和事件源码；
@@ -83,7 +84,7 @@ Agent 完成信号放行普通最终回复。最终发送仍优先恢复 `on_llm
 AstrBot 的 Conversation 以 `unified_msg_origin` 作为会话键，而本适配器的楼层 UMO 只包含
 `xhh_thread_<post_id>_<root_comment_id>`，因此同楼层不同 UID 会共享上下文。AstrBot 的历史
 `UserMessageSegment` 本身不保存平台 sender 字段。v1.2.11 不改变这一会话模型，而是在小黑盒
-`on_llm_request` 中把 `event.get_sender_id()` 生成的短 UID 身份块作为普通（非 temp）
+`on_llm_request` 中把适配器验证过的 UID（缺失时为明确标注的本地身份锚点）身份块作为普通（非 temp）
 `extra_user_content_parts` 追加到每轮用户输入；按 AstrBot 4.24+ 的官方语义，普通内容块会进入
 会话历史，只有 `mark_as_temp()` 才不持久化。QQ 和其他平台在钩子入口即返回，不添加该身份块。
 
@@ -129,6 +130,13 @@ v1.2.16 使用 `on_waiting_llm_request(priority=1000)` 修复 AstrBot 构建顺�
 AstrBot 主模型顺序生成有来源的文字描述。最终 `on_llm_request` 仍发生在 AstrBot 已附加人格、
 会话、工具与安全配置之后，插件只追加用户侧临时文字和非临时 UID 身份块。无图片事件不会调用
 任何辅助模型；其他平台在早期钩子入口返回。
+
+v1.2.17 继续使用相同的 `AstrBotMessage`、事件 extra 与 `on_llm_request` 接口。UID 正常时
+`MessageMember.user_id` 和权限链保持原值；UID 缺失时只为 AstrBot 的非空字段生成带
+`xhh_unverified_` 前缀的短哈希，并在身份块中明确写成“UID 未提供 + 本地身份锚点”。真实
+`sender_uid` 仍为空，因此这个备用值不会被自身、主人、管理员或 UID 黑白名单误认。长楼层
+压缩的 `speaker_key` 校验与视觉缓存帖子锚点都在插件本地完成，失败仍回退既有临时上下文或
+识图链，不修改 AstrBot Conversation、Agent、工具、人格、主 Provider 或全局回退列表。
 
 AstrBot 4.x 的 `_select_provider()` 接受单个 `selected_provider`，而 `_get_fallback_chat_providers()`
 只读取全局 `provider_settings.fallback_chat_models`，没有事件级回退列表 extra。插件不能在不修改

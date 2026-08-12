@@ -71,7 +71,13 @@ class FeedService:
             author_uid = str(
                 author.get(
                     "uid",
-                    author.get("heybox_id", author.get("user_id", author.get("id", ""))),
+                    author.get(
+                        "heybox_id",
+                        author.get(
+                            "heyboxid",
+                            author.get("user_id", author.get("userid", author.get("id", ""))),
+                        ),
+                    ),
                 )
             )
             if not self._eligible(post, author_uid):

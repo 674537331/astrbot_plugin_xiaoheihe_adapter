@@ -240,11 +240,98 @@ def test_image_attribution_is_uid_bound_and_mismatch_fails_closed(
     assert nickname_repaired[0].owner_uid == "commenter-1"
     assert nickname_repaired[0].owner_nickname == "评论者"
 
+    anonymous_event = type(
+        "Event",
+        (),
+        {
+            "message_obj": type(
+                "Message",
+                (),
+                {
+                    "raw_message": {
+                        "route": {"profile_id": "default"},
+                        "external_comment_id": "anonymous-comment",
+                        "sender_uid": "",
+                        "sender_uid_verified": False,
+                        "sender_identity_key": "event:default:anonymous-comment",
+                        "sender_nickname": "匿名评论者",
+                    }
+                },
+            )(),
+            "get_sender_id": lambda self: "xhh_unverified_runtime",
+            "get_sender_name": lambda self: "匿名评论者",
+        },
+    )()
+    anonymous_spoof = module.XiaoheiheAdapterPlugin._coerce_image_attribution(
+        anonymous_event,
+        {
+            "source": "current_comment",
+            "owner_uid": "forged-real-uid",
+            "owner_nickname": "匿名评论者",
+            "owner_role": "current_sender",
+            "owner_identity_key": "event:default:anonymous-comment",
+        },
+        fallback_source="current_comment",
+    )
+    assert anonymous_spoof.owner_uid == "未知"
+    assert anonymous_spoof.owner_identity_key == "event:default:anonymous-comment"
+
     extras["xiaoheihe_image_sources"] = ["current_comment"]
     extras["xiaoheihe_image_attributions"] = []
     failed_closed = module.XiaoheiheAdapterPlugin._normalized_image_attributions(event, request)
     assert all(item.source == "event_image" for item in failed_closed)
     assert all(item.owner_uid == "未知" for item in failed_closed)
+
+
+def test_post_scoped_visual_identity_survives_missing_uid_without_reusing_legacy_unknown(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    scoped = module.XiaoheiheAdapterPlugin._visual_record_attribution(
+        {
+            "profile_id": "default",
+            "post_id": "post-1",
+            "source": "original_post",
+            "owner_uid": "",
+            "owner_nickname": "楼主",
+            "owner_role": "post_author",
+        }
+    )
+    assert scoped is not None
+    assert scoped.owner_uid == "未知"
+    assert scoped.owner_nickname == "楼主"
+    assert scoped.owner_identity_key == "post:default:post-1:author"
+
+    expected = module.ImageAttribution(
+        source="original_post",
+        owner_uid="author-1",
+        owner_nickname="楼主",
+        owner_role="post_author",
+        owner_identity_key="post:default:post-1:author",
+    )
+    assert module.XiaoheiheAdapterPlugin._image_attributions_conflict(expected, scoped) is False
+
+    legacy = module.XiaoheiheAdapterPlugin._visual_record_attribution(
+        {
+            "profile_id": "default",
+            "post_id": "post-1",
+            "source": "original_post",
+            "owner_uid": "",
+            "owner_nickname": "",
+            "owner_role": "unknown",
+        }
+    )
+    assert legacy is None
 
 
 async def test_early_image_route_falls_back_in_configured_order(
@@ -696,6 +783,60 @@ async def test_xiaoheihe_sender_identity_persists_per_turn_in_shared_floor(
     await plugin.terminate()
 
 
+async def test_unverified_runtime_sender_id_is_not_presented_as_xiaoheihe_uid(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_using_provider(self, umo=None):
+            return type("Provider", (), {"provider_config": {"modalities": ["text"]}})()
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = type(
+        "Event",
+        (),
+        {
+            "message_obj": type(
+                "Message",
+                (),
+                {
+                    "raw_message": {
+                        "route": {"profile_id": "default"},
+                        "sender_uid": "",
+                        "sender_uid_verified": False,
+                        "sender_identity_key": "event:default:comment-anonymous",
+                        "sender_nickname": "匿名用户",
+                    }
+                },
+            )(),
+            "get_platform_name": lambda self: "xiaoheihe",
+            "get_sender_id": lambda self: "xhh_unverified_deadbeef",
+            "get_extra": lambda self, key, default="": default,
+        },
+    )()
+    request = ProviderRequest()
+    await plugin.inject_xiaoheihe_context(event, request)
+
+    identity_block = request.extra_user_content_parts[0].text
+    assert "小黑盒 UID: 未提供" in identity_block
+    assert "本地身份锚点: event:default:comment-anonymous" in identity_block
+    assert "xhh_unverified_deadbeef" not in identity_block
+    await plugin.terminate()
+
+
 async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
     isolated_smoke_import,
 ) -> None:
@@ -723,8 +864,8 @@ async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
     compressor = Provider(
         '{"post_summary":"原帖讨论显卡价格",'
         '"thread_overview":"楼层已经转而讨论电影续作",'
-        '"thread_items":[{"speaker":"A (UID a)","summary":"最近聊电影"},'
-        '{"speaker":"B (UID b)","summary":"认为第二部挺好"}],'
+        '"thread_items":[{"speaker_key":"speaker_1","summary":"最近聊电影"},'
+        '{"speaker_key":"speaker_2","summary":"认为第二部挺好"}],'
         '"local_topic":"电影续作","relation_to_post":"drifted"}'
     )
     main_provider = Provider()
@@ -793,8 +934,9 @@ async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
     assert "不可信社区数据" in compressor.calls[0]["prompt"]
     assert "那第一部呢？" in compressor.calls[0]["prompt"]
     assert (
-        '"recent_thread_participants_read_only":["A (UID a)","B (UID b)"]'
-        in (compressor.calls[0]["prompt"])
+        '"recent_thread_participants_read_only":['
+        '{"speaker_key":"speaker_1","identity":"A (UID a)"},'
+        '{"speaker_key":"speaker_2","identity":"B (UID b)"}]' in (compressor.calls[0]["prompt"])
     )
     assert len(request.extra_user_content_parts) == 3
     assert request.extra_user_content_parts[0].temp is False

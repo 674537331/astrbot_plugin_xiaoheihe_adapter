@@ -227,22 +227,32 @@ def test_response_shape_change_is_explicit() -> None:
             {"result": {"items": [{"comment": {}}]}},
             NotificationType.MENTION,
         )
-    with pytest.raises(ResponseShapeError, match="发送者 UID"):
-        parse_notifications(
-            "default",
-            {
-                "result": {
-                    "items": [
-                        {
-                            "id": "event",
-                            "post_id": "post",
-                            "comment": {"id": "comment", "content": "hello"},
-                        }
-                    ]
-                }
-            },
-            NotificationType.MENTION,
-        )
+
+
+def test_missing_sender_uid_keeps_notification_with_stable_local_identity() -> None:
+    page = parse_notifications(
+        "default",
+        {
+            "result": {
+                "items": [
+                    {
+                        "id": "event",
+                        "post_id": "post",
+                        "sender": {"nickname": "匿名用户"},
+                        "comment": {"id": "comment", "content": "hello"},
+                    }
+                ]
+            }
+        },
+        NotificationType.MENTION,
+    )
+
+    notification = page.items[0]["notification"]
+    assert notification.sender_uid == ""
+    assert notification.sender_uid_verified is False
+    assert notification.sender_identity_key == "event:default:comment"
+    assert notification.sender_runtime_id.startswith("xhh_unverified_")
+    assert notification.content == "hello"
 
 
 def test_millisecond_notification_timestamp_is_normalized() -> None:

@@ -113,6 +113,39 @@ async def test_optional_first_backfill_and_worker_dispatch(repository) -> None:
     assert dispatched
 
 
+async def test_uidless_recent_bot_comment_is_ignored_without_self_loop(repository) -> None:
+    dispatched = []
+
+    async def dispatch(*args):
+        dispatched.append(args)
+
+    service = make_service(repository, [], dispatch)
+    service.client.credentials = type("Credentials", (), {"nickname": "Bot"})()
+    notification = replace(
+        notice("uidless-self", time.time()),
+        sender_uid="",
+        sender_nickname="Bot",
+    )
+    await repository.record_outgoing_attempt(
+        "default",
+        None,
+        notification.route,
+        notification.content,
+        "sent",
+    )
+    assert await service.enqueue(notification)
+    _priority, _sequence, queued = await service._queue.get()
+    await service._handle(queued)
+
+    row = await repository.db.fetchone(
+        "SELECT status, error FROM incoming_events WHERE external_event_id = ?",
+        (notification.external_event_id,),
+    )
+    assert row["status"] == EventState.IGNORED.value
+    assert "匹配近期机器人评论" in row["error"]
+    assert dispatched == []
+
+
 async def test_real_type_17_mention_reaches_event_record(repository) -> None:
     parsed = parse_notifications(
         "default",
