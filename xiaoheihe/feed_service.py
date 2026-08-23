@@ -206,6 +206,8 @@ class FeedService:
         successful_pages = 0
         deduplicated: dict[str, dict[str, Any]] = {}
         for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
             if isinstance(result, BaseException):
                 continue
             successful_pages += 1
