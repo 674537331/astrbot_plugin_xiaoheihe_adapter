@@ -1,0 +1,93 @@
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.source-badge[data-mode="topics"] {
+  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.source-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.source-summary-card strong {
+  display: block;
+  max-width: 800px;
+  color: var(--text);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.source-summary-card p { margin: 0.28rem 0 0; }
+.source-kicker { color: var(--accent-strong); font-size: 0.8rem; font-weight: 800; }
+
+.source-editor {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.source-editor[hidden] { display: none; }
+.compact-heading { margin-bottom: 0.7rem; }
+.compact-heading h3, .compact-heading p { margin: 0; }
+.topic-probe-list { display: grid; gap: 0.65rem; margin-top: 0.8rem; }
+.source-actions { justify-content: flex-end; margin-top: 0.9rem; }
+
+.fallback-source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.65rem;
+}
+
+.fallback-source-option {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.fallback-source-option input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.fallback-source-option:has(input:disabled) {
+  opacity: 0.56;
+}
+
+.result[data-tone="success"] { color: var(--accent-strong); }
+.result[data-tone="warning"] { color: var(--warning); }
+.result[data-tone="error"] { color: var(--danger); }
+
+@media (max-width: 760px) {
+  .source-summary-card { align-items: stretch; flex-direction: column; }
+  .source-summary-card .button-row button { flex: 1; }
+  .fallback-source-grid { grid-template-columns: 1fr 1fr; }
+}
