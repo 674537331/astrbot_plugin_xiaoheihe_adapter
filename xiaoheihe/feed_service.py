@@ -10,11 +10,13 @@ from .api_client import SendUncertainError, XiaoheiheApiClient
 from .models import Notification, NotificationType, RoutingTarget
 from .repository import Repository
 from .security import clean_untrusted_text, sanitize_reply_text
+from .topic_service import fetch_topic_feed, normalize_topic_ids
 
 SyntheticDispatch = Callable[[Notification, dict[str, Any]], Awaitable[None]]
 ReviewedDelivery = Callable[[RoutingTarget, str], Awaitable[dict[str, Any]]]
 
 SKIP_PATTERN = re.compile(r"(广告|推广|抽奖|开奖|出售|收购|交易|代购|引战|骂战|互喷)", re.I)
+MAX_TOPIC_FETCH_CONCURRENCY = 4
 
 SECTION_ALIASES: dict[str, tuple[str, ...]] = {
     "all": (),
@@ -60,12 +62,15 @@ class FeedService:
         daily_limit = int(feed_config["max_per_day"])
         if counters["proactive_count"] >= daily_limit:
             return 0
-        page = await self.client.fetch_feed(offset=0)
+
+        posts = await self._load_feed_posts(feed_config)
         generated = 0
-        for post in page.items:
+        for post in posts:
             if generated >= int(feed_config["max_per_run"]):
                 break
             post_id = str(post.get("link_id", post.get("post_id", post.get("id", ""))))
+            if not post_id:
+                continue
             author = post.get("author", post.get("user", {}))
             author = author if isinstance(author, dict) else {}
             author_uid = str(
@@ -114,18 +119,75 @@ class FeedService:
                 ],
                 raw={"event_type": "proactive_feed", "post": post},
             )
+            source_topic_id = str(post.get("source_topic_id", "")).strip()
+            source_label = (
+                f"真实分区 · {source_topic_id}"
+                if source_topic_id
+                else f"推荐流 · {feed_config.get('source', 'all')}"
+            )
             await self.synthetic_dispatch(
                 notification,
                 {
-                    "candidate_reason": (
-                        f"推荐流 · {feed_config.get('source', 'all')} · 通过安全过滤器"
-                    ),
+                    "candidate_reason": f"{source_label} · 通过安全过滤器",
                     "post_title": str(post.get("title", "")),
                     "post_author_uid": author_uid,
+                    "source_topic_id": source_topic_id,
                 },
             )
             generated += 1
         return generated
+
+    async def _load_feed_posts(self, feed_config: dict[str, Any]) -> list[dict[str, Any]]:
+        topic_ids = normalize_topic_ids(feed_config.get("topic_ids", []))
+        if not topic_ids:
+            return list((await self.client.fetch_feed(offset=0)).items)
+
+        semaphore = asyncio.Semaphore(MAX_TOPIC_FETCH_CONCURRENCY)
+
+        async def load(topic_id: str):
+            async with semaphore:
+                return await fetch_topic_feed(self.client, topic_id)
+
+        results = await asyncio.gather(
+            *(load(topic_id) for topic_id in topic_ids),
+            return_exceptions=True,
+        )
+        successful_pages = 0
+        first_error: BaseException | None = None
+        deduplicated: dict[str, dict[str, Any]] = {}
+        for result in results:
+            if isinstance(result, BaseException):
+                first_error = first_error or result
+                continue
+            successful_pages += 1
+            for post in result.items:
+                post_id = str(post.get("link_id", post.get("post_id", post.get("id", ""))))
+                if not post_id:
+                    continue
+                existing = deduplicated.get(post_id)
+                if existing is None:
+                    deduplicated[post_id] = post
+                    continue
+                existing_topics = {
+                    str(value)
+                    for value in existing.get("matched_topic_ids", [])
+                    if str(value).strip()
+                }
+                existing_topics.add(str(existing.get("source_topic_id", "")))
+                existing_topics.add(str(post.get("source_topic_id", "")))
+                existing["matched_topic_ids"] = sorted(value for value in existing_topics if value)
+
+        if successful_pages == 0 and first_error is not None:
+            raise first_error
+
+        return sorted(
+            deduplicated.values(),
+            key=lambda post: (
+                float(post.get("created_at") or 0),
+                int(post.get("popularity_score") or 0),
+            ),
+            reverse=True,
+        )
 
     def _eligible(self, post: dict[str, Any], author_uid: str) -> bool:
         title = str(post.get("title", ""))
@@ -154,16 +216,19 @@ class FeedService:
         }
         if allowed_types and post_type not in allowed_types:
             return False
-        source = str(self.config["proactive_feed"].get("source", "all"))
-        aliases = SECTION_ALIASES.get(source, ())
-        if aliases:
-            section_names = {
-                str(value).strip().casefold()
-                for value in post.get("section_names", [])
-                if str(value).strip()
-            }
-            if not any(alias.casefold() in name for alias in aliases for name in section_names):
-                return False
+
+        topic_ids = normalize_topic_ids(self.config["proactive_feed"].get("topic_ids", []))
+        if not topic_ids:
+            source = str(self.config["proactive_feed"].get("source", "all"))
+            aliases = SECTION_ALIASES.get(source, ())
+            if aliases:
+                section_names = {
+                    str(value).strip().casefold()
+                    for value in post.get("section_names", [])
+                    if str(value).strip()
+                }
+                if not any(alias.casefold() in name for alias in aliases for name in section_names):
+                    return False
         keywords = [
             str(item).casefold()
             for item in self.config["proactive_feed"].get("keywords", [])
