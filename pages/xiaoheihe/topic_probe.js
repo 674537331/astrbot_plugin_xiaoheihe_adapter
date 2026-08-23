@@ -93,7 +93,7 @@ function renderTopics() {
   listNode.replaceChildren();
   if (!lastProbe?.topics?.length) return;
 
-  const query = String(searchNode.value || "").trim().casefold?.() || String(searchNode.value || "").trim().toLowerCase();
+  const query = String(searchNode.value || "").trim().toLowerCase();
   const groups = new Map();
   lastProbe.topics.forEach((topic) => {
     const topicId = String(topic.id || "").trim();
@@ -117,7 +117,10 @@ function renderTopics() {
   for (const [groupName, topics] of groups) {
     const section = document.createElement("details");
     section.className = "config-section";
-    section.open = Boolean(query) || topics.some((topic) => draftTopicIds.has(String(topic.id))) || groupName === "推荐";
+    section.open =
+      Boolean(query) ||
+      topics.some((topic) => draftTopicIds.has(String(topic.id))) ||
+      groupName === "推荐";
     const summary = document.createElement("summary");
     const heading = document.createElement("span");
     heading.textContent = groupName;
@@ -172,9 +175,11 @@ function renderFallbackSources() {
     checkbox.disabled = realTopicsEnabled;
     checkbox.addEventListener("change", () => {
       if (value === "all" && checkbox.checked) {
-        fallbackListNode.querySelectorAll('input[data-fallback-source]:not([data-fallback-source="all"])').forEach((input) => {
-          input.checked = false;
-        });
+        fallbackListNode
+          .querySelectorAll('input[data-fallback-source]:not([data-fallback-source="all"])')
+          .forEach((input) => {
+            input.checked = false;
+          });
       } else if (value !== "all" && checkbox.checked) {
         const all = fallbackListNode.querySelector('input[data-fallback-source="all"]');
         if (all) all.checked = false;
@@ -190,10 +195,13 @@ function renderFallbackSources() {
 
   saveFallbackButton.disabled = realTopicsEnabled;
   if (realTopicsEnabled) {
-    fallbackStatusNode.textContent = "已启用真实分区浏览，此项当前不生效。若本轮全部真实分区请求失败，将自动使用这里已保存的分类回退。";
+    fallbackStatusNode.textContent =
+      "已启用真实分区浏览，此项当前不生效。若本轮全部真实分区请求失败，将自动使用这里已保存的分类回退。";
     fallbackStatusNode.dataset.tone = "warning";
   } else {
-    fallbackStatusNode.textContent = `当前生效：${configuredFallbackSources().map((value) => FALLBACK_SOURCES.find(([key]) => key === value)?.[1] || value).join("、")}`;
+    fallbackStatusNode.textContent = `当前生效：${configuredFallbackSources()
+      .map((value) => FALLBACK_SOURCES.find(([key]) => key === value)?.[1] || value)
+      .join("、")}`;
     fallbackStatusNode.dataset.tone = "success";
   }
 }
@@ -316,13 +324,17 @@ cancelTopicButton?.addEventListener("click", () => {
 saveFallbackButton?.addEventListener("click", saveFallbackSources);
 searchNode?.addEventListener("input", renderTopics);
 sourcesTab?.addEventListener("click", () => {
-  loadSources({ probe: true }).catch((error) => setStatus(`浏览来源加载失败：${error.message}`, "error"));
+  loadSources({ probe: true }).catch((error) =>
+    setStatus(`浏览来源加载失败：${error.message}`, "error"),
+  );
 });
 profileSelect?.addEventListener("change", () => {
   lastProbe = null;
   lastProbeProfile = "";
   editorNode.hidden = true;
   if (document.getElementById("sources")?.classList.contains("active")) {
-    loadSources({ probe: true }).catch((error) => setStatus(`浏览来源加载失败：${error.message}`, "error"));
+    loadSources({ probe: true }).catch((error) =>
+      setStatus(`浏览来源加载失败：${error.message}`, "error"),
+    );
   }
 });
