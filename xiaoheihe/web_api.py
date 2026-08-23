@@ -282,7 +282,12 @@ class WebApiController:
 
             topic_by_id = {item["id"]: item for item in topics}
             candidate_ids: list[str] = []
-            for topic_id in [requested_topic, *configured_ids, *(item["id"] for item in topics[:5])]:
+            candidate_topics = [
+                requested_topic,
+                *configured_ids,
+                *(item["id"] for item in topics[:5]),
+            ]
+            for topic_id in candidate_topics:
                 if topic_id and topic_id in topic_by_id and topic_id not in candidate_ids:
                     candidate_ids.append(topic_id)
 
