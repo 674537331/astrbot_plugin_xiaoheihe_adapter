@@ -22,6 +22,7 @@
       <button data-tab="overview" class="active">状态总览</button>
       <button data-tab="login">扫码登录</button>
       <button data-tab="settings">设置</button>
+      <button data-tab="sources">浏览来源</button>
       <button data-tab="events">事件记录</button>
       <button data-tab="feed">主动审核</button>
       <button data-tab="logs">运行日志</button>
@@ -76,22 +77,61 @@
               <button id="restore-defaults" class="secondary">恢复默认</button>
             </div>
           </div>
-          <div class="topic-probe surface-inset" aria-labelledby="topic-probe-title">
-            <div class="section-heading">
-              <div>
-                <h3 id="topic-probe-title">真实分区探测与主动浏览</h3>
-                <p>只读调用小黑盒真实分区目录和分区帖子流；探测不会调用 AI、发帖、评论或修改小黑盒账号。可多选真实分区用于主动浏览。</p>
-              </div>
-              <div class="button-row">
-                <button id="probe-topics" class="secondary" type="button">探测真实分区</button>
-                <button id="save-topic-selection" type="button" disabled>保存分区选择</button>
-              </div>
-            </div>
-            <p id="topic-probe-status" class="result">尚未探测。请先在“扫码登录”中选择已登录档案。</p>
-            <div id="topic-probe-list" class="topic-probe-list"></div>
-          </div>
           <div id="config-form" class="config-form" aria-label="插件配置表单"></div>
           <p id="config-result" class="result"></p>
+        </div>
+      </section>
+
+      <section id="sources" class="panel">
+        <div class="surface">
+          <div class="section-heading">
+            <div>
+              <h2>主动浏览来源</h2>
+              <p>真实分区优先；仅在未选择真实分区或全部真实分区请求失败时，才使用兼容/回退推荐流分类。</p>
+            </div>
+            <span id="source-mode-badge" class="source-badge">读取中</span>
+          </div>
+
+          <div class="source-summary-card">
+            <div>
+              <p class="source-kicker">真实分区浏览（推荐）</p>
+              <strong id="source-summary-names">尚未选择真实分区</strong>
+              <p id="source-summary-count">0 个分区</p>
+            </div>
+            <div class="button-row">
+              <button id="probe-topics" class="secondary" type="button">探测/刷新真实分区</button>
+              <button id="edit-topic-selection" type="button">修改选择</button>
+            </div>
+          </div>
+          <p id="topic-probe-status" class="result">打开本页后会读取当前浏览来源配置。</p>
+
+          <div id="topic-selection-editor" class="source-editor" hidden>
+            <div class="section-heading compact-heading">
+              <div>
+                <h3>选择真实分区</h3>
+                <p>最多选择 20 个。支持按分区名称、所属组或 topic_id 搜索。</p>
+              </div>
+              <strong id="topic-selection-count">0 / 20</strong>
+            </div>
+            <input id="topic-search" type="search" placeholder="搜索：数码硬件、情投一盒、无畏契约、topic_id…" />
+            <div id="topic-probe-list" class="topic-probe-list"></div>
+            <div class="button-row source-actions">
+              <button id="save-topic-selection" type="button" disabled>保存真实分区</button>
+              <button id="cancel-topic-selection" class="secondary" type="button">取消</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="surface">
+          <div class="section-heading">
+            <div>
+              <h2>兼容/回退推荐流分类</h2>
+              <p>在没有选择任何真实分区时，以及所选真实分区本轮全部请求失败时生效。支持多选；“全部”与其他分类互斥。</p>
+            </div>
+            <button id="save-fallback-sources" type="button">保存回退分类</button>
+          </div>
+          <p id="fallback-source-status" class="result"></p>
+          <div id="fallback-source-list" class="fallback-source-grid"></div>
         </div>
       </section>
 
