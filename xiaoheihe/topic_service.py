@@ -15,7 +15,7 @@ MAX_TOPIC_SELECTIONS = 20
 async def fetch_topic_catalog(client: XiaoheiheApiClient) -> list[dict[str, str]]:
     """Read Xiaoheihe's real topic catalog without modifying account state."""
 
-    response = await client._request(  # noqa: SLF001 - package-internal HTTP contract
+    response = await client._request(
         EndpointName.TOPIC_INDEX,
         params={"type": "list"},
     )
@@ -45,7 +45,7 @@ async def fetch_topic_feed(
     normalized_offset = max(0, int(offset))
     normalized_limit = max(1, min(int(limit), 30))
     normalized_lastval = str(lastval or "").strip()[:2048]
-    response = await client._request(  # noqa: SLF001 - package-internal HTTP contract
+    response = await client._request(
         EndpointName.TOPIC_FEED,
         params={
             "topic_id": normalized_topic_id,
