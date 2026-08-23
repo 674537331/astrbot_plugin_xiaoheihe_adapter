@@ -32,11 +32,28 @@ def test_fallback_sources_accept_multiple_categories() -> None:
 
 
 @pytest.mark.parametrize(
+    "sources, expected",
+    [
+        (["all", "pc_game"], ["all"]),
+        (["pc_game", "pc_game"], ["pc_game"]),
+    ],
+)
+def test_fallback_sources_canonicalize_redundant_selection(
+    sources: list[str],
+    expected: list[str],
+) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"]["fallback_sources"] = sources
+
+    snapshot = ConfigService(config).snapshot()
+
+    assert snapshot["proactive_feed"]["fallback_sources"] == expected
+
+
+@pytest.mark.parametrize(
     "sources, message",
     [
         ([], "至少需要一个"),
-        (["all", "pc_game"], "不能同时选择"),
-        (["pc_game", "pc_game"], "重复分类"),
         (["not-a-source"], "不支持"),
     ],
 )
