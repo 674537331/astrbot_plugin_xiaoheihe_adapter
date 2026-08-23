@@ -101,5 +101,5 @@ def test_management_page_exposes_real_topic_probe_and_multiselect() -> None:
     assert 'id="save-topic-selection"' in html
     assert 'src="./topic_probe.js"' in html
     assert 'bridge.apiGet("feed/topics/probe"' in source
-    assert 'config.proactive_feed.topic_ids = selected' in source
+    assert "config.proactive_feed.topic_ids = selected" in source
     assert "MAX_SELECTED_TOPICS = 20" in source
