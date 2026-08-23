@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from xiaoheihe.config_service import ConfigService, ConfigValidationError, DEFAULT_CONFIG
+from xiaoheihe.config_service import DEFAULT_CONFIG, ConfigService, ConfigValidationError
 
 
 def config_with_topics(topic_ids: list[str]) -> dict:
