@@ -12,6 +12,12 @@ from astrbot.api.web import error_response, json_response, request, stream_respo
 from .config_service import DEFAULT_CONFIG, ConfigValidationError
 from .runtime import PLUGIN_NAME, RuntimeServices
 from .security import SecurityError, redact_data, redact_text, validate_profile_id
+from .topic_service import (
+    fetch_topic_catalog,
+    fetch_topic_feed,
+    normalize_topic_id,
+    normalize_topic_ids,
+)
 
 
 class WebApiController:
@@ -42,6 +48,12 @@ class WebApiController:
             ("config/defaults", self.config_defaults, ["GET"], "读取默认配置"),
             ("events", self.events, ["GET"], "查询事件记录"),
             ("feed/candidates", self.feed_candidates, ["GET"], "查询审核候选"),
+            (
+                "feed/topics/probe",
+                self.feed_topics_probe,
+                ["GET"],
+                "只读探测小黑盒真实分区",
+            ),
             (
                 "feed/candidates/<candidate_id>/approve",
                 self.feed_approve,
@@ -250,6 +262,76 @@ class WebApiController:
         except ValueError as exc:
             return error_response(str(exc), status_code=400)
 
+    async def feed_topics_probe(self):
+        """Discover Xiaoheihe's real topic catalog and verify one GET-only topic feed."""
+
+        if response := self._unauthorized():
+            return response
+        try:
+            profile_id = validate_profile_id(str(request.query.get("profile_id", "default")))
+            self.runtime.config.profile(profile_id)
+            requested_topic = str(request.query.get("topic_id", "")).strip()
+            if requested_topic:
+                requested_topic = normalize_topic_id(requested_topic)
+            await self.runtime.ensure_started()
+            client = await self.runtime.get_client(profile_id)
+            topics = await fetch_topic_catalog(client)
+            configured_ids = normalize_topic_ids(
+                self.runtime.config.snapshot()["proactive_feed"].get("topic_ids", [])
+            )
+
+            topic_by_id = {item["id"]: item for item in topics}
+            candidate_ids: list[str] = []
+            candidate_topics = [
+                requested_topic,
+                *configured_ids,
+                *(item["id"] for item in topics[:5]),
+            ]
+            for topic_id in candidate_topics:
+                if topic_id and topic_id in topic_by_id and topic_id not in candidate_ids:
+                    candidate_ids.append(topic_id)
+
+            verified_topic_id = ""
+            sample_posts: list[dict[str, Any]] = []
+            feed_error = ""
+            for topic_id in candidate_ids[:5]:
+                try:
+                    page = await fetch_topic_feed(client, topic_id, limit=3)
+                except Exception as exc:
+                    feed_error = _safe_error(exc)
+                    continue
+                verified_topic_id = topic_id
+                sample_posts = [
+                    {
+                        "post_id": str(
+                            post.get("link_id", post.get("post_id", post.get("id", "")))
+                        ),
+                        "title": str(post.get("title", ""))[:200],
+                        "created_at": post.get("created_at", 0),
+                    }
+                    for post in page.items[:3]
+                ]
+                feed_error = ""
+                break
+
+            return json_response(
+                {
+                    "read_only": True,
+                    "profile_id": profile_id,
+                    "topic_count": len(topics),
+                    "topics": topics,
+                    "configured_topic_ids": configured_ids,
+                    "feed_verified": bool(verified_topic_id),
+                    "verified_topic_id": verified_topic_id,
+                    "sample_posts": sample_posts,
+                    "feed_error": feed_error,
+                }
+            )
+        except (SecurityError, ConfigValidationError, ValueError) as exc:
+            return error_response(str(exc), status_code=400)
+        except Exception as exc:
+            return error_response(f"真实分区只读探测失败: {_safe_error(exc)}", status_code=502)
+
     async def feed_approve(self, candidate_id: str):
         if response := self._unauthorized():
             return response
@@ -379,7 +461,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.17"},
+            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.18"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),

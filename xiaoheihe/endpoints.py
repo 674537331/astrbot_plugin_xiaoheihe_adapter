@@ -20,6 +20,8 @@ class EndpointName(StrEnum):
     CREATE_COMMENT = "create_comment"
     RECENT_COMMENTS = "recent_comments"
     FEED = "feed"
+    TOPIC_INDEX = "topic_index"
+    TOPIC_FEED = "topic_feed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,8 @@ ENDPOINTS: dict[EndpointName, Endpoint] = {
     ),
     EndpointName.RECENT_COMMENTS: Endpoint("GET", "/bbs/app/comment/user", True, True),
     EndpointName.FEED: Endpoint("GET", "/bbs/app/feeds", True, True),
+    EndpointName.TOPIC_INDEX: Endpoint("GET", "/bbs/app/api/topic/index/", True, True),
+    EndpointName.TOPIC_FEED: Endpoint("GET", "/bbs/app/topic/feeds", True, True),
 }
 
 
