@@ -78,9 +78,7 @@ class FeedService:
             )
         )
         self._keywords = tuple(
-            str(item).casefold()
-            for item in feed_config.get("keywords", [])
-            if str(item).strip()
+            str(item).casefold() for item in feed_config.get("keywords", []) if str(item).strip()
         )
         self._allowed_types = frozenset(
             str(value).casefold()
@@ -267,9 +265,7 @@ class FeedService:
                 for value in post.get("section_names", [])
                 if str(value).strip()
             }
-            if not any(
-                alias in name for alias in self._fallback_aliases for name in section_names
-            ):
+            if not any(alias in name for alias in self._fallback_aliases for name in section_names):
                 return False
         return not self._keywords or any(keyword in text.casefold() for keyword in self._keywords)
 
