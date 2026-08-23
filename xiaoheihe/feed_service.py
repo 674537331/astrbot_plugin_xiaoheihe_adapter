@@ -35,6 +35,13 @@ SECTION_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+def _number(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class FeedService:
     def __init__(
         self,
@@ -53,6 +60,7 @@ class FeedService:
         self.synthetic_dispatch = synthetic_dispatch
         self.reviewed_delivery = reviewed_delivery
         self._approval_lock = approval_lock or asyncio.Lock()
+        self._topic_ids = tuple(normalize_topic_ids(config["proactive_feed"].get("topic_ids", [])))
 
     async def run_once(self) -> int:
         feed_config = self.config["proactive_feed"]
@@ -63,7 +71,7 @@ class FeedService:
         if counters["proactive_count"] >= daily_limit:
             return 0
 
-        posts = await self._load_feed_posts(feed_config)
+        posts = await self._load_feed_posts()
         generated = 0
         for post in posts:
             if generated >= int(feed_config["max_per_run"]):
@@ -94,7 +102,7 @@ class FeedService:
             if not await self.repository.reserve_proactive_request(self.profile_id, daily_limit):
                 break
             observed_at = time.time()
-            post_created_at = float(post.get("created_at") or 0)
+            post_created_at = _number(post.get("created_at"))
             notification = Notification(
                 profile_id=self.profile_id,
                 external_event_id=f"feed:{post_id}",
@@ -137,9 +145,8 @@ class FeedService:
             generated += 1
         return generated
 
-    async def _load_feed_posts(self, feed_config: dict[str, Any]) -> list[dict[str, Any]]:
-        topic_ids = normalize_topic_ids(feed_config.get("topic_ids", []))
-        if not topic_ids:
+    async def _load_feed_posts(self) -> list[dict[str, Any]]:
+        if not self._topic_ids:
             return list((await self.client.fetch_feed(offset=0)).items)
 
         semaphore = asyncio.Semaphore(MAX_TOPIC_FETCH_CONCURRENCY)
@@ -149,7 +156,7 @@ class FeedService:
                 return await fetch_topic_feed(self.client, topic_id)
 
         results = await asyncio.gather(
-            *(load(topic_id) for topic_id in topic_ids),
+            *(load(topic_id) for topic_id in self._topic_ids),
             return_exceptions=True,
         )
         successful_pages = 0
@@ -183,8 +190,8 @@ class FeedService:
         return sorted(
             deduplicated.values(),
             key=lambda post: (
-                float(post.get("created_at") or 0),
-                int(post.get("popularity_score") or 0),
+                _number(post.get("created_at")),
+                _number(post.get("popularity_score")),
             ),
             reverse=True,
         )
@@ -217,8 +224,7 @@ class FeedService:
         if allowed_types and post_type not in allowed_types:
             return False
 
-        topic_ids = normalize_topic_ids(self.config["proactive_feed"].get("topic_ids", []))
-        if not topic_ids:
+        if not self._topic_ids:
             source = str(self.config["proactive_feed"].get("source", "all"))
             aliases = SECTION_ALIASES.get(source, ())
             if aliases:
