@@ -76,6 +76,20 @@
               <button id="restore-defaults" class="secondary">恢复默认</button>
             </div>
           </div>
+          <div class="topic-probe surface-inset" aria-labelledby="topic-probe-title">
+            <div class="section-heading">
+              <div>
+                <h3 id="topic-probe-title">真实分区探测与主动浏览</h3>
+                <p>只读调用小黑盒真实分区目录和分区帖子流；探测不会调用 AI、发帖、评论或修改小黑盒账号。可多选真实分区用于主动浏览。</p>
+              </div>
+              <div class="button-row">
+                <button id="probe-topics" class="secondary" type="button">探测真实分区</button>
+                <button id="save-topic-selection" type="button" disabled>保存分区选择</button>
+              </div>
+            </div>
+            <p id="topic-probe-status" class="result">尚未探测。请先在“扫码登录”中选择已登录档案。</p>
+            <div id="topic-probe-list" class="topic-probe-list"></div>
+          </div>
           <div id="config-form" class="config-form" aria-label="插件配置表单"></div>
           <p id="config-result" class="result"></p>
         </div>
@@ -169,5 +183,6 @@
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script type="module" src="./app.js"></script>
+    <script type="module" src="./topic_probe.js"></script>
   </body>
 </html>
