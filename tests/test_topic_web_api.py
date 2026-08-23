@@ -23,7 +23,10 @@ class ProbeRuntime:
         return self.client
 
 
-async def test_topic_probe_is_get_only_and_returns_catalog_plus_sample(fake_config, monkeypatch) -> None:
+async def test_topic_probe_is_get_only_and_returns_catalog_plus_sample(
+    fake_config,
+    monkeypatch,
+) -> None:
     runtime = ProbeRuntime(fake_config)
     controller = WebApiController(runtime)
     REQUEST.username = "admin"
