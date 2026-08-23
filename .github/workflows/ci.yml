@@ -27,7 +27,9 @@ jobs:
       - name: Python compile smoke
         run: python -m compileall -q .
       - name: Frontend JavaScript syntax
-        run: node --check pages/xiaoheihe/app.js
+        run: |
+          node --check pages/xiaoheihe/app.js
+          node --check pages/xiaoheihe/topic_probe.js
       - name: AstrBot API stub import smoke
         run: >-
           python -c "from tests.astrbot_stubs import install; install();
