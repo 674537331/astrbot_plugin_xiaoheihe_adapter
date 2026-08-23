@@ -32,7 +32,10 @@ def topic_post(post_id: str, created_at: float, topic_id: str) -> dict:
     }
 
 
-async def test_real_topic_multiselect_merges_sorts_and_deduplicates(repository, monkeypatch) -> None:
+async def test_real_topic_multiselect_merges_sorts_and_deduplicates(
+    repository,
+    monkeypatch,
+) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["proactive_feed"].update(
         {
