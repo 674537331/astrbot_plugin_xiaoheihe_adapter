@@ -60,7 +60,34 @@ class FeedService:
         self.synthetic_dispatch = synthetic_dispatch
         self.reviewed_delivery = reviewed_delivery
         self._approval_lock = approval_lock or asyncio.Lock()
-        self._topic_ids = tuple(normalize_topic_ids(config["proactive_feed"].get("topic_ids", [])))
+
+        feed_config = config["proactive_feed"]
+        self._topic_ids = tuple(normalize_topic_ids(feed_config.get("topic_ids", [])))
+        fallback_values = feed_config.get("fallback_sources", ["all"])
+        legacy_source = str(feed_config.get("source", "")).strip()
+        if legacy_source and fallback_values == ["all"]:
+            fallback_values = [legacy_source]
+        self._fallback_sources = tuple(
+            str(value) for value in fallback_values if str(value).strip()
+        ) or ("all",)
+        self._fallback_aliases = tuple(
+            dict.fromkeys(
+                alias.casefold()
+                for source in self._fallback_sources
+                for alias in SECTION_ALIASES.get(source, ())
+            )
+        )
+        self._keywords = tuple(
+            str(item).casefold() for item in feed_config.get("keywords", []) if str(item).strip()
+        )
+        self._allowed_types = frozenset(
+            str(value).casefold()
+            for value in feed_config.get("allowed_post_types", [])
+            if str(value).strip()
+        )
+        self._author_blacklist = frozenset(
+            str(value) for value in config["permissions"].get("author_blacklist", [])
+        )
 
     async def run_once(self) -> int:
         feed_config = self.config["proactive_feed"]
@@ -128,11 +155,13 @@ class FeedService:
                 raw={"event_type": "proactive_feed", "post": post},
             )
             source_topic_id = str(post.get("source_topic_id", "")).strip()
-            source_label = (
-                f"真实分区 · {source_topic_id}"
-                if source_topic_id
-                else f"推荐流 · {feed_config.get('source', 'all')}"
-            )
+            feed_origin = str(post.get("_proactive_feed_origin", ""))
+            if source_topic_id:
+                source_label = f"真实分区 · {source_topic_id}"
+            elif feed_origin == "recommendation_fallback":
+                source_label = f"回退推荐流 · {','.join(self._fallback_sources)}"
+            else:
+                source_label = f"推荐流 · {','.join(self._fallback_sources)}"
             await self.synthetic_dispatch(
                 notification,
                 {
@@ -140,14 +169,27 @@ class FeedService:
                     "post_title": str(post.get("title", "")),
                     "post_author_uid": author_uid,
                     "source_topic_id": source_topic_id,
+                    "feed_origin": feed_origin,
                 },
             )
             generated += 1
         return generated
 
+    async def _load_recommendation_posts(self, *, fallback: bool) -> list[dict[str, Any]]:
+        page = await self.client.fetch_feed(offset=0)
+        origin = "recommendation_fallback" if fallback else "recommendation"
+        posts: list[dict[str, Any]] = []
+        for post in page.items:
+            if not isinstance(post, dict):
+                continue
+            item = dict(post)
+            item["_proactive_feed_origin"] = origin
+            posts.append(item)
+        return posts
+
     async def _load_feed_posts(self) -> list[dict[str, Any]]:
         if not self._topic_ids:
-            return list((await self.client.fetch_feed(offset=0)).items)
+            return await self._load_recommendation_posts(fallback=False)
 
         semaphore = asyncio.Semaphore(MAX_TOPIC_FETCH_CONCURRENCY)
 
@@ -160,11 +202,11 @@ class FeedService:
             return_exceptions=True,
         )
         successful_pages = 0
-        first_error: BaseException | None = None
         deduplicated: dict[str, dict[str, Any]] = {}
         for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
             if isinstance(result, BaseException):
-                first_error = first_error or result
                 continue
             successful_pages += 1
             for post in result.items:
@@ -184,8 +226,8 @@ class FeedService:
                 existing_topics.add(str(post.get("source_topic_id", "")))
                 existing["matched_topic_ids"] = sorted(value for value in existing_topics if value)
 
-        if successful_pages == 0 and first_error is not None:
-            raise first_error
+        if successful_pages == 0:
+            return await self._load_recommendation_posts(fallback=True)
 
         return sorted(
             deduplicated.values(),
@@ -211,36 +253,21 @@ class FeedService:
         self_uid = str(getattr(credentials, "uid", "") or "")
         if self_uid and author_uid == self_uid:
             return False
-        author_blacklist = {
-            str(value) for value in self.config["permissions"].get("author_blacklist", [])
-        }
-        if author_uid and author_uid in author_blacklist:
+        if author_uid and author_uid in self._author_blacklist:
             return False
-        allowed_types = {
-            str(value).casefold()
-            for value in self.config["proactive_feed"].get("allowed_post_types", [])
-            if str(value).strip()
-        }
-        if allowed_types and post_type not in allowed_types:
+        if self._allowed_types and post_type not in self._allowed_types:
             return False
 
-        if not self._topic_ids:
-            source = str(self.config["proactive_feed"].get("source", "all"))
-            aliases = SECTION_ALIASES.get(source, ())
-            if aliases:
-                section_names = {
-                    str(value).strip().casefold()
-                    for value in post.get("section_names", [])
-                    if str(value).strip()
-                }
-                if not any(alias.casefold() in name for alias in aliases for name in section_names):
-                    return False
-        keywords = [
-            str(item).casefold()
-            for item in self.config["proactive_feed"].get("keywords", [])
-            if str(item).strip()
-        ]
-        return not keywords or any(keyword in text.casefold() for keyword in keywords)
+        feed_origin = str(post.get("_proactive_feed_origin", ""))
+        if feed_origin.startswith("recommendation") and self._fallback_aliases:
+            section_names = {
+                str(value).strip().casefold()
+                for value in post.get("section_names", [])
+                if str(value).strip()
+            }
+            if not any(alias in name for alias in self._fallback_aliases for name in section_names):
+                return False
+        return not self._keywords or any(keyword in text.casefold() for keyword in self._keywords)
 
     async def approve(self, candidate_id: int, edited_text: str | None = None) -> str:
         async with self._approval_lock:

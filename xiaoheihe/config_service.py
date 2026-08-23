@@ -88,7 +88,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_per_run": 1,
         "max_per_day": 10,
         "topic_ids": [],
-        "source": "all",
+        "fallback_sources": ["all"],
         "keywords": [],
         "allowed_post_types": [],
     },
@@ -145,8 +145,9 @@ class ConfigService:
         self._config = config
         self._lock = asyncio.Lock()
         self._callbacks: list[RestartCallback] = []
-        merged = self._merge_defaults(dict(config), DEFAULT_CONFIG)
-        self._normalize_legacy(merged)
+        source = copy.deepcopy(dict(config))
+        self._normalize_legacy(source)
+        merged = self._merge_defaults(source, DEFAULT_CONFIG)
         self.validate(merged)
         self._replace_in_place(merged)
 
@@ -168,6 +169,9 @@ class ConfigService:
             raise ConfigValidationError(f"读取配置界面定义失败: {exc}") from exc
         if not isinstance(schema, dict):
             raise ConfigValidationError("配置界面定义根节点必须是对象")
+        proactive_items = schema.get("proactive_feed", {}).get("items", {})
+        if isinstance(proactive_items, dict):
+            proactive_items.pop("source", None)
         return schema
 
     def add_restart_callback(self, callback: RestartCallback) -> None:
@@ -188,8 +192,9 @@ class ConfigService:
         ]
 
     async def save(self, replacement: dict[str, Any]) -> set[str]:
-        candidate = self._merge_defaults(copy.deepcopy(replacement), DEFAULT_CONFIG)
-        self._normalize_legacy(candidate)
+        source = copy.deepcopy(replacement)
+        self._normalize_legacy(source)
+        candidate = self._merge_defaults(source, DEFAULT_CONFIG)
         self.validate(candidate)
         async with self._lock:
             previous = self.snapshot()
@@ -296,9 +301,18 @@ class ConfigService:
             raise ConfigValidationError("proactive_feed.topic_ids 不能包含重复分区")
         if any(not item.isdigit() or not 1 <= len(item) <= 32 for item in topic_ids):
             raise ConfigValidationError("proactive_feed.topic_ids 仅允许 1-32 位数字分区 ID")
-        source = proactive.get("source")
-        if source not in PROACTIVE_FEED_SOURCES:
-            raise ConfigValidationError("proactive_feed.source 必须是受支持的推荐流分区")
+
+        fallback_sources = proactive.get("fallback_sources")
+        if not isinstance(fallback_sources, list) or not fallback_sources:
+            raise ConfigValidationError("proactive_feed.fallback_sources 至少需要一个推荐流分类")
+        if not all(isinstance(item, str) for item in fallback_sources):
+            raise ConfigValidationError("proactive_feed.fallback_sources 必须是字符串列表")
+        if len(set(fallback_sources)) != len(fallback_sources):
+            raise ConfigValidationError("proactive_feed.fallback_sources 不能包含重复分类")
+        if any(item not in PROACTIVE_FEED_SOURCES for item in fallback_sources):
+            raise ConfigValidationError("proactive_feed.fallback_sources 包含不支持的推荐流分类")
+        if "all" in fallback_sources and len(fallback_sources) > 1:
+            raise ConfigValidationError("推荐流分类选择“全部”时不能同时选择其他分类")
 
         permissions = _object(config, "permissions")
         for key in (
@@ -344,10 +358,21 @@ class ConfigService:
     @staticmethod
     def _normalize_legacy(config: dict[str, Any]) -> None:
         proactive = config.get("proactive_feed")
-        if isinstance(proactive, dict):
-            source = proactive.get("source")
-            if source in LEGACY_FEED_SOURCES:
-                proactive["source"] = LEGACY_FEED_SOURCES[source]
+        if not isinstance(proactive, dict):
+            return
+
+        if "fallback_sources" not in proactive and "source" in proactive:
+            source = str(proactive.get("source", "all"))
+            proactive["fallback_sources"] = [LEGACY_FEED_SOURCES.get(source, source)]
+        fallback_sources = proactive.get("fallback_sources")
+        if isinstance(fallback_sources, list):
+            normalized: list[str] = []
+            for value in fallback_sources:
+                source = LEGACY_FEED_SOURCES.get(str(value), str(value))
+                if source not in normalized:
+                    normalized.append(source)
+            proactive["fallback_sources"] = ["all"] if "all" in normalized else normalized
+        proactive.pop("source", None)
 
     @classmethod
     def _merge_defaults(cls, value: Any, defaults: Any) -> Any:

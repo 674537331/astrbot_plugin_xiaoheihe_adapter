@@ -92,14 +92,19 @@ async def test_topic_probe_keeps_catalog_when_sample_feed_fails(fake_config, mon
     assert "temporary feed error" in response["json"]["feed_error"]
 
 
-def test_management_page_exposes_real_topic_probe_and_multiselect() -> None:
+def test_management_page_exposes_dedicated_browse_sources_ui() -> None:
     root = Path(__file__).resolve().parents[1]
     html = (root / "pages" / "xiaoheihe" / "index.html").read_text(encoding="utf-8")
     source = (root / "pages" / "xiaoheihe" / "topic_probe.js").read_text(encoding="utf-8")
 
-    assert 'id="probe-topics"' in html
-    assert 'id="save-topic-selection"' in html
-    assert 'src="./topic_probe.js"' in html
+    assert 'data-tab="sources"' in html
+    assert 'id="sources" class="panel"' in html
+    assert 'id="source-summary-names"' in html
+    assert 'id="topic-search"' in html
+    assert 'id="fallback-source-list"' in html
+    assert 'href="./sources.css"' in html
     assert 'bridge.apiGet("feed/topics/probe"' in source
-    assert "config.proactive_feed.topic_ids = selected" in source
+    assert "config.proactive_feed.topic_ids = [...draftTopicIds]" in source
+    assert "config.proactive_feed.fallback_sources = selected" in source
     assert "MAX_SELECTED_TOPICS = 20" in source
+    assert "已启用真实分区浏览，此项当前不生效。" in source
