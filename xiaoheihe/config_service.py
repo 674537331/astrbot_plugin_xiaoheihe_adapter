@@ -169,6 +169,9 @@ class ConfigService:
             raise ConfigValidationError(f"读取配置界面定义失败: {exc}") from exc
         if not isinstance(schema, dict):
             raise ConfigValidationError("配置界面定义根节点必须是对象")
+        proactive_items = schema.get("proactive_feed", {}).get("items", {})
+        if isinstance(proactive_items, dict):
+            proactive_items.pop("source", None)
         return schema
 
     def add_restart_callback(self, callback: RestartCallback) -> None:
