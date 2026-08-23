@@ -87,6 +87,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "jitter_seconds": 60,
         "max_per_run": 1,
         "max_per_day": 10,
+        "topic_ids": [],
         "source": "all",
         "keywords": [],
         "allowed_post_types": [],
@@ -286,6 +287,15 @@ class ConfigService:
                 raise ConfigValidationError(f"proactive_feed.{key} 必须是字符串列表")
             if any(len(item) > 100 for item in values):
                 raise ConfigValidationError(f"proactive_feed.{key} 单项不能超过 100 字符")
+        topic_ids = proactive.get("topic_ids")
+        if not isinstance(topic_ids, list) or not all(isinstance(item, str) for item in topic_ids):
+            raise ConfigValidationError("proactive_feed.topic_ids 必须是字符串列表")
+        if len(topic_ids) > 20:
+            raise ConfigValidationError("proactive_feed.topic_ids 最多选择 20 个真实分区")
+        if len(set(topic_ids)) != len(topic_ids):
+            raise ConfigValidationError("proactive_feed.topic_ids 不能包含重复分区")
+        if any(not item.isdigit() or not 1 <= len(item) <= 32 for item in topic_ids):
+            raise ConfigValidationError("proactive_feed.topic_ids 仅允许 1-32 位数字分区 ID")
         source = proactive.get("source")
         if source not in PROACTIVE_FEED_SOURCES:
             raise ConfigValidationError("proactive_feed.source 必须是受支持的推荐流分区")
