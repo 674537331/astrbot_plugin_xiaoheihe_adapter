@@ -9,11 +9,15 @@ from xiaoheihe.models import ApiPage
 
 
 class RealTopicClient:
-    def __init__(self) -> None:
+    def __init__(self, fallback_items: list[dict] | None = None) -> None:
         self.credentials = type("Credentials", (), {"uid": "bot"})()
+        self.fallback_items = fallback_items
 
     async def fetch_feed(self, **kwargs):
-        raise AssertionError("真实分区已选择时不应回退首页推荐流")
+        if self.fallback_items is None:
+            raise AssertionError("存在可用真实分区时不应回退首页推荐流")
+        assert kwargs == {"offset": 0}
+        return ApiPage(items=self.fallback_items)
 
 
 async def unused_delivery(route, text):
@@ -41,7 +45,7 @@ async def test_real_topic_multiselect_merges_sorts_and_deduplicates(
         {
             "enabled": True,
             "topic_ids": ["100", "200"],
-            "source": "mobile_game",
+            "fallback_sources": ["mobile_game"],
             "max_per_run": 3,
         }
     )
@@ -82,7 +86,7 @@ async def test_real_topic_multiselect_merges_sorts_and_deduplicates(
     assert all("真实分区" in item[1]["candidate_reason"] for item in dispatched)
 
 
-async def test_one_failed_real_topic_does_not_abort_other_topics(repository, monkeypatch) -> None:
+async def test_one_failed_real_topic_does_not_abort_or_fallback(repository, monkeypatch) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["proactive_feed"].update(
         {
@@ -116,26 +120,55 @@ async def test_one_failed_real_topic_does_not_abort_other_topics(repository, mon
     assert dispatched == ["healthy"]
 
 
-async def test_all_failed_real_topics_surface_error(repository, monkeypatch) -> None:
+async def test_all_failed_real_topics_fallback_to_recommendation_sources(
+    repository,
+    monkeypatch,
+) -> None:
     config = copy.deepcopy(DEFAULT_CONFIG)
-    config["proactive_feed"].update({"enabled": True, "topic_ids": ["100", "200"]})
+    config["proactive_feed"].update(
+        {
+            "enabled": True,
+            "topic_ids": ["100", "200"],
+            "fallback_sources": ["pc_game", "digital_tech"],
+            "max_per_run": 2,
+        }
+    )
 
     async def fake_topic_feed(client, topic_id, **kwargs):
         raise RuntimeError(f"failed {topic_id}")
 
+    fallback_items = [
+        {
+            "post_id": "fallback-pc",
+            "title": "PC 硬件讨论",
+            "content": "聊聊新的显卡和平台选择。",
+            "author": {"uid": "fallback-author"},
+            "section_names": ["Steam", "硬件"],
+        },
+        {
+            "post_id": "fallback-mobile",
+            "title": "手游讨论",
+            "content": "聊聊手游的新版本。",
+            "author": {"uid": "mobile-author"},
+            "section_names": ["手机游戏"],
+        },
+    ]
     monkeypatch.setattr(feed_module, "fetch_topic_feed", fake_topic_feed)
+    dispatched = []
+
+    async def dispatch(notification, metadata):
+        dispatched.append((notification.post_id, metadata))
+
     service = FeedService(
         "default",
         config,
-        RealTopicClient(),
+        RealTopicClient(fallback_items),
         repository,
-        unused_delivery,
+        dispatch,
         unused_delivery,
     )
 
-    try:
-        await service.run_once()
-    except RuntimeError as exc:
-        assert "failed" in str(exc)
-    else:
-        raise AssertionError("all failed topic feeds must not silently report success")
+    assert await service.run_once() == 1
+    assert dispatched[0][0] == "fallback-pc"
+    assert "回退推荐流" in dispatched[0][1]["candidate_reason"]
+    assert dispatched[0][1]["feed_origin"] == "recommendation_fallback"
