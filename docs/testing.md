@@ -7,8 +7,8 @@
 v1.3.3 上下文相关性与视觉路由优化的最终质量任务结果：
 
 ```text
-287 passed in 6.48s
-TOTAL 4113 statements / 1338 branches
+289 passed in 6.65s
+TOTAL 4118 statements / 1340 branches
 branch coverage: 83%
 ```
 
@@ -16,7 +16,7 @@ branch coverage: 83%
 
 ```text
 xiaoheihe/context_builder.py       91%
-xiaoheihe/context_compression.py   86%
+xiaoheihe/context_compression.py   85%
 xiaoheihe/context_relevance.py     90%
 xiaoheihe/config_service.py        84%
 xiaoheihe/feed_service.py          83%
