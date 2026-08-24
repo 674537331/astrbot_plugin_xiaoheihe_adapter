@@ -21,20 +21,21 @@ jobs:
         with:
           python-version: "3.12"
       - name: Apply final v1.3.3 patch
-        run: python tools/finalize_v133.py
-      - name: Format changed Python
+        run: |
+          python tools/finalize_v133.py
+          python tools/v133_version_sync.py
+      - name: Validate changed files
         run: |
           python -m pip install --disable-pip-version-check ruff PyYAML
-          ruff format main.py tests/test_main_contract.py tools/finalize_v133.py
+          ruff format main.py tests/test_main_contract.py tools/finalize_v133.py tools/v133_version_sync.py
           ruff check main.py tests/test_main_contract.py
           python tools/validate_repository.py
-      - name: Remove one-shot finalizer and commit
+          pytest -q tests/test_main_contract.py tests/test_v133_relevance.py
+      - name: Remove one-shot finalizers and commit
         run: |
-          rm -f tools/finalize_v133.py .github/workflows/v133_finalize.yml
+          rm -f tools/finalize_v133.py tools/v133_version_sync.py .github/workflows/v133_finalize.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
           git commit -m "feat: finalize v1.3.3 context relevance routing"
           git push origin HEAD:release/v1.3.3
-
-# connector-triggered rerun
