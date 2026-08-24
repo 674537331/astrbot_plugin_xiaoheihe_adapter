@@ -65,4 +65,10 @@ replace_once(
     '    assert "本轮省略原帖文字和原帖图片摘要" not in compressed\n'
     '    assert "已明显偏离原帖" not in compressed\n',
 )
+replace_once(
+    "tests/test_main_contract.py",
+    '    assert "- B (UID b)" in compressed\n'
+    '    assert "已明显偏离原帖" in compressed\n',
+    '    assert "- B (UID b)" in compressed\n',
+)
 print("generated regression fixture and legacy drift contracts normalized")
