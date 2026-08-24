@@ -6,20 +6,15 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.3.0**
+当前版本：**v1.3.1**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权工具仍由 AstrBot 负责；本插件负责小黑盒平台接入、上下文构建、图片预处理、幂等发送与主动浏览。
 
-## v1.3.0 重点
+## v1.3.1 重点
 
-- 新增与“设置 / 事件记录 / 日志”并列的 **“浏览来源”** 页面，主动浏览来源不再混在通用设置表单中。
-- **真实分区浏览优先**：通过只读分区目录探测真实 `topic_id`，最多选择 20 个分区；支持按分区名称、所属组和 `topic_id` 搜索。
-- 页面直接显示“已选择：无畏契约、Gal游戏综合区、动漫”等真实分区摘要与数量，并提供“探测/刷新真实分区”“修改选择”。
-- 旧推荐流分类升级为 **多选的兼容/回退推荐流分类**。没有选择真实分区时直接生效；本轮所选真实分区全部请求失败时自动接管。
-- 只要任意真实分区本轮读取成功，就只使用成功的真实分区结果，不把推荐流混入同一轮。
-- 旧 `proactive_feed.source` 会迁移到新的 `fallback_sources[]`；真实分区与回退分类持久化字段由独立页面管理。
-- 多真实分区最多 4 路并发读取，跨分区帖子按 ID 去重后按发布时间/热度合并排序；任务取消会直接传播，不会误判为分区失效并额外触发回退请求。
-- 主动浏览既有安全边界不变：默认关闭主动刷帖、默认 dry-run、默认真实发送前人工审核、每日/每轮 AI 请求上限继续生效。
+- 修复“浏览来源”保存后普通“设置”页可能持有旧配置快照并覆盖刚保存 `topic_ids` / `fallback_sources` 的问题；来源保存成功后刷新页面统一状态。
+- 补充真实分区任务取消回归测试，确保 `CancelledError` 不会被误判为全部分区失败并触发推荐流回退；修复分区选择从超限恢复后仍残留错误提示。
+- 保留 v1.3.0 的真实分区、多选回退、审核、额度与发送行为，不新增小黑盒 API、数据库迁移或运行依赖。
 
 完整历史见 [CHANGELOG.md](CHANGELOG.md)。
 
