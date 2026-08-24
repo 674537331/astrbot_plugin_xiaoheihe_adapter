@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - audit/v1.3.3-final
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   finalize:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.head_ref == 'audit/v1.3.3-final')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
