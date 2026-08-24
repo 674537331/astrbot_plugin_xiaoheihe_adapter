@@ -26,6 +26,7 @@ from .xiaoheihe.context_compression import (
     render_compressed_thread_context,
     render_image_context,
 )
+from .xiaoheihe.context_relevance import image_source_priority, should_preserve_original_post
 from .xiaoheihe.models import ContentOwnerRole, ImageAttribution
 from .xiaoheihe.provider_routing import (
     ProviderRoutePlan,
@@ -46,6 +47,9 @@ EARLY_IMAGE_SOURCES_EXTRA = "xiaoheihe_early_image_sources"
 EARLY_IMAGE_ATTRIBUTIONS_EXTRA = "xiaoheihe_early_image_attributions"
 EARLY_IMAGE_FAILURE_COUNT_EXTRA = "xiaoheihe_early_image_failure_count"
 EARLY_ROUTE_CONFIG_EXTRA = "xiaoheihe_early_route_config"
+EARLY_COMPRESSED_THREAD_CONTEXT_EXTRA = "xiaoheihe_early_compressed_thread_context"
+EARLY_THREAD_RELATION_EXTRA = "xiaoheihe_early_thread_relation"
+EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA = "xiaoheihe_early_thread_compression_attempted"
 IMAGE_SEARCH_INTENT_MARKERS = (
     "这张图",
     "这幅图",
@@ -78,7 +82,9 @@ MIN_IMAGE_REPLY_GRACE_SECONDS = 15.0
 MAX_IMAGE_ATTEMPT_SECONDS = 120.0
 IMAGE_CAPTION_CACHE_TTL_SECONDS = 24 * 60 * 60
 IMAGE_CAPTION_CACHE_MAX_ENTRIES = 512
-VALID_IMAGE_SOURCES = frozenset({"current_comment", "original_post", "event_image"})
+VALID_IMAGE_SOURCES = frozenset(
+    {"current_comment", "direct_reply_target", "thread_anchor", "original_post", "event_image"}
+)
 VALID_CONTENT_OWNER_ROLES = frozenset(item.value for item in ContentOwnerRole)
 
 
@@ -438,6 +444,29 @@ class XiaoheiheAdapterPlugin(Star):
         if not isinstance(value, dict):
             return fallback
         supplied_source = str(value.get("source", "") or "").strip()
+        if source in {"direct_reply_target", "thread_anchor"}:
+            expected_role = (
+                ContentOwnerRole.DIRECT_REPLY_TARGET.value
+                if source == "direct_reply_target"
+                else ContentOwnerRole.THREAD_ANCHOR.value
+            )
+            role = str(value.get("owner_role", "") or "").strip()
+            identity_key = cls._identity_value(value.get("owner_identity_key"), fallback="")
+            if (
+                supplied_source != source
+                or role != expected_role
+                or not identity_key.startswith("comment:")
+            ):
+                return cls._fallback_image_attribution(event, "event_image")
+            return ImageAttribution(
+                source=source,
+                owner_uid=cls._identity_value(value.get("owner_uid"), fallback="未知"),
+                owner_nickname=cls._identity_value(
+                    value.get("owner_nickname"), fallback="未知昵称"
+                ),
+                owner_role=expected_role,
+                owner_identity_key=identity_key,
+            )
         if supplied_source and supplied_source != source:
             return cls._fallback_image_attribution(event, "event_image")
         role = str(value.get("owner_role", "") or "").strip()
@@ -534,11 +563,10 @@ class XiaoheiheAdapterPlugin(Star):
         grouped: dict[ImageAttribution, list[str]] = {}
         for url, attribution in zip(urls, attributions, strict=True):
             grouped.setdefault(attribution, []).append(url)
-        order = {"current_comment": 0, "original_post": 1, "event_image": 2}
         return sorted(
             grouped.items(),
             key=lambda item: (
-                order.get(item[0].source, 2),
+                image_source_priority(item[0].source),
                 item[0].owner_uid,
                 item[0].owner_identity_key,
             ),
@@ -554,6 +582,12 @@ class XiaoheiheAdapterPlugin(Star):
         if source == "current_comment":
             label = "当前评论图片"
             priority = "highest"
+        elif source == "direct_reply_target":
+            label = "直接回复对象图片"
+            priority = "high"
+        elif source == "thread_anchor":
+            label = "楼层锚点图片"
+            priority = "medium"
         elif source == "original_post":
             label = "原帖图片"
             priority = "low"
@@ -628,6 +662,20 @@ class XiaoheiheAdapterPlugin(Star):
             event.set_extra(EARLY_IMAGE_PREPARED_EXTRA, True)
             return
 
+        compression_source = self._coerce_compression_source(
+            event.get_extra("xiaoheihe_compression_source", None)
+        )
+        if compression_source is not None:
+            precompressed = await self._compress_thread_context(
+                event,
+                compression_source,
+                provider_settings=provider_settings,
+                context_settings=context_settings,
+                profile_id=profile_id,
+            )
+            if precompressed:
+                event.set_extra(EARLY_COMPRESSED_THREAD_CONTEXT_EXTRA, precompressed)
+
         configured_limit = max(
             0,
             min(20, int(context_settings.get("max_images_per_event", 6))),
@@ -691,16 +739,28 @@ class XiaoheiheAdapterPlugin(Star):
                     "unverified_owner_uid_count": unverified_uid_count,
                 },
             )
-        selected = hidden[:configured_limit]
+        image_pairs = list(zip(hidden, normalized_attributions, strict=True))
+        if not self._preserve_original_post_context(event):
+            suppressed_post_images = sum(
+                1 for _hidden, attribution in image_pairs if attribution.source == "original_post"
+            )
+            image_pairs = [pair for pair in image_pairs if pair[1].source != "original_post"]
+            if suppressed_post_images:
+                self.runtime.logging.emit(
+                    "DEBUG",
+                    "楼层已确认歪楼，本轮不向视觉链注入原帖图片",
+                    profile_id=profile_id,
+                    details={
+                        **self._event_image_diagnostics(event),
+                        "suppressed_original_post_images": suppressed_post_images,
+                    },
+                )
+        selected = image_pairs[:configured_limit]
         urls: list[str] = []
         attributions: list[ImageAttribution] = []
         selected_hidden: list[tuple[int, Image]] = []
         omitted_counts: dict[ImageAttribution, int] = {}
-        for (index, component), attribution in zip(
-            selected,
-            normalized_attributions[:configured_limit],
-            strict=True,
-        ):
+        for (index, component), attribution in selected:
             url = self._image_component_url(component)
             if not url:
                 omitted_counts[attribution] = omitted_counts.get(attribution, 0) + 1
@@ -708,7 +768,7 @@ class XiaoheiheAdapterPlugin(Star):
             urls.append(url)
             attributions.append(attribution)
             selected_hidden.append((index, component))
-        for attribution in normalized_attributions[configured_limit:]:
+        for _hidden, attribution in image_pairs[configured_limit:]:
             omitted_counts[attribution] = omitted_counts.get(attribution, 0) + 1
 
         # Hide every image before AstrBot constructs ProviderRequest.  Only the
@@ -740,16 +800,14 @@ class XiaoheiheAdapterPlugin(Star):
         ]
         failed_count = sum(omitted_counts.values())
         try:
-            compression_source = self._coerce_compression_source(
-                event.get_extra("xiaoheihe_compression_source", None)
-            )
             if compression_source is not None:
-                await self._prepare_visual_context_for_reply(
-                    event,
-                    request,
-                    profile_id=profile_id,
-                    post_id=compression_source.post_id,
-                )
+                if self._preserve_original_post_context(event):
+                    await self._prepare_visual_context_for_reply(
+                        event,
+                        request,
+                        profile_id=profile_id,
+                        post_id=compression_source.post_id,
+                    )
                 event.set_extra("xiaoheihe_visual_cache_prepared", True)
                 failed_count += await self._preprocess_thread_images(
                     event,
@@ -885,7 +943,7 @@ class XiaoheiheAdapterPlugin(Star):
         compression_source = self._coerce_compression_source(
             event.get_extra("xiaoheihe_compression_source", None)
         )
-        if compression_source is not None:
+        if compression_source is not None and self._preserve_original_post_context(event):
             prepared_caption = clean_untrusted_text(
                 str(event.get_extra("xiaoheihe_cached_visual_caption", "") or ""),
                 max_chars=4000,
@@ -935,13 +993,18 @@ class XiaoheiheAdapterPlugin(Star):
         if has_split_context:
             selected_community = community_context
             if compression_source is not None:
-                compressed = await self._compress_thread_context(
-                    event,
-                    compression_source,
-                    provider_settings=provider_settings,
-                    context_settings=context_settings,
-                    profile_id=profile_id,
-                )
+                compressed = str(event.get_extra(EARLY_COMPRESSED_THREAD_CONTEXT_EXTRA, "") or "")
+                if not compressed:
+                    compressed = (
+                        await self._compress_thread_context(
+                            event,
+                            compression_source,
+                            provider_settings=provider_settings,
+                            context_settings=context_settings,
+                            profile_id=profile_id,
+                        )
+                        or ""
+                    )
                 if compressed:
                     selected_community = compressed
             dynamic_context = "\n".join(
@@ -1052,6 +1115,10 @@ class XiaoheiheAdapterPlugin(Star):
         image_requires_compression = len(source.post_image_caption) > image_chars
         if source.compressible_chars <= trigger_chars and not image_requires_compression:
             return None
+        get_extra = getattr(event, "get_extra", None)
+        if callable(get_extra) and bool(get_extra(EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA, False)):
+            return None
+        self._set_event_extra(event, EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA, True)
 
         post_chars = int(context_settings["thread_reply_compressed_post_chars"])
         comments_chars = int(context_settings["thread_reply_compressed_comments_chars"])
@@ -1145,7 +1212,19 @@ class XiaoheiheAdapterPlugin(Star):
                 "context",
                 provider_label,
             )
-            rendered = render_compressed_thread_context(source, result)
+            preserve_original_post = should_preserve_original_post(
+                result.relation_to_post,
+                explicit_post_reference=bool(
+                    self._event_raw_message(event).get("explicit_post_reference", False)
+                ),
+            )
+            rendered = render_compressed_thread_context(
+                source,
+                result,
+                preserve_original_post=preserve_original_post,
+            )
+            self._set_event_extra(event, EARLY_THREAD_RELATION_EXTRA, result.relation_to_post)
+            self._set_event_extra(event, EARLY_COMPRESSED_THREAD_CONTEXT_EXTRA, rendered)
             if result.post_image_summary:
                 set_extra = getattr(event, "set_extra", None)
                 if callable(set_extra):
@@ -1416,15 +1495,15 @@ class XiaoheiheAdapterPlugin(Star):
                     )
                 continue
 
-            if source == "current_comment":
-                # The user's own image is part of the highest-priority current
-                # message.  Preserve it only as the last-resort AstrBot native
-                # vision fallback; low-priority post images never get this path.
+            if source in {"current_comment", "direct_reply_target"}:
+                # Current and directly quoted images are the two nearest visual
+                # sources. Preserve them as the last-resort AstrBot native vision
+                # fallback; lower-priority anchor/post images remain fail-closed.
                 remaining_urls.extend(urls)
                 remaining_attributions.extend([attribution] * len(urls))
                 self.runtime.logging.emit(
                     "WARNING",
-                    "当前评论图片预处理失败，保留原图作为最终视觉兜底",
+                    "当前/直接回复图片预处理失败，保留原图作为最终视觉兜底",
                     profile_id=profile_id,
                     details={
                         "image_count": len(urls),
@@ -1487,6 +1566,12 @@ class XiaoheiheAdapterPlugin(Star):
         elif source == "current_comment":
             max_chars = max(1600, compressed_image_chars)
             priority = "highest"
+        elif source == "direct_reply_target":
+            max_chars = max(1200, compressed_image_chars)
+            priority = "high"
+        elif source == "thread_anchor":
+            max_chars = max(1000, compressed_image_chars)
+            priority = "medium"
         else:
             # Unknown provenance is deliberately treated as low-priority in a
             # passive floor reply: if it cannot be summarized, it is fail-closed.
@@ -2087,6 +2172,15 @@ class XiaoheiheAdapterPlugin(Star):
         return raw if isinstance(raw, dict) else {}
 
     @classmethod
+    def _preserve_original_post_context(cls, event: AstrMessageEvent) -> bool:
+        raw = cls._event_raw_message(event)
+        relation = event.get_extra(EARLY_THREAD_RELATION_EXTRA, "unclear")
+        return should_preserve_original_post(
+            relation,
+            explicit_post_reference=bool(raw.get("explicit_post_reference", False)),
+        )
+
+    @classmethod
     def _event_image_diagnostics(cls, event: AstrMessageEvent) -> dict[str, object]:
         raw = cls._event_raw_message(event)
         route = raw.get("route", {})
@@ -2263,6 +2357,8 @@ class XiaoheiheAdapterPlugin(Star):
         profile_id: str,
         post_id: str,
     ) -> ImageCaptionCacheEntry | None:
+        if not self._preserve_original_post_context(event):
+            return None
         image_urls = list(request.image_urls)
         attributions = self._normalized_image_attributions(event, request)
         if not image_urls:
@@ -2539,6 +2635,8 @@ class XiaoheiheAdapterPlugin(Star):
         *,
         context_settings: dict,
     ) -> None:
+        if not self._preserve_original_post_context(event):
+            return
         if bool(event.get_extra("xiaoheihe_visual_context_consumed", False)):
             return
         caption = clean_untrusted_text(
@@ -2620,7 +2718,13 @@ class XiaoheiheAdapterPlugin(Star):
                 base_timeout = 0.0
                 effective_timeout = 0.0
                 fallback_grace = 0.0
-            grace_seconds = effective_timeout - base_timeout - max(0.0, fallback_grace)
+            context_budget = float(raw_message.get("reply_timeout_context_seconds", 0) or 0)
+            grace_seconds = (
+                effective_timeout
+                - base_timeout
+                - max(0.0, fallback_grace)
+                - max(0.0, context_budget)
+            )
             if base_timeout > 0 and grace_seconds > 0:
                 return min(count_linked_budget, grace_seconds)
         return count_linked_budget
@@ -2645,7 +2749,11 @@ class XiaoheiheAdapterPlugin(Star):
         image_count: int,
     ) -> str:
         source = attribution.source
-        label = "原帖图片" if source == "original_post" else "来源无法确认的楼层图片"
+        label = {
+            "original_post": "原帖图片",
+            "direct_reply_target": "直接回复对象图片",
+            "thread_anchor": "楼层锚点图片",
+        }.get(source, "来源无法确认的楼层图片")
         return "\n".join(
             [
                 (

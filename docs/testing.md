@@ -1,22 +1,23 @@
-# 测试说明（v1.3.2）
+# 测试说明（v1.3.3）
 
 ## 最近一次完整验证
 
 日期：**2026-08-24**
 
-v1.3.2 身份上下文专项修复的核心质量任务结果：
+v1.3.3 上下文相关性与视觉路由优化的最终质量任务结果：
 
 ```text
-280 passed in 6.53s
-TOTAL 4012 statements / 1302 branches
+287 passed in 6.48s
+TOTAL 4113 statements / 1338 branches
 branch coverage: 83%
 ```
 
 关键模块覆盖率：
 
 ```text
-xiaoheihe/context_builder.py       93%
-xiaoheihe/context_compression.py   85%
+xiaoheihe/context_builder.py       91%
+xiaoheihe/context_compression.py   86%
+xiaoheihe/context_relevance.py     90%
 xiaoheihe/config_service.py        84%
 xiaoheihe/feed_service.py          83%
 xiaoheihe/topic_service.py         91%
@@ -28,7 +29,7 @@ xiaoheihe/security.py              83%
 
 - `python tools/validate_repository.py`；
 - Ruff lint；
-- Ruff format check（73 个 Python 文件）；
+- Ruff format check（75 个 Python 文件）；
 - `python -m compileall -q .`；
 - `node --check pages/xiaoheihe/app.js`；
 - `node --check pages/xiaoheihe/topic_probe.js`；
@@ -38,7 +39,7 @@ xiaoheihe/security.py              83%
 - 当前支持范围内最新稳定 AstrBot 兼容检查；
 - Dependency Review；
 - Secret Scan；
-- CodeQL Python / JavaScript-TypeScript（以最终发布态 PR 检查结果为准）。
+- CodeQL Python / JavaScript-TypeScript。
 
 ## 本地执行
 
@@ -55,6 +56,48 @@ coverage report
 ```
 
 CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本做包级 API 契约检查。
+
+## v1.3.3 新增重点测试
+
+### 1. 楼层相关性路由
+
+覆盖：
+
+- `related` / `partial` / `unclear` 默认保留原帖，未知关系值也 fail-open；
+- 只有语义压缩明确返回 `drifted` 时才允许省略低相关原帖文字和原帖图片摘要；
+- 当前消息显式提到原帖、主帖、楼主、帖子内容或原帖图片时强制恢复原帖；
+- `drifted` 渲染仍完整保留当前消息、直接回复对象、局部楼层主题和参与者归属，不把内部“歪楼”判断当成 Bot 对用户的说教文本；
+- 长楼层压缩失败时继续回退确定性窗口，不阻断主回复。
+
+### 2. 图片来源距离与归属
+
+覆盖：
+
+- 图片稳定优先级为“当前评论 → 直接回复对象 → 楼层锚点 → 原帖”；
+- 当前评论图片很多时，直接回复对象和楼层锚点仍能先保留至少一个近距离代表图，低优先级原帖图不挤占本地图片槽位；
+- 直接回复对象与楼层锚点图片能够从楼层树 / 通知回退字段提取；
+- 新增来源携带独立所有者 UID、昵称、角色与 `comment:<id>` 本地身份键；
+- 来源/角色/身份键不一致时继续 fail-closed；
+- 当前评论和直接回复对象图片预处理失败时允许原生视觉兜底，楼层锚点与原帖低优先级图片仍保持受控降级。
+
+### 3. 慢 Provider 时间预算与单次压缩
+
+覆盖：
+
+- 外层回复 timeout 独立预留 `context + vision + main + fallback` 预算；
+- 图片预算计算会扣除上下文压缩预留，避免视觉链侵占主回复或 fallback 时间；
+- 同一事件的长楼层压缩最多真正请求一次上下文 Provider；
+- 前置压缩失败后，后续 `on_llm_request` 不会再次请求同一个慢 Provider；
+- 不实现 `get_extra()` 的最小兼容测试事件仍可安全调用压缩逻辑。
+
+### 4. 正常路径回归
+
+覆盖：
+
+- 普通短帖子/回复不因 v1.3.3 新增额外 LLM 判断；
+- 正常与原帖相关的楼层继续保留原帖文字和原帖图；
+- 帖子级消息、主动浏览、权限、AI 额度、审核、幂等发送、数据库和会话 ID 行为不变；
+- 用户从局部话题重新明确引用原帖时可以立即恢复原帖上下文，不被之前的 `drifted` 状态锁死。
 
 ## v1.3.2 新增重点测试
 

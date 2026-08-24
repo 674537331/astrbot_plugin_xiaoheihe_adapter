@@ -21,7 +21,7 @@
           if (path === "config/schema") return {};
           if (path === "status") {
             return {
-              version: "v1.3.2",
+              version: "v1.3.3",
               profiles: [],
               adapters: [],
               tasks: [],
@@ -63,7 +63,7 @@
         unsubscribeSSE: async () => {},
       };
 
-      fetch("/pages/xiaoheihe/index.html?v=1.3.2", { cache: "no-store" })
+      fetch("/pages/xiaoheihe/index.html?v=1.3.3", { cache: "no-store" })
         .then((response) => response.text())
         .then((html) => {
           document.open();

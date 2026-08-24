@@ -1,4 +1,4 @@
-# AstrBot 兼容性说明（v1.3.2）
+# AstrBot 兼容性说明（v1.3.3）
 
 ## 支持范围
 
@@ -15,7 +15,7 @@ CI 当前同时检查：
 - 重点兼容版本 AstrBot 4.26.2；
 - 当前支持范围内的最新稳定 AstrBot 包。
 
-v1.3.2 只收敛插件送入 Agent 的身份上下文表达并修正主动浏览来源描述，不引入新的 AstrBot 核心 API、小黑盒 API、数据库迁移、配置项或运行依赖，也不改变 QQ 或其他平台行为。
+v1.3.3 只调整插件送入 Agent 的楼层相关性路由、图片来源优先级和辅助处理时间预算，不引入新的 AstrBot 核心 API、小黑盒 API、数据库迁移、配置项或运行依赖，也不改变 QQ 或其他平台行为。
 
 ## 使用的 AstrBot 能力
 
@@ -26,7 +26,7 @@ v1.3.2 只收敛插件送入 Agent 的身份上下文表达并修正主动浏览
 | 事件提交 | `Platform.commit_event()` | 进入 AstrBot 原生事件队列 |
 | 回复事件 | `AstrMessageEvent` 子类 | 只在最终文本聚合完成后提交小黑盒评论 |
 | Agent 生命周期 | `on_agent_begin` / `on_agent_done` / `on_llm_response` | 区分工具状态、中间文本与最终答案 |
-| 图片预处理 | `on_waiting_llm_request` + Provider API | 主 Agent 构建前完成图片转述/隔离 |
+| 图片预处理 | `on_waiting_llm_request` + Provider API | 主 Agent 构建前完成图片转述/隔离和楼层相关性前置复用 |
 | 用户侧临时背景 | `on_llm_request` + `extra_user_content_parts` / `mark_as_temp()` | 帖子/楼层动态背景不重复写入 Conversation |
 | 发送者身份 | 非临时 `extra_user_content_parts` | 每轮完整昵称 + UID / 备用锚点只由可信 sender binding 持久化；临时背景引用该绑定 |
 | Provider 选择 | `selected_provider` + `Context.get_provider_by_id()` | 插件主模型仍进入 AstrBot 原生 Agent；回退列表由 AstrBot 全局配置决定 |
@@ -79,7 +79,7 @@ fallback_sources = ["digital_tech", "pc_game", ...]
 
 而旧 `source` 仍然存在。迁移器会把这个 schema 默认值视为“尚未迁移”，优先保留旧非默认分类。若配置中已经存在新的非默认 `fallback_sources`，则新配置优先，不会被残留旧字段覆盖。
 
-v1.3.2 不修改任何配置字段或默认值。
+v1.3.3 不修改任何配置字段、默认值或迁移规则。
 
 ## Plugin Page 兼容性
 
@@ -126,9 +126,20 @@ v1.3.x 页面标签：
 → 当前会话 / 配置主模型
 ```
 
-这样即使最终主模型只支持文本，也不会收到未经处理的 `Image` 内容类型。所有候选失败时只向最终 Agent 提供失败说明，不把原图重新塞给纯文本模型。
+这样即使最终主模型只支持文本，也不会收到未经处理的 `Image` 内容类型。所有候选失败时只向最终 Agent 提供失败说明，不把低优先级原帖/楼层锚点原图重新塞给纯文本模型。
 
-v1.3.2 只增加图片身份“归属而非称呼”的语义约束：所有者 UID 匹配、缺 UID 本地身份锚点、来源错位 fail-closed 和视觉缓存键均不变；图片压缩 Provider 被明确要求不要把所有者昵称、UID、角色或本地锚点写进视觉摘要。
+v1.3.3 将楼层图片来源扩展为：
+
+```text
+当前评论
+→ 直接回复对象
+→ 楼层锚点
+→ 原帖
+```
+
+近距离来源优先占用有界图片槽位，因此被回复评论自己的图片不会被主贴图片挤掉。当前评论和直接回复对象属于最高两级视觉来源，预处理全部失败时仍允许 AstrBot 原生视觉作为最后兜底；楼层锚点、原帖和未知来源继续按低优先级 fail-closed。来源、角色和 `comment:<id>` 归属键必须一致，否则降级为未知来源。
+
+v1.3.2 引入的图片身份“归属而非称呼”语义继续保持：所有者 UID 匹配、缺 UID 本地身份锚点、来源错位 fail-closed 和视觉缓存键不放宽；图片压缩 Provider 仍不得把所有者昵称、UID、角色或本地锚点写进视觉摘要。
 
 普通 `grok_web_search` 不接收已隔离的事件原图；只有明确搜图/识图意图才在工具执行期间临时恢复有界引用。
 
@@ -138,15 +149,23 @@ v1.3.2 只增加图片身份“归属而非称呼”的语义约束：所有者 
 
 v1.3.2 保留这一持久 sender binding，但不再在临时 runtime/community 背景重复展开同一当前发送者身份。原帖、最近楼层和直接回复对象仍按需要保留来源归属；长楼层压缩中的完整参与者身份采用“一处绑定、后续 `speaker_n` 引用”的形式。动态帖子正文、楼层、图片描述和焦点信息仍使用临时内容，只参与当前请求。
 
-## v1.3.2 对现有数据的影响
+v1.3.3 不改变楼层 session ID 或历史归属，只在**当前请求**决定原帖背景是否仍有必要：短回复和不确定场景继续保留原帖；已有长楼层压缩明确判为 `drifted` 时，本轮省略低相关原帖文字/视觉；当前消息重新明确引用原帖时立即恢复。内部相关性状态不会被写成新的 Conversation 身份，也不会拆分现有会话。
+
+## v1.3.3 对现有数据的影响
 
 - **无数据库迁移**：数据库版本继续沿用现有 v10；
 - **无新增运行依赖**：仍为 `aiosqlite`、`httpx`、`qrcode[pil]` 等既有依赖；
 - **无配置迁移**：`topic_ids`、`fallback_sources`、Provider 与主动发送配置不变；
 - **账号凭证不变**：仍从插件数据目录读取；
 - **通知游标不变**：升级不会重置 mention/reply `message_id` 边界；
-- **会话 ID 不变**：不会因身份上下文收敛拆分既有 Conversation；
-- **主动候选/发送闸门不变**：身份提示调整不绕过审核与幂等逻辑。
+- **会话 ID 不变**：不会因相关性路由拆分既有 Conversation；
+- **主动候选/发送闸门不变**：上下文路由不绕过审核与幂等逻辑。
+
+## 慢 Provider 与 timeout 兼容性
+
+v1.3.3 把长楼层上下文压缩预算作为独立的外层回复预留，与视觉、主回复和 Provider fallback 分开计算。图片预算会扣除上下文预留，避免辅助视觉处理侵占主模型时间。
+
+同一事件的长楼层压缩最多真正请求一次上下文 Provider。前置阶段失败或超时后，后续 Agent 注入直接使用确定性 fallback，不会再次等待同一个慢 Provider。短楼层仍不新增独立相关性 LLM 调用，因此普通帖子/回复的平均模型调用数保持原行为。
 
 ## 兼容性验证策略
 
@@ -155,6 +174,6 @@ CI 分成两类：
 1. **核心质量任务**：仓库结构、JSON/YAML、Ruff、格式、Python 编译、前端 JavaScript、AstrBot stub import、pytest + branch coverage；
 2. **真实 AstrBot 包契约**：安装最低版本、重点版本和最新稳定版，检查插件依赖的核心文件/符号。
 
-v1.3.2 核心回归为 280 项、总覆盖率 83%，并通过 AstrBot 4.24.2、4.26.2 与当前支持范围内最新稳定版的契约检查。另有 CodeQL、Dependency Review 和 Secret Scan。发布版本一致性由 `tools/validate_repository.py` 强制校验，避免 README、CHANGELOG、元数据和运行时诊断再次出现版本漂移。
+v1.3.3 核心回归为 **287 项、总覆盖率 83%**，并通过 AstrBot 4.24.2、4.26.2 与当前支持范围内最新稳定版的契约检查，以及 CodeQL、Dependency Review 和 Secret Scan。发布版本一致性由 `tools/validate_repository.py` 强制校验，避免 README、CHANGELOG、元数据和运行时诊断再次出现版本漂移。
 
 历史兼容性演进请查看 [CHANGELOG.md](../CHANGELOG.md)。

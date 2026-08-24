@@ -942,7 +942,8 @@ async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
     assert request.extra_user_content_parts[0].temp is False
     compressed = request.extra_user_content_parts[1].text
     assert 'compression="llm"' in compressed
-    assert "原帖摘要（发言人 楼主 (UID author)）" in compressed
+    assert "原帖摘要（发言人 楼主 (UID author)）" not in compressed
+    assert "本轮省略原帖文字和原帖图片摘要" in compressed
     assert "楼层已经转而讨论电影续作" in compressed
     assert "- A (UID a): 最近聊电影" in compressed
     assert "- B (UID b): 认为第二部挺好" in compressed
@@ -2750,3 +2751,147 @@ async def test_plugin_cold_start_leaves_platform_initialization_to_astrbot(
     await plugin.initialize()
     assert plugin.context.platform_manager.reload_count == 0
     await plugin.terminate()
+
+
+async def test_v133_thread_compression_failure_is_attempted_only_once_per_event(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class BrokenCompressor:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text"]}
+            self.calls = 0
+
+        async def text_chat(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("compressor unavailable")
+
+    compressor = BrokenCompressor()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return compressor if provider_id == "compress-fixed" else None
+
+        def get_using_provider(self, umo=None):
+            return compressor
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    source = ThreadCompressionSource(
+        "post-1",
+        "楼主",
+        "标题",
+        "正文" * 300,
+        "最近评论",
+        "直接回复",
+        "用户",
+        "当前消息",
+    )
+    extras = {}
+
+    class Event:
+        unified_msg_origin = "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1"
+        message_obj = type(
+            "Message",
+            (),
+            {"raw_message": {"route": {"profile_id": "default"}}},
+        )()
+
+        @staticmethod
+        def get_extra(key, default=""):
+            return extras.get(key, default)
+
+        @staticmethod
+        def set_extra(key, value):
+            extras[key] = value
+
+    provider_settings = {
+        "context_provider_id": "compress-fixed",
+        "llm_provider_id": "compress-fixed",
+    }
+    context_settings = {
+        "enable_thread_reply_compression": True,
+        "thread_reply_compression_trigger_chars": 500,
+        "thread_reply_compressed_image_chars": 800,
+        "thread_reply_compressed_post_chars": 1200,
+        "thread_reply_compressed_comments_chars": 1200,
+        "thread_reply_compression_timeout_seconds": 1,
+    }
+
+    first = await plugin._compress_thread_context(
+        Event(),
+        source,
+        provider_settings=provider_settings,
+        context_settings=context_settings,
+        profile_id="default",
+    )
+    second = await plugin._compress_thread_context(
+        Event(),
+        source,
+        provider_settings=provider_settings,
+        context_settings=context_settings,
+        profile_id="default",
+    )
+
+    assert first is None
+    assert second is None
+    assert compressor.calls == 1
+    assert extras[module.EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA] is True
+    await plugin.terminate()
+
+
+def test_v133_direct_reply_image_attribution_survives_validation(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Event:
+        message_obj = type("Message", (), {"raw_message": {}})()
+
+        @staticmethod
+        def get_extra(_key, default=None):
+            return default
+
+    value = {
+        "source": "direct_reply_target",
+        "owner_uid": "target-user",
+        "owner_nickname": "被回复用户",
+        "owner_role": "direct_reply_target",
+        "owner_identity_key": "comment:target-1",
+    }
+    attribution = module.XiaoheiheAdapterPlugin._coerce_image_attribution(
+        Event(), value, fallback_source="direct_reply_target"
+    )
+    assert attribution.source == "direct_reply_target"
+    assert attribution.owner_uid == "target-user"
+    assert attribution.owner_role == "direct_reply_target"
+    assert attribution.owner_identity_key == "comment:target-1"
+
+    rejected = module.XiaoheiheAdapterPlugin._coerce_image_attribution(
+        Event(),
+        {**value, "owner_role": "post_author"},
+        fallback_source="direct_reply_target",
+    )
+    assert rejected.source == "event_image"
+    assert rejected.owner_role == "unknown"
