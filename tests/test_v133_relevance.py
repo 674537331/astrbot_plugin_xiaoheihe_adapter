@@ -34,6 +34,28 @@ def test_relevance_defaults_fail_open_and_explicit_reference_restores_post() -> 
     assert detect_explicit_original_post_reference("这图是真的假的") is False
 
 
+def test_thread_reply_focus_uses_positive_neutral_routing_language() -> None:
+    notification = Notification(
+        profile_id="default",
+        external_event_id="event-focus",
+        external_comment_id="current",
+        notification_id="event-focus",
+        event_type=NotificationType.REPLY,
+        sender_uid="current-user",
+        sender_nickname="当前用户",
+        post_id="post-1",
+        root_comment_id="root",
+        parent_comment_id="target",
+        content="接着说刚才那个",
+        created_at=1_800_000_000,
+    )
+    rendered = ContextBuilder._render_reply_focus(notification, is_thread_reply=True)
+    assert "直接围绕当前消息和局部回复链回答" in rendered
+    assert "不要主动评论当前话题是否与原帖相关" in rendered
+    assert "偏离原帖" not in rendered
+    assert "歪楼" not in rendered
+
+
 def test_image_source_distance_order_is_stable() -> None:
     sources = ["original_post", "thread_anchor", "direct_reply_target", "current_comment"]
     assert sorted(sources, key=image_source_priority) == [
