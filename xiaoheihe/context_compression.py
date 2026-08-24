@@ -280,7 +280,11 @@ def render_compressed_thread_context(
                 (
                     f"- {speaker_keys[identity]}: 对应上述逐人摘要发言人"
                     if identity in summaries_by_speaker
-                    else f"- {identity} = {speaker_keys[identity]}"
+                    else (
+                        f"- {speaker_keys[identity]}: 身份已在“当前消息直接回复对象”原文中绑定"
+                        if identity in source.reply_target
+                        else f"- {identity} = {speaker_keys[identity]}"
+                    )
                 )
                 for identity in source.recent_participants
             ),
