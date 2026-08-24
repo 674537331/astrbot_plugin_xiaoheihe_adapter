@@ -12,7 +12,7 @@
 
 ## v1.3.3 重点
 
-- 楼层上下文按局部相关性路由：正常讨论继续保留原帖；只有长楼层压缩明确判定已经 `drifted` 时才省略低相关原帖文字与原帖视觉，当前消息明确提到原帖、楼主或原帖图片时保持 fail-open。
+- 楼层上下文按局部相关性路由：普通短回复不新增一次额外 LLM 判断，正常讨论继续保留原帖；只有既有长楼层压缩明确判定已经 `drifted` 时才省略低相关原帖文字与原帖视觉，当前消息明确提到原帖、楼主或原帖图片时立即恢复原帖。
 - 图片来源扩展为“当前评论 → 直接回复对象 → 楼层锚点 → 原帖”，近距离回复链图片优先占用视觉槽位，并继续执行所有者身份绑定、来源校验和失败降级。
 - 长楼层压缩拥有独立超时预算，同一事件最多真正尝试一次压缩 Provider；失败后直接使用确定性上下文 fallback，不重复消耗慢公益站预算。无新增小黑盒 API、数据库迁移或运行依赖。
 
@@ -24,263 +24,249 @@
 
 完整历史见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 核心特性
+## 核心能力
 
-- 原生平台类型 `xiaoheihe`，可在 AstrBot “机器人 → 新增适配器”中直接添加；
-- Plugin Page 扫码登录、状态总览、设置、浏览来源、事件记录、主动审核、运行日志和存储管理；
-- @ 与直接回复进入 AstrBot 原生 Agent，不旁路人格、会话或工具链；
-- 同一帖子/楼层共享公开讨论上下文，同时为每轮发送者保留昵称 + UID / 不可授权的本地备用身份锚点；身份值用于归属和消歧，不作为默认称呼提示；
-- 长楼层可按来源语义压缩，当前消息与直接回复对象始终保留原文；
-- 图片在主 Agent 构建前按“插件识图 Provider → AstrBot 默认图片转述 Provider → AstrBot 当前主模型”处理，全部失败时隔离原图并禁止最终模型猜图；
-- 主动帖子视觉描述可保存为 24 小时文字快照，不保存图片字节；
-- Agent 工具状态、分段回复和流式片段统一聚合，最终只提交一条小黑盒评论；
-- SQLite 负责通知边界、幂等、重试、候选审核、发送闸门、视觉快照和清理；
-- 结构化日志、诊断导出与 Plugin Page 返回均进行脱敏。
-
-## 环境要求
-
-- AstrBot `>=4.24.2,<5`；
-- Python 3.12–3.14；
-- 可访问小黑盒所需 HTTPS 域名。
-
-CI 会持续验证最低支持版本 4.24.2、重点版本 4.26.2 和当前支持范围内的最新稳定 AstrBot。详细结论见 [兼容性说明](docs/compatibility.md)。
+- 将小黑盒 @、评论回复、帖子上下文和主动浏览接入 AstrBot 原生 Agent 链路；
+- 通过帖子/楼层稳定 session 保留连续公开讨论；
+- 保留真实 UID / 本地身份锚点，避免共享楼层把不同用户混成同一人；
+- 支持文本模型、图片预处理、Web Search / MCP / Skills 等 AstrBot 原生能力；
+- 主动浏览支持真实分区优先，并在真实分区全部失败时回退推荐流；
+- 支持 dry-run、人工审核、无审核直发和发送幂等保护；
+- 提供 AstrBot Plugin Page 管理账号、来源、配置、日志、事件与存储。
 
 ## 安装
 
-在 AstrBot 插件市场或插件安装页使用仓库地址：
+推荐直接通过 AstrBot 插件市场安装。
+
+手动安装时，将仓库目录放入 AstrBot 插件目录后重启或在管理页重载插件。
+
+运行依赖由 `pyproject.toml` 声明：
 
 ```text
-https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter
+aiosqlite>=0.20.0,<1
+httpx>=0.27.0,<1
+qrcode[pil]>=8.0,<9
 ```
 
-手动部署时，将仓库放入 AstrBot 插件目录并安装依赖：
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-## 快速上手
+支持范围：
 
 ```text
-安装并启用插件
-  → 打开插件详情页“小黑盒管理”
-  → 扫码登录并确认账号状态 success
-  → 在“机器人 → 新增适配器”添加“小黑盒”并绑定同一 profile_id
-  → 保持模拟运行，等待 mention / reply 通知历史基线建立
-  → 用另一个账号发送一条新的 @ 或回复
-  → 在事件记录核对上下文与生成结果
-  → 再按需要配置“浏览来源”和主动回复策略
+AstrBot >=4.24.2,<5
+Python >=3.12,<3.15
 ```
 
-### 扫码登录
+## 首次使用
 
-1. 打开“插件 → 小黑盒适配器 → 小黑盒管理”；
-2. 进入“扫码登录”，选择账号档案；
-3. 点击“生成二维码”，使用小黑盒客户端扫码并确认；
-4. 点击“检查登录”，直到状态为 `success`；
-5. 核对昵称、UID、登录时间和最近检查时间。
+安装后打开 AstrBot Dashboard 中的小黑盒插件页面：
 
-凭证保存在插件数据目录，不写入普通插件配置，也不会在诊断中导出完整 Cookie/Token。
+1. 在“扫码登录”中选择账号并获取二维码；
+2. 使用小黑盒 App 扫码确认；
+3. 在“状态总览”确认账号认证正常；
+4. 在“设置”页配置通知、Provider、权限、图片理解、主动浏览和发送模式；
+5. 主动浏览来源请前往独立的“浏览来源”页设置真实分区与推荐流回退分类。
 
-### 创建适配器
+账号 Cookie / Token 保存在 AstrBot 插件数据目录，不写入插件配置和普通日志。
 
-进入“机器人 → 新增适配器”，选择“小黑盒”：
+## 浏览来源
 
-| 字段 | 用途 |
-| --- | --- |
-| `id` | AstrBot 平台实例 ID |
-| `enable` | 是否启用实例 |
-| `profile_id` | 绑定“小黑盒管理”中的账号档案 |
+v1.3.x 支持两类来源：
 
-### 建立通知基线
+### 真实分区
 
-首次成功轮询会分别记录 `mention` 和 `reply` 的当前最新 `message_id`。默认 `initial_backfill_count: 0`，已有消息中心内容作为历史基线，之后的新通知才进入正常处理。
+配置 `topic_ids` 后，插件直接访问小黑盒真实分区帖子流。
 
-建议先在日志看到：
+“浏览来源”页提供只读探测：
 
 ```text
-mention 通知历史基线已建立
-reply 通知历史基线已建立
+真实分区目录
+→ topic_id / 名称 / 分组
+→ 小样本帖子流验证
 ```
 
-再用其他账号发送新的 @ / 回复进行验证。
+最多可选择 20 个真实分区。运行时最多 4 路并发读取，跨分区帖子按 ID 去重后按创建时间/热度合并排序。
 
-## 主动浏览来源
+只要本轮至少一个真实分区成功，就只使用真实分区结果；只有全部真实分区都失败，才额外读取一次推荐流。
 
-v1.3.0 将浏览来源独立为“小黑盒管理 → **浏览来源**”。
+### 推荐流回退
 
-### 真实分区浏览（推荐）
-
-页面会只读探测小黑盒当前返回的真实分区目录，并显示例如：
+未配置真实分区，或全部真实分区本轮失败时，插件读取：
 
 ```text
-真实分区浏览（推荐）
-已选择：无畏契约、Gal游戏综合区、动漫
-3 个分区
-[探测/刷新真实分区] [修改选择]
+GET /bbs/app/feeds
 ```
 
-行为：
+然后根据帖子自带标签在本地匹配 `fallback_sources`。
 
-- 分区探测仅执行 GET，不调用 AI、不发帖、不评论、不修改小黑盒账号；
-- 最多选择 20 个真实分区；
-- 可搜索分区名称、所属分组或 `topic_id`；
-- 多分区并发读取后按帖子 ID 去重；
-- 单个分区失败不会影响其他分区；
-- 只有 **全部所选真实分区均失败** 时才进入推荐流回退；
-- 任一真实分区成功时，不把推荐流帖子混入这一轮。
+因此“数码硬件”“PC 游戏”等只是兼容推荐流的本地过滤分类，不是小黑盒服务端真实分区参数。
 
-小黑盒这些接口不是公开稳定 API，因此目录或分区流字段未来可能变化。探测失败不会修改账号；具体契约和验证边界见 [小黑盒 API 契约](docs/xiaoheihe-api-contract.md)。
+## Provider 路由
 
-### 兼容/回退推荐流分类
+主回复仍由 AstrBot Agent Runner 负责。
 
-旧“推荐流分区”已改成多选的 **兼容/回退推荐流分类**。
-
-- 未选择任何真实分区：推荐流分类直接生效；
-- 已选择真实分区：界面置灰并提示“已启用真实分区浏览，此项当前不生效”；
-- 本轮真实分区全部读取失败：自动使用已保存的回退分类；
-- “全部”与其他分类互斥；
-- 推荐流分类仍是对 `/bbs/app/feeds` 返回结果的本地主题/标签过滤，不等同于服务端真实分区。
-
-可选分类包括：PC 游戏、手机游戏、主机游戏、盒友杂谈、盒友日常、数码科技、动漫二次元、影视娱乐、电竞赛事、游戏攻略、优惠资讯、独立游戏等。
-
-## 主动回复安全模式
-
-主动浏览与“是否发表评论”是两层独立逻辑：浏览来源只决定从哪里找帖子，发送策略仍由以下设置决定。
-
-| `proactive_feed.dry_run` | `review_required` | 行为 |
-| --- | --- | --- |
-| `true` | 任意 | 只生成/记录，不真实发送 |
-| `false` | `true` | 生成候选，人工批准后真实发送 |
-| `false` | `false` | AI 生成后直接真实发送，高风险显式模式 |
-
-默认：主动刷帖关闭、`dry_run=true`、`review_required=true`。
-
-## 常用设置
-
-通用参数在“小黑盒管理 → 设置”维护；主动来源在“浏览来源”维护。两者最终保存到同一个 `AstrBotConfig`。
-
-| 设置 | 默认值 | 说明 |
-| --- | --- | --- |
-| `polling.poll_interval_seconds` | `60` | 通知轮询间隔，最低 30 秒 |
-| `polling.max_pages_per_poll` | `3` | 每类通知单轮最大页数；超出后跨轮回填 |
-| `polling.initial_backfill_count` | `0` | 首次基线后回溯条数 |
-| `providers.llm_provider_id` | `""` | 小黑盒主 Agent 首选 Provider |
-| `providers.image_provider_id` | `""` | 首选识图 Provider |
-| `providers.context_provider_id` | `""` | 长楼层语义压缩 Provider |
-| `context.enable_thread_reply_compression` | `true` | 长被动楼层来源感知语义压缩 |
-| `context.max_images_per_event` | `6` | 每事件最多处理图片数 |
-| `context.image_total_timeout_seconds` | `240` | 单事件视觉链总预算 |
-| `reply.max_reply_chars` | `500` | 最终回复字符上限 |
-| `network.max_reply_concurrency` | `2` | 回复 worker 数 |
-| `network.max_pending_events` | `50` | 总待处理上限 |
-| `proactive_feed.enabled` | `false` | 是否启用主动刷帖 |
-| `proactive_feed.dry_run` | `true` | 主动回复只生成、不发送 |
-| `proactive_feed.review_required` | `true` | 真实发送前是否人工审核 |
-| `proactive_feed.topic_ids` | `[]` | 真实分区 ID；由“浏览来源”页管理，最多 20 个 |
-| `proactive_feed.fallback_sources` | `["all"]` | 兼容/回退推荐流分类；由“浏览来源”页管理，可多选 |
-| `proactive_feed.max_per_run` | `1` | 每轮主动 AI 请求上限 |
-| `proactive_feed.max_per_day` | `10` | 每日主动 AI 请求上限；本地浏览/过滤不计数 |
-
-旧版 `proactive_feed.source` 只保留用于升级迁移，不再作为当前 UI 设置项。
-
-## 会话、上下文与身份
-
-确定性路由：
+插件配置：
 
 ```text
-group_id          xhh_post_<post_id>
-帖子 session_id   xhh_post_<post_id>
-楼层 session_id   xhh_thread_<post_id>_<root_comment_id>
-message_id        xhh_<event_type>_<notification_id>_<comment_id>
+providers.llm_provider_id
 ```
 
-同一根楼层共享一个公开讨论 session。当前发言人、原帖作者、楼层参与者、直接回复对象以及图片所有者由本地结构化数据区分；正常情况使用真实 UID，API 缺失 UID 时使用不可获得主人/管理员/白名单权限的本地备用锚点。
+只决定小黑盒事件的首选主 Provider；AstrBot 自身全局 `fallback_chat_models` 继续负责后续主模型回退。
 
-v1.3.2 起，当前发送者完整身份只由可信 `xiaoheihe_sender_identity` 绑定负责跨轮历史归属；临时运行时/社区背景不再重复展开当前昵称和 UID。原帖作者、楼层参与者与图片所有者仍在必要来源处绑定，但同一信息不为了“提醒模型”而跨字段反复复制；直接回复对象作为高相关性原文例外保留必要归属。模型被明确要求只把这些值用于内容归属和第一人称消歧，而不是默认在回复正文中称呼用户。
-
-被动评论/@ 按以下焦点组织临时背景：
+辅助任务可以使用：
 
 ```text
-当前用户消息 > 直接回复对象 > 最近楼层 > 原帖背景
+providers.image_provider_id
+providers.context_provider_id
 ```
 
-长楼层可调用独立上下文 Provider 进行来源感知压缩；当前消息与直接回复对象不被摘要替代。压缩异常、超时或格式错误会回退确定性窗口，不阻断本轮回复。
+图片和长楼层压缩都有独立 timeout / fallback / cooldown 语义；辅助 Provider 失败不会直接阻断最终主回复。
 
-## 图片理解
+## 图片处理
 
-插件只接收通过安全检查的公开 HTTPS 图片 URL，不保存原始图片字节。小黑盒图片会在 AstrBot 主 Agent 构建前依次尝试：
+楼层图片按对话距离处理：
 
 ```text
-插件 image_provider_id
-  → AstrBot 默认图片转述 Provider
-  → AstrBot 当前主模型
+当前评论图片
+→ 直接回复对象图片
+→ 楼层锚点图片
+→ 原帖图片
 ```
 
-全部失败时原图会从最终请求中隔离，并加入明确的不可见失败说明，要求模型承认无法读取图片而不是猜测。普通 `grok_web_search` 查询也不会重复吃到已经处理的原图；只有明确的搜图/识图意图才在工具调用期间临时开放受限图片引用。
+插件会在主 Agent 构建前优先尝试把图片转成带来源的文字事实，并执行图片所有者归属校验。
 
-## 风险与接口稳定性
+当前评论和直接回复对象属于最近视觉来源；它们的图片 Provider 全部失败时，可以保留原图作为 AstrBot 原生视觉最后兜底。楼层锚点、原帖和未知来源仍保持低优先级受控降级。
 
-小黑盒相关接口属于可能变化的客户端接口，不是公开稳定自动化 API。项目根据公开可研究行为和许可清晰的参考实现独立实现 Python 客户端，并使用脱敏 fixture / Mock HTTP 做自动测试。
+只有图片所有者 UID 与当前发送者 UID 完全一致时，模型上下文才允许称为“你发的图片”。
 
-建议：
+## 楼层上下文
 
-- 新账号或大版本升级后先保持 dry-run；
-- 真实发送前在事件记录核对回复目标、上下文和生成文本；
-- 遇到 `relogin` / 401 重新扫码；
-- 遇到持续 429 增大轮询间隔并减少并发；
-- `send_unknown` 不自动重复 POST，先人工核对小黑盒实际评论状态；
-- 不公开粘贴 Cookie、Token、设备 ID、二维码、数据库或包含私人正文的日志。
+被动楼层的固定优先级：
 
-## 常见问题
+```text
+当前消息
+> 当前消息直接回复对象
+> 当前楼层锚点 / 最近对话
+> 原帖背景
+```
 
-| 现象 | 检查方法 |
-| --- | --- |
-| 新增适配器里找不到“小黑盒” | 确认插件已启用并完成重载，检查平台注册日志 |
-| 扫码后仍等待 | 手机端确认后回管理页执行“检查登录”；过期则重新生成二维码 |
-| `relogin` / 401 | 安全退出并重新扫码 |
-| 持续 403 / 429 | 查看脱敏日志；等待冷却或增大请求间隔 |
-| 历史 @ 被处理 | 确认通知历史基线已建立后再发送新的测试通知 |
-| 同一消息疑似重复发送 | 查看事件与 `outgoing_replies` 状态；`send_unknown` 先人工核对 |
-| 工具状态/第一段被发成评论 | v1.2.9+ 会等待 Agent 最终完成并聚合分段；检查当前插件版本和日志 |
-| 图片模型先后顺序不对 | v1.2.16+ 应为插件识图 → AstrBot 识图 → AstrBot 主模型 |
-| 找不到想要的真实分区 | 在“浏览来源”点击“探测/刷新真实分区”，按名称/分组/topic_id 搜索 |
-| 真实分区全部失败 | 查看探测错误和日志；本轮应自动使用已保存的回退推荐流分类 |
-| 已选真实分区却仍看到推荐流 | 只有全部真实分区请求失败时才应回退；事件候选原因会标记“真实分区 / 回退推荐流”来源 |
+普通短回复继续使用有界确定性窗口，不为了判断是否歪楼额外请求模型。
 
-## 开发与测试
+长楼层达到既有压缩阈值后，插件复用上下文压缩结果判断：
+
+```text
+related / partial / unclear → 保留原帖
+
+drifted                  → 本轮优先局部回复链并省略低相关原帖
+```
+
+判断失败、超时或不确定时保留原帖。用户重新明确提及原帖、楼主、帖子内容或原帖图片时，也会恢复原帖背景。
+
+这个相关性状态只用于内部选择当前轮上下文，Bot 不会因此机械回复“你们已经歪楼了”。
+
+## 身份与多人楼层
+
+同一个公开楼层可以有多个用户连续回复。插件保留每轮发送者 UID；缺 UID 时使用事件级本地身份锚点。
+
+完整当前发送者身份由可信 `xiaoheihe_sender_identity` 负责 Conversation 归属；临时帖子/楼层背景不会为增加模型注意力而重复展开同一个昵称和 UID。
+
+昵称和 UID 的用途是：
+
+```text
+发言归属
+第一人称消歧
+必要的多人点名消歧
+```
+
+而不是要求模型每次回复都主动叫用户昵称。
+
+## 主动浏览与发送
+
+主动浏览处理链保持：
+
+```text
+帖子来源
+→ 本地过滤 / 去重
+→ AI
+→ dry-run / 候选审核 / 直接发送
+```
+
+发送前后都有 outgoing 状态闸门。网络结果不确定时记录 `send_unknown`，先查询近期 Bot 评论确认，不盲目重复 POST。
+
+## Plugin Page
+
+当前页面：
+
+```text
+状态总览
+扫码登录
+设置
+浏览来源
+事件记录
+主动审核
+运行日志
+存储管理
+```
+
+“浏览来源”的 `topic_ids` / `fallback_sources` 由独立页面管理；通用“设置”页不会重复编辑这些字段。
+
+## 配置升级
+
+v1.2.x 的旧：
+
+```text
+proactive_feed.source
+```
+
+在 v1.3.x 中迁移到：
+
+```text
+proactive_feed.fallback_sources
+```
+
+`source` 仍在原始 `_conf_schema.json` 中以隐藏字段保留，只用于升级迁移。
+
+v1.3.3 不增加配置项、数据库迁移或运行依赖。
+
+## 测试
+
+本地：
 
 ```bash
 python -m pip install -e ".[test]"
 ruff check .
 ruff format --check .
-python -m coverage run -m pytest -q
-python -m coverage report
 python -m compileall -q .
+node --check pages/xiaoheihe/app.js
+node --check pages/xiaoheihe/topic_probe.js
 python tools/validate_repository.py
+coverage run -m pytest -q
+coverage report
 ```
 
-普通测试使用 Mock HTTP 和脱敏 fixture。仓库配置 CI、CodeQL、Dependency Review、Secret Scan 和 Dependabot。测试范围与最近一次验证结果见 [测试说明](docs/testing.md)。
+v1.3.3 最终回归：
 
-## 相关文档
+```text
+287 passed
+branch coverage: 83%
+```
 
-- [更新日志](CHANGELOG.md)
+CI 还检查 AstrBot 4.24.2、4.26.2、当前支持范围内最新稳定版，以及 CodeQL、Dependency Review 和 Secret Scan。
+
+## 文档
+
 - [架构说明](docs/architecture.md)
 - [AstrBot 兼容性](docs/compatibility.md)
-- [小黑盒 API 契约](docs/xiaoheihe-api-contract.md)
 - [测试说明](docs/testing.md)
-- [安全策略](SECURITY.md)
-- [贡献指南](CONTRIBUTING.md)
+- [小黑盒 API 契约](docs/xiaoheihe-api-contract.md)
+- [第三方参考与许可](THIRD_PARTY_NOTICES.md)
+- [更新日志](CHANGELOG.md)
 
-## 致谢
+## 安全提示
 
-- [AstrBot](https://github.com/AstrBotDevs/AstrBot)：平台适配器与原生 Agent 管线；
-- [SomeOvO/xhhRobot](https://github.com/SomeOvO/xhhRobot)：登录、通知、帖子与评论功能行为研究；
-- [XiaHouSheng/heybox-core](https://github.com/XiaHouSheng/heybox-core)：MIT 许可的动态 `hkey` 行为参考；
-- [HadeonYu/heybox-bot](https://github.com/HadeonYu/heybox-bot)：MIT 许可的 Web 登录参数和客户端身份形状参考。
-
-本项目采用 Python 独立实现。第三方许可全文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 不要提交 Cookie、Token、二维码、设备 ID 或真实私人正文；
+- 首次验证建议启用 dry-run；
+- 修改真实评论发送链路时必须同时验证幂等与 `send_unknown`；
+- 小黑盒相关接口是非公开客户端契约，平台更新后仍需要持续验证。
 
 ## License
 
-[MIT License](LICENSE) © RyanVaderAn
+MIT
