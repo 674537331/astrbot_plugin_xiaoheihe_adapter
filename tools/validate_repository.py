@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from xiaoheihe.config_service import DEFAULT_CONFIG
+
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED = {
     ".git",
@@ -115,13 +117,40 @@ def _release_version_failures() -> list[str]:
 def _schema_failures() -> list[str]:
     failures: list[str] = []
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+
+    for group, defaults in DEFAULT_CONFIG.items():
+        schema_group = schema.get(group)
+        if not isinstance(schema_group, dict):
+            failures.append(f"_conf_schema.json: missing config group {group}")
+            continue
+        if group == "profiles":
+            if schema_group.get("default") != defaults:
+                failures.append("_conf_schema.json: profiles default differs from DEFAULT_CONFIG")
+            continue
+        if not isinstance(defaults, dict):
+            continue
+        items = schema_group.get("items")
+        if not isinstance(items, dict):
+            failures.append(f"_conf_schema.json: {group}.items must be an object")
+            continue
+        for field, default in defaults.items():
+            item = items.get(field)
+            if not isinstance(item, dict):
+                failures.append(f"_conf_schema.json: missing {group}.{field}")
+                continue
+            if item.get("default") != default:
+                failures.append(
+                    f"_conf_schema.json: {group}.{field} default {item.get('default')!r} "
+                    f"!= runtime {default!r}"
+                )
+
     proactive = schema.get("proactive_feed", {}).get("items", {})
-    expected = {
+    expected_persistence = {
         "source": "all",
         "topic_ids": [],
         "fallback_sources": ["all"],
     }
-    for field, default in expected.items():
+    for field, default in expected_persistence.items():
         item = proactive.get(field)
         if not isinstance(item, dict):
             failures.append(f"_conf_schema.json: missing proactive_feed.{field}")
