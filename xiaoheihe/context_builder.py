@@ -920,9 +920,25 @@ def _thread_anchor_image_context(
 def _prioritized_attributed_images(
     *sources: tuple[ImageAttribution, list[str]],
 ) -> list[tuple[str, ImageAttribution]]:
+    ordered = sorted(sources, key=lambda item: image_source_priority(item[0].source))
+    local_sources = [item for item in ordered if item[0].source != "original_post"]
+    post_sources = [item for item in ordered if item[0].source == "original_post"]
     values: list[tuple[str, ImageAttribution]] = []
-    for attribution, items in sorted(
-        sources, key=lambda item: image_source_priority(item[0].source)
-    ):
+
+    # Keep one representative from every nearby conversational source before
+    # extra images from the current comment. This prevents a six-image current
+    # comment from starving the directly quoted image, while original-post
+    # images never displace any local source.
+    remaining: list[tuple[ImageAttribution, list[str]]] = []
+    for attribution, items in local_sources:
+        cleaned = [value for value in items if value]
+        if not cleaned:
+            continue
+        values.append((cleaned[0], attribution))
+        if len(cleaned) > 1:
+            remaining.append((attribution, cleaned[1:]))
+    for attribution, items in remaining:
+        values.extend((value, attribution) for value in items)
+    for attribution, items in post_sources:
         values.extend((value, attribution) for value in items if value)
     return values

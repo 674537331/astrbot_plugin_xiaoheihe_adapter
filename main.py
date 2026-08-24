@@ -443,6 +443,29 @@ class XiaoheiheAdapterPlugin(Star):
         if not isinstance(value, dict):
             return fallback
         supplied_source = str(value.get("source", "") or "").strip()
+        if source in {"direct_reply_target", "thread_anchor"}:
+            expected_role = (
+                ContentOwnerRole.DIRECT_REPLY_TARGET.value
+                if source == "direct_reply_target"
+                else ContentOwnerRole.THREAD_ANCHOR.value
+            )
+            role = str(value.get("owner_role", "") or "").strip()
+            identity_key = cls._identity_value(value.get("owner_identity_key"), fallback="")
+            if (
+                supplied_source != source
+                or role != expected_role
+                or not identity_key.startswith("comment:")
+            ):
+                return cls._fallback_image_attribution(event, "event_image")
+            return ImageAttribution(
+                source=source,
+                owner_uid=cls._identity_value(value.get("owner_uid"), fallback="未知"),
+                owner_nickname=cls._identity_value(
+                    value.get("owner_nickname"), fallback="未知昵称"
+                ),
+                owner_role=expected_role,
+                owner_identity_key=identity_key,
+            )
         if supplied_source and supplied_source != source:
             return cls._fallback_image_attribution(event, "event_image")
         role = str(value.get("owner_role", "") or "").strip()
@@ -1467,15 +1490,15 @@ class XiaoheiheAdapterPlugin(Star):
                     )
                 continue
 
-            if source == "current_comment":
-                # The user's own image is part of the highest-priority current
-                # message.  Preserve it only as the last-resort AstrBot native
-                # vision fallback; low-priority post images never get this path.
+            if source in {"current_comment", "direct_reply_target"}:
+                # Current and directly quoted images are the two nearest visual
+                # sources. Preserve them as the last-resort AstrBot native vision
+                # fallback; lower-priority anchor/post images remain fail-closed.
                 remaining_urls.extend(urls)
                 remaining_attributions.extend([attribution] * len(urls))
                 self.runtime.logging.emit(
                     "WARNING",
-                    "当前评论图片预处理失败，保留原图作为最终视觉兜底",
+                    "当前/直接回复图片预处理失败，保留原图作为最终视觉兜底",
                     profile_id=profile_id,
                     details={
                         "image_count": len(urls),

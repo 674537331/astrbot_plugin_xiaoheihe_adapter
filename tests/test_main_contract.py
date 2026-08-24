@@ -2750,3 +2750,48 @@ async def test_plugin_cold_start_leaves_platform_initialization_to_astrbot(
     await plugin.initialize()
     assert plugin.context.platform_manager.reload_count == 0
     await plugin.terminate()
+
+
+def test_v133_direct_reply_image_attribution_survives_validation(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Event:
+        message_obj = type("Message", (), {"raw_message": {}})()
+
+        @staticmethod
+        def get_extra(_key, default=None):
+            return default
+
+    value = {
+        "source": "direct_reply_target",
+        "owner_uid": "target-user",
+        "owner_nickname": "被回复用户",
+        "owner_role": "direct_reply_target",
+        "owner_identity_key": "comment:target-1",
+    }
+    attribution = module.XiaoheiheAdapterPlugin._coerce_image_attribution(
+        Event(), value, fallback_source="direct_reply_target"
+    )
+    assert attribution.source == "direct_reply_target"
+    assert attribution.owner_uid == "target-user"
+    assert attribution.owner_role == "direct_reply_target"
+    assert attribution.owner_identity_key == "comment:target-1"
+
+    rejected = module.XiaoheiheAdapterPlugin._coerce_image_attribution(
+        Event(),
+        {**value, "owner_role": "post_author"},
+        fallback_source="direct_reply_target",
+    )
+    assert rejected.source == "event_image"
+    assert rejected.owner_role == "unknown"
