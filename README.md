@@ -6,9 +6,15 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.3.2**
+当前版本：**v1.3.3**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权工具仍由 AstrBot 负责；本插件负责小黑盒平台接入、上下文构建、图片预处理、幂等发送与主动浏览。
+
+## v1.3.3 重点
+
+- 楼层上下文按局部相关性路由：正常讨论继续保留原帖；只有长楼层压缩明确判定已经 `drifted` 时才省略低相关原帖文字与原帖视觉，当前消息明确提到原帖、楼主或原帖图片时保持 fail-open。
+- 图片来源扩展为“当前评论 → 直接回复对象 → 楼层锚点 → 原帖”，近距离回复链图片优先占用视觉槽位，并继续执行所有者身份绑定、来源校验和失败降级。
+- 长楼层压缩拥有独立超时预算，同一事件最多真正尝试一次压缩 Provider；失败后直接使用确定性上下文 fallback，不重复消耗慢公益站预算。无新增小黑盒 API、数据库迁移或运行依赖。
 
 ## v1.3.2 重点
 

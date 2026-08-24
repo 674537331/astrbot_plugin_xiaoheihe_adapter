@@ -49,6 +49,7 @@ EARLY_IMAGE_FAILURE_COUNT_EXTRA = "xiaoheihe_early_image_failure_count"
 EARLY_ROUTE_CONFIG_EXTRA = "xiaoheihe_early_route_config"
 EARLY_COMPRESSED_THREAD_CONTEXT_EXTRA = "xiaoheihe_early_compressed_thread_context"
 EARLY_THREAD_RELATION_EXTRA = "xiaoheihe_early_thread_relation"
+EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA = "xiaoheihe_early_thread_compression_attempted"
 IMAGE_SEARCH_INTENT_MARKERS = (
     "这张图",
     "这幅图",
@@ -1114,6 +1115,10 @@ class XiaoheiheAdapterPlugin(Star):
         image_requires_compression = len(source.post_image_caption) > image_chars
         if source.compressible_chars <= trigger_chars and not image_requires_compression:
             return None
+        get_extra = getattr(event, "get_extra", None)
+        if callable(get_extra) and bool(get_extra(EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA, False)):
+            return None
+        self._set_event_extra(event, EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA, True)
 
         post_chars = int(context_settings["thread_reply_compressed_post_chars"])
         comments_chars = int(context_settings["thread_reply_compressed_comments_chars"])
