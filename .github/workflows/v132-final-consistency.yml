@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - chore/v1.3.2-final-consistency
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
