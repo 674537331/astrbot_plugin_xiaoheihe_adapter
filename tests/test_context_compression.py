@@ -85,6 +85,8 @@ def test_thread_compression_parser_hard_limits_each_source_and_preserves_relatio
     assert "- A (UID user-a)" in rendered
     assert "- B (UID user-b)" in rendered
     assert "- speaker_1:" in rendered
+    assert rendered.count("A (UID user-a)") == 1
+    assert rendered.count("B (UID user-b)") == 1
     assert rendered.count("楼主 (UID author-1)") == 1
     assert "当前发言人: C (UID user-c)" not in rendered
     assert "回复正文不要主动称呼、复述或评价昵称" in rendered
@@ -220,7 +222,10 @@ def test_cached_image_description_is_compressed_separately_from_thread() -> None
     rendered = render_compressed_thread_context(value, parsed)
     assert "缓存视觉描述经 LLM 压缩" in rendered
     assert "最近楼层整体主题（中相关性" in rendered
-    assert "- speaker_1: 开始讨论电影" in rendered
+    assert "- A (UID user-a): 开始讨论电影" in rendered
+    assert "- speaker_1: 对应上述逐人摘要发言人" in rendered
+    assert rendered.count("A (UID user-a)") == 1
+    assert rendered.count("B (UID user-b)") == 1
 
 
 def test_thread_compression_rejects_whole_result_on_one_invalid_identity() -> None:
