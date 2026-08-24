@@ -943,14 +943,14 @@ async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
     compressed = request.extra_user_content_parts[1].text
     assert 'compression="llm"' in compressed
     assert "原帖摘要（发言人 楼主 (UID author)）" not in compressed
-    assert "本轮省略原帖文字和原帖图片摘要" in compressed
+    assert "本轮省略原帖文字和原帖图片摘要" not in compressed
+    assert "已明显偏离原帖" not in compressed
     assert "楼层已经转而讨论电影续作" in compressed
     assert "- A (UID a): 最近聊电影" in compressed
     assert "- B (UID b): 认为第二部挺好" in compressed
     assert "最近楼层参与者身份锚点（程序保留，昵称/UID 未经过 LLM 改写）" in compressed
     assert "- A (UID a)" in compressed
     assert "- B (UID b)" in compressed
-    assert "已明显偏离原帖" in compressed
     assert "FALLBACK-SHOULD-BE-REPLACED" not in compressed
     assert request.extra_user_content_parts[-1].text == "<focus>FINAL-FOCUS</focus>"
     assert request.extra_user_content_parts[-1].temp is True
@@ -2895,3 +2895,91 @@ def test_v133_direct_reply_image_attribution_survives_validation(
     )
     assert rejected.source == "event_image"
     assert rejected.owner_role == "unknown"
+
+
+async def test_v133_long_post_short_floor_does_not_force_context_llm(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Compressor:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text"]}
+            self.calls = 0
+
+        async def text_chat(self, **kwargs):
+            self.calls += 1
+            raise AssertionError("long post alone must not trigger context LLM")
+
+    compressor = Compressor()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return compressor
+
+        def get_using_provider(self, umo=None):
+            return compressor
+
+    class Event:
+        unified_msg_origin = "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1"
+        message_obj = type(
+            "Message",
+            (),
+            {"raw_message": {"route": {"profile_id": "default"}}},
+        )()
+
+        def __init__(self) -> None:
+            self.extras = {}
+
+        def get_extra(self, key, default=""):
+            return self.extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    source = ThreadCompressionSource(
+        post_id="post-1",
+        post_author="楼主",
+        post_title="一个很长的帖子",
+        post_body="正文" * 4000,
+        recent_comments="只有一条很短的普通回复",
+        reply_target="直接回复对象",
+        current_sender="当前用户",
+        current_message="继续说",
+    )
+    event = Event()
+    result = await plugin._compress_thread_context(
+        event,
+        source,
+        provider_settings={
+            "context_provider_id": "compress-fixed",
+            "llm_provider_id": "compress-fixed",
+        },
+        context_settings={
+            "enable_thread_reply_compression": True,
+            "thread_reply_compression_trigger_chars": 2400,
+            "thread_reply_post_chars": 1600,
+            "thread_reply_compressed_image_chars": 800,
+            "thread_reply_compressed_post_chars": 700,
+            "thread_reply_compressed_comments_chars": 1400,
+            "thread_reply_compression_timeout_seconds": 30,
+        },
+        profile_id="default",
+    )
+    assert result is None
+    assert compressor.calls == 0
+    assert event.extras.get(module.EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA) is None
+    await plugin.terminate()

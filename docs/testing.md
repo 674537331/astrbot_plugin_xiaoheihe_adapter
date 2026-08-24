@@ -7,16 +7,18 @@
 v1.3.3 上下文相关性与视觉路由优化的最终质量任务结果：
 
 ```text
-287 passed in 6.48s
-TOTAL 4113 statements / 1338 branches
+290 passed
+TOTAL 4118 statements / 1340 branches
 branch coverage: 83%
 ```
+
+测试耗时受 GitHub Actions runner 与依赖缓存状态影响，因此发布文档只记录稳定的测试数量和覆盖率指标。
 
 关键模块覆盖率：
 
 ```text
 xiaoheihe/context_builder.py       91%
-xiaoheihe/context_compression.py   86%
+xiaoheihe/context_compression.py   85%
 xiaoheihe/context_relevance.py     90%
 xiaoheihe/config_service.py        84%
 xiaoheihe/feed_service.py          83%
@@ -65,8 +67,9 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 
 - `related` / `partial` / `unclear` 默认保留原帖，未知关系值也 fail-open；
 - 只有语义压缩明确返回 `drifted` 时才允许省略低相关原帖文字和原帖图片摘要；
-- 当前消息显式提到原帖、主帖、楼主、帖子内容或原帖图片时强制恢复原帖；
-- `drifted` 渲染仍完整保留当前消息、直接回复对象、局部楼层主题和参与者归属，不把内部“歪楼”判断当成 Bot 对用户的说教文本；
+- 当前消息显式提到原帖、主帖、楼主、帖子内容或原帖图片时强制恢复原帖；模糊的“求原图”仍按最近图片语境处理，不错误恢复主帖；
+- `drifted` 渲染仍完整保留当前消息、直接回复对象、局部楼层主题和参与者归属，内部关系标签不再以“已偏离原帖/歪楼”等自然语言注入最终模型；
+- 最终 thread-reply focus 只要求围绕当前消息和局部回复链回答、禁止为了迎合原帖强行建立关联，并明确不要主动评价当前话题与原帖的相关性；静态 focus 本身不再出现“偏离原帖/歪楼”等标签；
 - 长楼层压缩失败时继续回退确定性窗口，不阻断主回复。
 
 ### 2. 图片来源距离与归属
@@ -75,7 +78,7 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 
 - 图片稳定优先级为“当前评论 → 直接回复对象 → 楼层锚点 → 原帖”；
 - 当前评论图片很多时，直接回复对象和楼层锚点仍能先保留至少一个近距离代表图，低优先级原帖图不挤占本地图片槽位；
-- 直接回复对象与楼层锚点图片能够从楼层树 / 通知回退字段提取；
+- 直接回复对象与楼层锚点图片能够从楼层树提取；楼层树命中目标但媒体字段缺失时，直接回复对象图片可安全回退同一通知 `comment_b` 的媒体；
 - 新增来源携带独立所有者 UID、昵称、角色与 `comment:<id>` 本地身份键；
 - 来源/角色/身份键不一致时继续 fail-closed；
 - 当前评论和直接回复对象图片预处理失败时允许原生视觉兜底，楼层锚点与原帖低优先级图片仍保持受控降级。
@@ -87,6 +90,7 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 - 外层回复 timeout 独立预留 `context + vision + main + fallback` 预算；
 - 图片预算计算会扣除上下文压缩预留，避免视觉链侵占主回复或 fallback 时间；
 - 同一事件的长楼层压缩最多真正请求一次上下文 Provider；
+- 长原帖 + 短楼层不会仅因完整原帖文本超过阈值而额外调用上下文 Provider；
 - 前置压缩失败后，后续 `on_llm_request` 不会再次请求同一个慢 Provider；
 - 不实现 `get_extra()` 的最小兼容测试事件仍可安全调用压缩逻辑。
 

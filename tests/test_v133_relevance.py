@@ -29,7 +29,31 @@ def test_relevance_defaults_fail_open_and_explicit_reference_restores_post() -> 
     assert should_preserve_original_post("drifted") is False
     assert should_preserve_original_post("drifted", explicit_post_reference=True) is True
     assert detect_explicit_original_post_reference("回到原帖那张图") is True
+    assert detect_explicit_original_post_reference("这个帖子楼主说的") is True
+    assert detect_explicit_original_post_reference("求原图") is False
     assert detect_explicit_original_post_reference("这图是真的假的") is False
+
+
+def test_thread_reply_focus_uses_positive_neutral_routing_language() -> None:
+    notification = Notification(
+        profile_id="default",
+        external_event_id="event-focus",
+        external_comment_id="current",
+        notification_id="event-focus",
+        event_type=NotificationType.REPLY,
+        sender_uid="current-user",
+        sender_nickname="当前用户",
+        post_id="post-1",
+        root_comment_id="root",
+        parent_comment_id="target",
+        content="接着说刚才那个",
+        created_at=1_800_000_000,
+    )
+    rendered = ContextBuilder._render_reply_focus(notification, is_thread_reply=True)
+    assert "直接围绕当前消息和局部回复链回答" in rendered
+    assert "不要主动评论当前话题是否与原帖相关" in rendered
+    assert "偏离原帖" not in rendered
+    assert "歪楼" not in rendered
 
 
 def test_image_source_distance_order_is_stable() -> None:
@@ -69,7 +93,9 @@ def test_drifted_compressed_context_really_omits_post_payload() -> None:
     assert "原帖图片摘要-不应出现" not in rendered
     assert "楼层正在讨论图灵测试" in rendered
     assert "具体怎么测试？" in rendered
-    assert "省略原帖文字和原帖图片摘要" in rendered
+    assert "已明显偏离原帖" not in rendered
+    assert "歪楼" not in rendered
+    assert "省略原帖文字和原帖图片摘要" not in rendered
 
 
 def test_context_budget_is_reserved_separately_from_main_and_fallback() -> None:
@@ -145,3 +171,64 @@ def test_context_builder_prefers_current_target_anchor_before_post_images() -> N
         "root-user",
         "author",
     ]
+
+
+def test_reply_target_image_falls_back_to_notification_media_when_tree_omits_it() -> None:
+    notification = Notification(
+        profile_id="default",
+        external_event_id="event-target-media",
+        external_comment_id="current",
+        notification_id="event-target-media",
+        event_type=NotificationType.REPLY,
+        sender_uid="current-user",
+        sender_nickname="当前用户",
+        post_id="post-1",
+        root_comment_id="root",
+        parent_comment_id="current",
+        content="这张图是真的假的？",
+        created_at=1_800_000_000,
+        raw={
+            "comment_b_id": "target",
+            "comment_b": {
+                "id": "target",
+                "images": ["https://img.example/target-from-notification.png"],
+            },
+            "user_b": {"uid": "target-user", "nickname": "被回复用户"},
+        },
+    )
+
+    class Client:
+        async def fetch_thread_context(
+            self, post_id: str, *, root_comment_id: str = "", post_context=None
+        ) -> ThreadContext:
+            return ThreadContext(
+                post_id=post_id,
+                title="原帖",
+                body="正文",
+                author_uid="author",
+                author_name="楼主",
+                comments=[
+                    {
+                        "id": "root",
+                        "user": {"uid": "root-user", "nickname": "根评论用户"},
+                        "content": "根评论",
+                    },
+                    {
+                        "id": "target",
+                        "user": {"uid": "target-user", "nickname": "被回复用户"},
+                        "content": "楼层树里有文字但漏了图片字段",
+                    },
+                ],
+                image_urls=["https://img.example/post.png"],
+            )
+
+    context = asyncio.run(
+        ContextBuilder(max_images=3, host_resolver=_public_resolver).build(notification, Client())
+    )
+    assert context.image_urls == [
+        "https://img.example/target-from-notification.png",
+        "https://img.example/post.png",
+    ]
+    assert context.image_sources == ["direct_reply_target", "original_post"]
+    assert context.image_attributions[0].owner_uid == "target-user"
+    assert context.image_attributions[0].owner_role == "direct_reply_target"

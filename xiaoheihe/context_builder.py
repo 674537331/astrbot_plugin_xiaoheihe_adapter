@@ -625,8 +625,8 @@ class ContextBuilder:
                 "3. 当前楼层锚点及最近楼层对话：用于补充局部对话上下文。",
                 "4. 原帖标题、正文及原帖图片：最低优先级，仅作为必要背景。",
                 (
-                    "若当前消息本身可以独立理解，即使已经偏离原帖主题，也必须直接跟随当前"
-                    "话题回答，不得为了迎合原帖而强行建立关联。"
+                    "若当前消息本身可以独立理解，应直接围绕当前消息和局部回复链回答；"
+                    "不得为了迎合原帖而强行建立关联，也不要主动评论当前话题是否与原帖相关。"
                 ),
                 (
                     "只有当前消息存在“这个/那个/他/上面”等省略、明确引用或必须依赖背景时，"
@@ -883,14 +883,26 @@ def _reply_target_image_context(
     matched = next((item for item in comments if _comment_id(item) == target_id), None)
     candidate = dict(matched) if isinstance(matched, dict) else {}
     raw = notification.raw if isinstance(notification.raw, dict) else {}
-    comment_b = raw.get("comment_b", {})
-    if not candidate and isinstance(comment_b, dict):
-        candidate = dict(comment_b)
+    raw_comment_b = raw.get("comment_b", {})
+    comment_b = dict(raw_comment_b) if isinstance(raw_comment_b, dict) else {}
+
+    images = _image_values(candidate) if candidate else []
+    comment_b_id = _comment_id(comment_b) if comment_b else ""
+    comment_b_matches_target = bool(comment_b and (not comment_b_id or comment_b_id == target_id))
+    if not images and comment_b_matches_target:
+        # Some notification shapes retain the quoted comment media even when the
+        # separately fetched thread-tree node contains only text. Preserve the
+        # tree node as the identity authority and use comment_b only as a media
+        # fallback for the already-resolved direct target.
+        images = _image_values(comment_b)
+        if images and not candidate:
+            candidate = dict(comment_b)
+
     if candidate and not isinstance(candidate.get("user"), dict):
-        user_b = raw.get("user_b", {})
+        fallback_user = comment_b.get("user", {}) if comment_b_matches_target else {}
+        user_b = raw.get("user_b", fallback_user)
         if isinstance(user_b, dict):
             candidate["user"] = user_b
-    images = _image_values(candidate) if candidate else []
     if not images:
         return [], None
     return images, _comment_image_attribution(
