@@ -48,11 +48,16 @@ async def test_context_is_clean_bounded_and_cached() -> None:
     assert "插件发现并读取时间:" in result.dynamic_context
     assert "AI 开始生成回复时间:" in result.dynamic_context
     assert (
-        f"当前触发发言人: {notification.sender_nickname} (UID {notification.sender_uid})"
+        "当前触发发言人身份: 以本轮 xiaoheihe_sender_identity 可信绑定为准。"
         in result.dynamic_context
+    )
+    assert (
+        f"当前触发发言人: {notification.sender_nickname} (UID {notification.sender_uid})"
+        not in result.dynamic_context
     )
     assert "不得因共享会话历史把不同 UID 当成同一人" in result.dynamic_context
     assert "不得把系统处理时间归因给作者" in result.dynamic_context
+    assert "回复正文不要主动称呼、复述或评价任何用户昵称" in result.focus_context
     assert result_again.thread.post_id == result.thread.post_id
 
 
@@ -280,8 +285,10 @@ async def test_reply_without_own_image_keeps_post_image_bound_to_post_author() -
     assert attribution.owner_uid == "author-1"
     assert attribution.owner_nickname == "楼主"
     assert attribution.owner_role == "post_author"
-    assert "当前发言人: 评论者 (UID commenter-1)" in result.dynamic_context
-    assert "原帖标题（发言人 楼主 (UID author-1)）" in result.dynamic_context
+    assert "当前发言人: 评论者 (UID commenter-1)" not in result.dynamic_context
+    assert "帖子作者身份（仅用于归属）: 楼主 (UID author-1)" in result.dynamic_context
+    assert result.dynamic_context.count("楼主 (UID author-1)") == 1
+    assert "原帖标题: 带图原帖" in result.dynamic_context
 
 
 async def test_missing_uids_keep_text_and_use_distinct_local_identity_anchors() -> None:
@@ -327,13 +334,16 @@ async def test_missing_uids_keep_text_and_use_distinct_local_identity_anchors() 
 
     result = await ContextBuilder(host_resolver=public_resolver).build(notification, Client())
 
-    assert "同名用户 (UID 未提供；本地身份 event:default:comment-current)" in (
+    assert "同名用户 (UID 未提供；本地身份 event:default:comment-current)" not in (
         result.dynamic_context
     )
     assert "匿名作者 (UID 未提供；本地身份 post:default:post-anonymous:author)" in (
         result.dynamic_context
     )
     assert result.compression_source is not None
+    assert result.compression_source.current_sender == (
+        "同名用户 (UID 未提供；本地身份 event:default:comment-current)"
+    )
     assert result.compression_source.recent_participants == (
         "同名用户 (UID 未提供；本地身份 comment:comment-1)",
     )
@@ -388,7 +398,8 @@ async def test_proactive_context_strictly_separates_author_and_system_times(
 
     result = await ContextBuilder(host_resolver=public_resolver).build(notification, TimedClient())
 
-    assert "插件主动浏览推荐流（没有作者新评论触发）" in result.dynamic_context
+    assert "插件主动浏览帖子（没有作者新评论触发）" in result.dynamic_context
+    assert "插件主动浏览推荐流（没有作者新评论触发）" not in result.dynamic_context
     assert "触发评论发布时间: 不适用（本轮没有作者评论触发）" in result.dynamic_context
     assert "作者发帖时间: 2025-08-01T16:00:00+08:00" in result.dynamic_context
     assert "插件发现并读取时间: 2025-08-02T03:20:00+08:00" in result.dynamic_context
@@ -469,6 +480,7 @@ async def test_thread_reply_focus_bounds_post_and_recent_comments_around_direct_
     assert "post-0000" in result.dynamic_context
     assert "post-0100" not in result.dynamic_context
     assert "不得为了迎合原帖而强行建立关联" in result.dynamic_context
+    assert "回复正文不要主动称呼、复述或评价任何用户昵称" in result.focus_context
     assert result.compression_source is not None
     assert "post-0100" in result.compression_source.post_body
     assert "topic-00" in result.compression_source.recent_comments
@@ -530,6 +542,8 @@ async def test_proactive_feed_keeps_full_post_budget_and_post_focus() -> None:
     assert '<xiaoheihe_reply_focus trust="trusted" mode="proactive_feed">' in (
         result.dynamic_context
     )
+    assert "本轮由主动浏览触发，没有新的评论问题。" in result.focus_context
+    assert "本轮由主动浏览推荐流触发" not in result.focus_context
     assert "原帖主题（主要背景）" in result.dynamic_context
     assert "feed-0219" in result.dynamic_context
     assert "feed-topic-0" in result.dynamic_context
@@ -618,6 +632,7 @@ async def test_dns_rebinding_to_private_address_is_nonfatal() -> None:
     page = parse_notifications(
         "default", load_fixture("notifications_mentions.json"), NotificationType.MENTION
     )
+    notification = page.items[0]["notification"]
 
     async def private_resolver(hostname: str) -> set[str]:
         from xiaoheihe.security import SecurityError
