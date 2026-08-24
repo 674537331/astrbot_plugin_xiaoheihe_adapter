@@ -71,9 +71,9 @@ jobs:
 
           harness = Path("tests/fixtures/approval_page_harness.html")
           harness_text = harness.read_text(encoding="utf-8")
-          if harness_text.count("v1.2.17") != 2:
-              raise SystemExit("approval_page_harness.html: expected two v1.2.17 fixture markers")
-          harness.write_text(harness_text.replace("v1.2.17", "v1.3.2"), encoding="utf-8")
+          if harness_text.count("1.2.17") != 2:
+              raise SystemExit("approval_page_harness.html: expected two 1.2.17 fixture markers")
+          harness.write_text(harness_text.replace("1.2.17", "1.3.2"), encoding="utf-8")
 
           validator = Path("tools/validate_repository.py")
           text = validator.read_text(encoding="utf-8")
