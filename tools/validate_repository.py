@@ -93,6 +93,22 @@ def _release_version_failures() -> list[str]:
     stale_literal = re.search(r'"version"\s*:\s*"v\d+\.\d+\.\d+"', web_api)
     if stale_literal:
         failures.append("xiaoheihe/web_api.py: diagnostics version must use package __version__")
+
+    docs_markers = {
+        "docs/architecture.md": f"# 架构说明（v{expected}）",
+        "docs/compatibility.md": f"# AstrBot 兼容性说明（v{expected}）",
+        "docs/testing.md": f"# 测试说明（v{expected}）",
+        "docs/xiaoheihe-api-contract.md": f"# 小黑盒 API 契约与验证状态（v{expected}）",
+    }
+    for relative, marker in docs_markers.items():
+        if marker not in (ROOT / relative).read_text(encoding="utf-8"):
+            failures.append(f"{relative}: current-version marker must be v{expected}")
+
+    version_parts = expected.split(".")
+    supported_series = ".".join(version_parts[:2]) if len(version_parts) >= 2 else expected
+    security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    if f"当前维护版本为 **v{supported_series}.x**" not in security:
+        failures.append(f"SECURITY.md: supported series must be v{supported_series}.x")
     return failures
 
 
