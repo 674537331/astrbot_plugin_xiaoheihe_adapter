@@ -275,7 +275,7 @@ def render_compressed_thread_context(
     )
     participant_lines = (
         [
-            "最近楼层参与者身份锚点（程序保留，仅用于归属）:",
+            "最近楼层参与者身份锚点（程序保留，昵称/UID 未经过 LLM 改写）:",
             *(
                 (
                     f"- {speaker_keys[identity]}: 对应上述逐人摘要发言人"
