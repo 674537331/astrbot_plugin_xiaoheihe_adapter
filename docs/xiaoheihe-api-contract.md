@@ -1,10 +1,12 @@
-# 小黑盒 API 契约与验证状态（v1.3.1）
+# 小黑盒 API 契约与验证状态（v1.3.2）
 
 ## 重要声明
 
 小黑盒相关接口属于非公开、可能变化的客户端契约，不是平台承诺稳定的自动化 API。本项目根据公开可研究行为、许可清晰的参考实现和真实运行反馈进行独立 Python 实现，并将不稳定路径集中在 `endpoints.py` / `parsers.py` / `topic_service.py` 中。
 
 自动测试默认使用脱敏 fixture 与 `httpx.MockTransport`，不会访问真实账号。真实环境行为与自动化契约测试必须区分：测试通过表示本项目能处理当前已知响应形状，不等于小黑盒未来不会改变接口。
+
+**v1.3.2 不新增、删除或修改任何小黑盒 HTTP 端点、参数或响应解析契约。** 本版本只收敛发送给模型的身份上下文表达，并把通用主动事件的运行时描述从“推荐流”改成来源无关的“主动浏览帖子”；真实分区和推荐流回退的网络行为保持 v1.3.x 原契约。
 
 ## 当前端点
 
@@ -17,9 +19,9 @@
 | 帖子/楼层树 | GET | `/bbs/app/link/tree` | 是 | 原帖与评论上下文 |
 | 创建评论 | POST | `/bbs/app/comment/create` | 是 | `workshopapi.xiaoheihe.cn` |
 | 近期机器人评论 | GET | `/bbs/app/comment/user` | 是 | 用于发送状态未知核对 |
-| 推荐信息流 | GET | `/bbs/app/feeds` | 是 | v1.3.0 兼容/回退流 |
-| 真实分区目录 | GET | `/bbs/app/api/topic/index/` | 是 | v1.3.0 只读探测 |
-| 真实分区帖子流 | GET | `/bbs/app/topic/feeds` | 是 | v1.3.0 主动浏览首选 |
+| 推荐信息流 | GET | `/bbs/app/feeds` | 是 | v1.3.x 兼容/回退流 |
+| 真实分区目录 | GET | `/bbs/app/api/topic/index/` | 是 | v1.3.x 只读探测 |
+| 真实分区帖子流 | GET | `/bbs/app/topic/feeds` | 是 | v1.3.x 主动浏览首选 |
 
 端点定义以 `xiaoheihe/endpoints.py` 为唯一代码来源。
 
@@ -74,7 +76,7 @@ user_a
 
 ## 推荐流契约
 
-v1.3.0 的兼容/回退推荐流仍调用：
+v1.3.x 的兼容/回退推荐流仍调用：
 
 ```text
 GET /bbs/app/feeds
@@ -93,7 +95,7 @@ offset=0
 
 ## 真实分区目录契约
 
-v1.3.0 `fetch_topic_catalog()` 调用：
+v1.3.x `fetch_topic_catalog()` 调用：
 
 ```text
 GET /bbs/app/api/topic/index/

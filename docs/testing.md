@@ -1,32 +1,34 @@
-# 测试说明（v1.3.1）
+# 测试说明（v1.3.2）
 
 ## 最近一次完整验证
 
 日期：**2026-08-24**
 
-v1.3.1 发布复核分支的完整质量任务结果：
+v1.3.2 身份上下文专项修复的核心质量任务结果：
 
 ```text
-280 passed
-TOTAL 4007 statements / 1300 branches
+280 passed in 6.53s
+TOTAL 4012 statements / 1302 branches
 branch coverage: 83%
 ```
 
 关键模块覆盖率：
 
 ```text
-xiaoheihe/config_service.py   84%
-xiaoheihe/feed_service.py     83%
-xiaoheihe/topic_service.py    91%
-xiaoheihe/repository.py       88%
-xiaoheihe/security.py         83%
+xiaoheihe/context_builder.py       93%
+xiaoheihe/context_compression.py   85%
+xiaoheihe/config_service.py        84%
+xiaoheihe/feed_service.py          83%
+xiaoheihe/topic_service.py         91%
+xiaoheihe/repository.py            88%
+xiaoheihe/security.py              83%
 ```
 
 同一轮还通过：
 
 - `python tools/validate_repository.py`；
 - Ruff lint；
-- Ruff format check；
+- Ruff format check（73 个 Python 文件）；
 - `python -m compileall -q .`；
 - `node --check pages/xiaoheihe/app.js`；
 - `node --check pages/xiaoheihe/topic_probe.js`；
@@ -36,7 +38,7 @@ xiaoheihe/security.py         83%
 - 当前支持范围内最新稳定 AstrBot 兼容检查；
 - Dependency Review；
 - Secret Scan；
-- CodeQL Python / JavaScript-TypeScript（以最终 PR 检查结果为准）。
+- CodeQL Python / JavaScript-TypeScript（以最终发布态 PR 检查结果为准）。
 
 ## 本地执行
 
@@ -54,7 +56,43 @@ coverage report
 
 CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本做包级 API 契约检查。
 
-## v1.3.0 新增重点测试
+## v1.3.2 新增重点测试
+
+### 1. 当前发送者身份去重
+
+覆盖：
+
+- `ContextBuilder` 的 runtime/community 临时背景不再重复展开当前发送者完整昵称 + UID；
+- 当前发送者完整身份继续由非临时 `xiaoheihe_sender_identity` 负责共享楼层 Conversation 中的跨轮归属；
+- 身份值仍标记为不可执行数据，并保持不同 UID / 本地身份锚点的第一人称隔离；
+- 主 Agent 上下文存在“身份只用于归属和消歧，非必要不主动称呼/复述”的约束。
+
+### 2. 原帖与长楼层身份去重
+
+覆盖：
+
+- 原帖作者完整身份在压缩上下文只展开一次；
+- 压缩 Provider 只能返回预分配的 `speaker_key`，编造/未绑定 key 继续拒绝整份结果；
+- `thread_items.summary` 不承担昵称、UID 或本地锚点复述；
+- 有摘要的参与者只在逐人摘要行展开一次完整身份；
+- 已经在直接回复对象原文中绑定的参与者，在参与者锚点只保留 `speaker_n` 引用；
+- 未在其他必要来源绑定的参与者最多保留一次身份→`speaker_n` 映射；
+- 当前发送者完整身份不在压缩社区块重复注入。
+
+### 3. 图片身份与视觉摘要
+
+覆盖：
+
+- 图片压缩 prompt 仍携带程序绑定的所有者身份用于所有权判断；
+- 压缩器被明确要求不要把所有者昵称、UID、角色、本地身份锚点写入视觉摘要；
+- 最终图片上下文保留 UID 所有权判断与“你发的图片”安全边界，同时限制非必要身份复述；
+- 既有图片归属错位、未知所有者、跨帖子缓存和 fail-closed 测试继续通过。
+
+### 4. 主动浏览来源措辞
+
+覆盖通用主动事件不再被固定描述成“主动浏览推荐流”。真实分区与推荐流回退仍使用原有请求、筛选、AI 额度、审核和发送路径。
+
+## v1.3.x 真实分区重点测试
 
 ### 1. 真实分区浏览
 
@@ -88,7 +126,7 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 - 浏览来源保存后刷新管理页，避免普通设置页继续持有旧完整配置快照并覆盖刚保存的来源字段；
 - 真实分区选择从超过 20 个恢复到限制内时，超限错误状态同步恢复。
 
-### 3. v1.2.x → v1.3.0 配置迁移
+### 3. v1.2.x → v1.3.x 配置迁移
 
 特别覆盖 AstrBot schema 更新顺序：
 
@@ -108,7 +146,7 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 
 ### 4. 发布一致性
 
-`tools/validate_repository.py` 新增硬检查：
+`tools/validate_repository.py` 硬检查：
 
 - `metadata.yaml` 版本；
 - `pyproject.toml` 版本；
@@ -120,7 +158,7 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 - 浏览来源三个 schema 持久化字段必须存在、隐藏且默认值正确；
 - `_conf_schema.json` 的所有运行配置组、字段与默认值必须和 `DEFAULT_CONFIG` 一致。
 
-这类遗漏现在会直接让 CI 失败，而不是等发布后人工发现。
+这类遗漏会直接让 CI 失败，而不是等发布后人工发现。
 
 ## 既有回归范围
 
