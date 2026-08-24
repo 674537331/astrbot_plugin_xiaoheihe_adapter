@@ -83,7 +83,7 @@ def test_thread_compression_parser_hard_limits_each_source_and_preserves_relatio
     assert "当前消息直接回复对象（高相关性，保留原文）" in rendered
     assert "最近楼层参与者身份锚点（程序保留" in rendered
     assert "- A (UID user-a)" in rendered
-    assert 'speaker_2: 身份已在“当前消息直接回复对象”原文中绑定' in rendered
+    assert "speaker_2: 身份已在“当前消息直接回复对象”原文中绑定" in rendered
     assert "- speaker_1:" in rendered
     assert rendered.count("A (UID user-a)") == 1
     assert rendered.count("B (UID user-b)") == 1
