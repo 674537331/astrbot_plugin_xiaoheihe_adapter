@@ -883,14 +883,26 @@ def _reply_target_image_context(
     matched = next((item for item in comments if _comment_id(item) == target_id), None)
     candidate = dict(matched) if isinstance(matched, dict) else {}
     raw = notification.raw if isinstance(notification.raw, dict) else {}
-    comment_b = raw.get("comment_b", {})
-    if not candidate and isinstance(comment_b, dict):
-        candidate = dict(comment_b)
+    raw_comment_b = raw.get("comment_b", {})
+    comment_b = dict(raw_comment_b) if isinstance(raw_comment_b, dict) else {}
+
+    images = _image_values(candidate) if candidate else []
+    comment_b_id = _comment_id(comment_b) if comment_b else ""
+    comment_b_matches_target = bool(comment_b and (not comment_b_id or comment_b_id == target_id))
+    if not images and comment_b_matches_target:
+        # Some notification shapes retain the quoted comment media even when the
+        # separately fetched thread-tree node contains only text. Preserve the
+        # tree node as the identity authority and use comment_b only as a media
+        # fallback for the already-resolved direct target.
+        images = _image_values(comment_b)
+        if images and not candidate:
+            candidate = dict(comment_b)
+
     if candidate and not isinstance(candidate.get("user"), dict):
-        user_b = raw.get("user_b", {})
+        fallback_user = comment_b.get("user", {}) if comment_b_matches_target else {}
+        user_b = raw.get("user_b", fallback_user)
         if isinstance(user_b, dict):
             candidate["user"] = user_b
-    images = _image_values(candidate) if candidate else []
     if not images:
         return [], None
     return images, _comment_image_attribution(

@@ -79,7 +79,7 @@ def test_thread_compression_parser_hard_limits_each_source_and_preserves_relatio
     assert 'compression="llm"' in rendered
     assert "原帖背景（低相关性" in rendered
     assert "最近楼层整体主题（中相关性" in rendered
-    assert "已明显偏离原帖" in rendered
+    assert "已明显偏离原帖" not in rendered
     assert "当前消息直接回复对象（高相关性，保留原文）" in rendered
     assert "最近楼层参与者身份锚点（程序保留" in rendered
     assert "- A (UID user-a)" in rendered

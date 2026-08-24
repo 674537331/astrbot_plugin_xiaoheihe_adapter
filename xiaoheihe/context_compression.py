@@ -258,7 +258,6 @@ def render_compressed_thread_context(
     *,
     preserve_original_post: bool = True,
 ) -> str:
-    relation = RELATION_LABELS[result.relation_to_post]
     speaker_keys = {
         identity: f"speaker_{index}"
         for index, identity in enumerate(source.recent_participants, start=1)
@@ -312,7 +311,7 @@ def render_compressed_thread_context(
             *image_lines,
         ]
         if preserve_original_post
-        else ["原帖背景: [当前楼层已明显偏离原帖，本轮省略原帖文字和原帖图片摘要]"]
+        else []
     )
     return "\n".join(
         [
@@ -325,7 +324,6 @@ def render_compressed_thread_context(
             *attributed_thread_lines,
             *participant_lines,
             f"压缩器派生的当前局部话题（仅供参考）: {result.local_topic}",
-            f"压缩器派生的楼层与原帖关系（仅供参考）: {relation}",
             "当前消息直接回复对象（高相关性，保留原文）:",
             source.reply_target,
             "当前发言人身份以本轮 xiaoheihe_sender_identity 可信绑定为准。",

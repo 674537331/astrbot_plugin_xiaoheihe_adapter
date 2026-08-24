@@ -1112,8 +1112,14 @@ class XiaoheiheAdapterPlugin(Star):
             return None
         trigger_chars = int(context_settings["thread_reply_compression_trigger_chars"])
         image_chars = int(context_settings["thread_reply_compressed_image_chars"])
+        fallback_post_chars = max(0, int(context_settings.get("thread_reply_post_chars", 1600)))
+        trigger_input_chars = (
+            len(source.post_title)
+            + min(len(source.post_body), fallback_post_chars)
+            + len(source.recent_comments)
+        )
         image_requires_compression = len(source.post_image_caption) > image_chars
-        if source.compressible_chars <= trigger_chars and not image_requires_compression:
+        if trigger_input_chars <= trigger_chars and not image_requires_compression:
             return None
         get_extra = getattr(event, "get_extra", None)
         if callable(get_extra) and bool(get_extra(EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA, False)):
@@ -1153,6 +1159,7 @@ class XiaoheiheAdapterPlugin(Star):
                 "stage": "thread_context_compression",
                 "model": self._provider_model(provider),
                 "input_chars": source.compressible_chars,
+                "trigger_input_chars": trigger_input_chars,
                 "cached_image_input_chars": len(source.post_image_caption),
                 "configured_timeout_seconds": timeout,
                 "attempt_timeout_seconds": round(remaining_seconds, 3),
@@ -1237,6 +1244,7 @@ class XiaoheiheAdapterPlugin(Star):
                     "provider_id": provider_label,
                     "model": self._provider_model(provider),
                     "input_chars": source.compressible_chars,
+                    "trigger_input_chars": trigger_input_chars,
                     "output_chars": len(rendered),
                     "cached_image_input_chars": len(source.post_image_caption),
                     "cached_image_output_chars": len(result.post_image_summary),
