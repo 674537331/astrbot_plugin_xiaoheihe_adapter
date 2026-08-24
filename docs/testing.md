@@ -7,7 +7,7 @@
 v1.3.1 发布复核分支的完整质量任务结果：
 
 ```text
-280 passed in 6.80s
+280 passed
 TOTAL 4007 statements / 1300 branches
 branch coverage: 83%
 ```
