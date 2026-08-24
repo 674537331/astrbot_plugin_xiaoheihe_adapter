@@ -942,7 +942,8 @@ async def test_plugin_semantically_compresses_long_thread_and_keeps_focus_last(
     assert request.extra_user_content_parts[0].temp is False
     compressed = request.extra_user_content_parts[1].text
     assert 'compression="llm"' in compressed
-    assert "原帖摘要（发言人 楼主 (UID author)）" in compressed
+    assert "原帖摘要（发言人 楼主 (UID author)）" not in compressed
+    assert "本轮省略原帖文字和原帖图片摘要" in compressed
     assert "楼层已经转而讨论电影续作" in compressed
     assert "- A (UID a): 最近聊电影" in compressed
     assert "- B (UID b): 认为第二部挺好" in compressed
