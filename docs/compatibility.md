@@ -174,6 +174,6 @@ CI 分成两类：
 1. **核心质量任务**：仓库结构、JSON/YAML、Ruff、格式、Python 编译、前端 JavaScript、AstrBot stub import、pytest + branch coverage；
 2. **真实 AstrBot 包契约**：安装最低版本、重点版本和最新稳定版，检查插件依赖的核心文件/符号。
 
-v1.3.3 核心回归为 **287 项、总覆盖率 83%**，并通过 AstrBot 4.24.2、4.26.2 与当前支持范围内最新稳定版的契约检查，以及 CodeQL、Dependency Review 和 Secret Scan。发布版本一致性由 `tools/validate_repository.py` 强制校验，避免 README、CHANGELOG、元数据和运行时诊断再次出现版本漂移。
+v1.3.3 核心回归为 **292 项、总覆盖率 83%**，并通过 AstrBot 4.24.2、4.26.2 与当前支持范围内最新稳定版的契约检查，以及 CodeQL、Dependency Review 和 Secret Scan。发布版本一致性由 `tools/validate_repository.py` 强制校验；该脚本固定从当前 checkout 导入包，避免环境中的同名安装掩盖 README、CHANGELOG、元数据、运行时诊断或 schema 漂移。
 
 历史兼容性演进请查看 [CHANGELOG.md](../CHANGELOG.md)。

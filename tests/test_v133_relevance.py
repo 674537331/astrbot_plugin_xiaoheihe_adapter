@@ -190,7 +190,6 @@ def test_reply_target_image_falls_back_to_notification_media_when_tree_omits_it(
         raw={
             "comment_b_id": "target",
             "comment_b": {
-                "id": "target",
                 "images": ["https://img.example/target-from-notification.png"],
             },
             "user_b": {"uid": "target-user", "nickname": "被回复用户"},
@@ -232,3 +231,31 @@ def test_reply_target_image_falls_back_to_notification_media_when_tree_omits_it(
     assert context.image_sources == ["direct_reply_target", "original_post"]
     assert context.image_attributions[0].owner_uid == "target-user"
     assert context.image_attributions[0].owner_role == "direct_reply_target"
+
+    mismatched = Notification(
+        profile_id="default",
+        external_event_id="event-target-media-mismatch",
+        external_comment_id="current",
+        notification_id="event-target-media-mismatch",
+        event_type=NotificationType.REPLY,
+        sender_uid="current-user",
+        sender_nickname="当前用户",
+        post_id="post-1",
+        root_comment_id="root",
+        parent_comment_id="current",
+        content="这张图是真的假的？",
+        created_at=1_800_000_000,
+        raw={
+            "comment_b_id": "target",
+            "comment_b": {
+                "id": "other-comment",
+                "images": ["https://img.example/unrelated.png"],
+            },
+            "user_b": {"uid": "target-user", "nickname": "被回复用户"},
+        },
+    )
+    mismatch_context = asyncio.run(
+        ContextBuilder(max_images=3, host_resolver=_public_resolver).build(mismatched, Client())
+    )
+    assert "https://img.example/unrelated.png" not in mismatch_context.image_urls
+    assert mismatch_context.image_sources == ["original_post"]

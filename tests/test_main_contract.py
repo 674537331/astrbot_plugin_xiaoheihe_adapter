@@ -2867,7 +2867,16 @@ def test_v133_direct_reply_image_attribution_survives_validation(
     spec.loader.exec_module(module)
 
     class Event:
-        message_obj = type("Message", (), {"raw_message": {}})()
+        message_obj = type(
+            "Message",
+            (),
+            {
+                "raw_message": {
+                    "reply_target_comment_id": "target-1",
+                    "route": {"root_comment_id": "root-1"},
+                }
+            },
+        )()
 
         @staticmethod
         def get_extra(_key, default=None):
@@ -2895,6 +2904,121 @@ def test_v133_direct_reply_image_attribution_survives_validation(
     )
     assert rejected.source == "event_image"
     assert rejected.owner_role == "unknown"
+
+    wrong_comment = module.XiaoheiheAdapterPlugin._coerce_image_attribution(
+        Event(),
+        {**value, "owner_identity_key": "comment:someone-else"},
+        fallback_source="direct_reply_target",
+    )
+    assert wrong_comment.source == "event_image"
+    assert wrong_comment.owner_role == "unknown"
+
+    anchor = module.XiaoheiheAdapterPlugin._coerce_image_attribution(
+        Event(),
+        {
+            "source": "thread_anchor",
+            "owner_uid": "root-user",
+            "owner_nickname": "根评论用户",
+            "owner_role": "thread_anchor",
+            "owner_identity_key": "comment:root-1",
+        },
+        fallback_source="thread_anchor",
+    )
+    assert anchor.source == "thread_anchor"
+    assert anchor.owner_identity_key == "comment:root-1"
+
+
+async def test_v133_context_compressor_cannot_invent_post_image_summary_without_input(
+    isolated_smoke_import,
+) -> None:
+    root = Path.cwd()
+    spec = importlib.util.spec_from_file_location(
+        "xhh_plugin_smoke",
+        root / "main.py",
+        submodule_search_locations=[str(root)],
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class Compressor:
+        def __init__(self) -> None:
+            self.provider_config = {"modalities": ["text"]}
+
+        @staticmethod
+        async def text_chat(**kwargs):
+            return LLMResponse(
+                completion_text=(
+                    '{"post_summary":"原帖摘要","thread_overview":"楼层摘要",'
+                    '"thread_items":[],"post_image_summary":"虚构的原帖图片",'
+                    '"local_topic":"当前话题","relation_to_post":"related"}'
+                )
+            )
+
+    compressor = Compressor()
+
+    class Context:
+        def register_web_api(self, *args):
+            return None
+
+        def get_provider_by_id(self, provider_id):
+            return compressor
+
+        def get_using_provider(self, umo=None):
+            return compressor
+
+    class Event:
+        unified_msg_origin = "xiaoheihe:GroupMessage:xhh_thread_post-1_root-1"
+        message_obj = type(
+            "Message",
+            (),
+            {"raw_message": {"route": {"profile_id": "default"}}},
+        )()
+
+        def __init__(self) -> None:
+            self.extras = {}
+
+        def get_extra(self, key, default=""):
+            return self.extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+    plugin = module.XiaoheiheAdapterPlugin(Context(), AstrBotConfig())
+    event = Event()
+    rendered = await plugin._compress_thread_context(
+        event,
+        ThreadCompressionSource(
+            post_id="post-1",
+            post_author="楼主",
+            post_title="标题",
+            post_body="正文" * 300,
+            recent_comments="最近楼层",
+            reply_target="直接回复",
+            current_sender="当前用户",
+            current_message="当前消息",
+        ),
+        provider_settings={
+            "context_provider_id": "compress-fixed",
+            "llm_provider_id": "compress-fixed",
+        },
+        context_settings={
+            "enable_thread_reply_compression": True,
+            "thread_reply_compression_trigger_chars": 500,
+            "thread_reply_post_chars": 1600,
+            "thread_reply_compressed_image_chars": 800,
+            "thread_reply_compressed_post_chars": 700,
+            "thread_reply_compressed_comments_chars": 1400,
+            "thread_reply_compression_timeout_seconds": 30,
+        },
+        profile_id="default",
+    )
+
+    assert rendered is not None
+    assert "虚构的原帖图片" not in rendered
+    assert event.extras.get("xiaoheihe_visual_context_consumed") is not True
+    await plugin.terminate()
 
 
 async def test_v133_long_post_short_floor_does_not_force_context_llm(
