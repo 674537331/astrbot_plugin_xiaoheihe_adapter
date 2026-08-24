@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import copy
+
+import pytest
 
 from xiaoheihe import feed_service as feed_module
 from xiaoheihe.config_service import DEFAULT_CONFIG
@@ -118,6 +121,38 @@ async def test_one_failed_real_topic_does_not_abort_or_fallback(repository, monk
 
     assert await service.run_once() == 1
     assert dispatched == ["healthy"]
+
+
+async def test_cancelled_real_topic_fetch_propagates_without_fallback(
+    repository,
+    monkeypatch,
+) -> None:
+    config = copy.deepcopy(DEFAULT_CONFIG)
+    config["proactive_feed"].update(
+        {
+            "enabled": True,
+            "topic_ids": ["100", "200"],
+            "max_per_run": 2,
+        }
+    )
+
+    async def fake_topic_feed(client, topic_id, **kwargs):
+        if topic_id == "100":
+            raise asyncio.CancelledError
+        return ApiPage(items=[topic_post("healthy", 30, "200")])
+
+    monkeypatch.setattr(feed_module, "fetch_topic_feed", fake_topic_feed)
+    service = FeedService(
+        "default",
+        config,
+        RealTopicClient(),
+        repository,
+        unused_delivery,
+        unused_delivery,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.run_once()
 
 
 async def test_all_failed_real_topics_fallback_to_recommendation_sources(

@@ -108,3 +108,11 @@ def test_management_page_exposes_dedicated_browse_sources_ui() -> None:
     assert "config.proactive_feed.fallback_sources = selected" in source
     assert "MAX_SELECTED_TOPICS = 20" in source
     assert "已启用真实分区浏览，此项当前不生效。" in source
+
+
+def test_browse_source_saves_reload_page_to_avoid_stale_settings_snapshot() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "pages" / "xiaoheihe" / "topic_probe.js").read_text(encoding="utf-8")
+
+    assert source.count("window.location.reload()") == 2
+    assert "页面将刷新以同步全部设置状态" in source

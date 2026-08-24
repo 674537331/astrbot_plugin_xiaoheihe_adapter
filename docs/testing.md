@@ -4,10 +4,10 @@
 
 日期：**2026-08-24**
 
-v1.3.0 发布审计分支的完整质量任务结果：
+v1.3.0 全代码复核分支的完整质量任务结果：
 
 ```text
-278 passed in 5.09s
+280 passed in 6.80s
 TOTAL 4007 statements / 1300 branches
 branch coverage: 83%
 ```
@@ -68,7 +68,7 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 - 跨分区帖子去重；
 - 按创建时间 / 热度排序；
 - 单个分区失败时继续其他分区；
-- `CancelledError` 继续向上传播；
+- `CancelledError` 继续向上传播，并由回归测试确认不会误触发推荐流回退；
 - 所有真实分区失败时才读取一次推荐流回退；
 - 任一真实分区成功时不混入推荐流。
 
@@ -84,7 +84,9 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 - 页面支持名称 / 分组 / topic_id 搜索；
 - 回退推荐流分类支持多选；
 - 真实分区启用时回退控件置灰；
-- `topic_ids` / `fallback_sources` 通过同一 `config/save` 持久化。
+- `topic_ids` / `fallback_sources` 通过同一 `config/save` 持久化；
+- 浏览来源保存后刷新管理页，避免普通设置页继续持有旧完整配置快照并覆盖刚保存的来源字段；
+- 真实分区选择从超过 20 个恢复到限制内时，超限错误状态同步恢复。
 
 ### 3. v1.2.x → v1.3.0 配置迁移
 
@@ -115,7 +117,8 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 - CHANGELOG 第一条版本；
 - Bug Report 模板默认插件版本；
 - `web_api.py` 禁止重新出现硬编码诊断版本；
-- 浏览来源三个 schema 持久化字段必须存在、隐藏且默认值正确。
+- 浏览来源三个 schema 持久化字段必须存在、隐藏且默认值正确；
+- `_conf_schema.json` 的所有运行配置组、字段与默认值必须和 `DEFAULT_CONFIG` 一致。
 
 这类遗漏现在会直接让 CI 失败，而不是等发布后人工发现。
 
@@ -135,7 +138,7 @@ CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本�
 - dry-run、人工审核和无审核主动直发三种路径；
 - outgoing 幂等、`send_unknown`、近期评论核对和取消语义；
 - SQLite 迁移、清理、软上限与日志脱敏；
-- Plugin Page 配置、事件、候选、日志 SSE、存储和诊断 API。
+- Plugin Page 配置、浏览来源、事件、候选、日志 SSE、存储和诊断 API。
 
 ## 外部集成测试
 
