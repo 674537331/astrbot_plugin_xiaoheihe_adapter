@@ -25,64 +25,16 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Apply final audit patch
-        run: python tools/v133_final_audit.py
-      - name: Normalize generated regression fixture
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("tests/test_main_contract.py")
-          text = path.read_text(encoding="utf-8")
-          marker = "async def test_v133_long_post_short_floor_does_not_force_context_llm"
-          if marker not in text:
-              raise SystemExit("generated regression test marker not found")
-          before, tail = text.split(marker, 1)
-          old_state = '''        extras = {}
-
-              @classmethod
-              def get_extra(cls, key, default=""):
-                  return cls.extras.get(key, default)
-
-              @classmethod
-              def set_extra(cls, key, value):
-                  cls.extras[key] = value
-          '''
-          new_state = '''        def __init__(self) -> None:
-                  self.extras = {}
-
-              def get_extra(self, key, default=""):
-                  return self.extras.get(key, default)
-
-              def set_extra(self, key, value):
-                  self.extras[key] = value
-          '''
-          if old_state not in tail:
-              raise SystemExit("generated Event state pattern not found")
-          tail = tail.replace(old_state, new_state, 1)
-          old_call = '''    result = await plugin._compress_thread_context(
-              Event(),
-          '''
-          new_call = '''    event = Event()
-              result = await plugin._compress_thread_context(
-                  event,
-          '''
-          if old_call not in tail:
-              raise SystemExit("generated Event call pattern not found")
-          tail = tail.replace(old_call, new_call, 1)
-          tail = tail.replace(
-              "assert Event.extras.get(module.EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA) is None",
-              "assert event.extras.get(module.EARLY_THREAD_COMPRESSION_ATTEMPTED_EXTRA) is None",
-              1,
-          )
-          path.write_text(before + marker + tail, encoding="utf-8")
-          PY
+          python tools/v133_final_audit.py
+          python tools/v133_fix_generated_test.py
       - name: Install validation dependencies
         run: python -m pip install -e ".[test]" ruff PyYAML
       - name: Format and validate final tree
         run: |
           ruff format main.py xiaoheihe/context_relevance.py xiaoheihe/context_builder.py xiaoheihe/context_compression.py tests/test_v133_relevance.py tests/test_main_contract.py
-          ruff check . --exclude tools/v133_final_audit.py
-          ruff format --check . --exclude tools/v133_final_audit.py
+          ruff check . --exclude tools/v133_final_audit.py --exclude tools/v133_fix_generated_test.py
+          ruff format --check . --exclude tools/v133_final_audit.py --exclude tools/v133_fix_generated_test.py
           python -m compileall -q .
           node --check pages/xiaoheihe/app.js
           node --check pages/xiaoheihe/topic_probe.js
@@ -94,7 +46,7 @@ jobs:
           coverage report
       - name: Remove one-shot audit files and push final branch
         run: |
-          rm -f tools/v133_final_audit.py .github/workflows/v133_final_audit.yml
+          rm -f tools/v133_final_audit.py tools/v133_fix_generated_test.py .github/workflows/v133_final_audit.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
