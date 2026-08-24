@@ -259,27 +259,34 @@ def render_compressed_thread_context(
         identity: f"speaker_{index}"
         for index, identity in enumerate(source.recent_participants, start=1)
     }
+    summaries_by_speaker: dict[str, list[str]] = {}
+    for speaker, summary in result.thread_items:
+        summaries_by_speaker.setdefault(speaker, []).append(summary)
+    attributed_thread_lines = (
+        [
+            "最近楼层逐人发言摘要（身份经本地代码校验，每个身份最多展开一次）:",
+            *(
+                f"- {speaker}: {'；'.join(summaries)}"
+                for speaker, summaries in summaries_by_speaker.items()
+            ),
+        ]
+        if summaries_by_speaker
+        else ["最近楼层逐人发言摘要: [无可验证身份的发言摘要]"]
+    )
     participant_lines = (
         [
             "最近楼层参与者身份锚点（程序保留，仅用于归属）:",
             *(
-                f"- {identity} = {speaker_keys[identity]}"
+                (
+                    f"- {speaker_keys[identity]}: 对应上述逐人摘要发言人"
+                    if identity in summaries_by_speaker
+                    else f"- {identity} = {speaker_keys[identity]}"
+                )
                 for identity in source.recent_participants
             ),
         ]
         if source.recent_participants
         else []
-    )
-    attributed_thread_lines = (
-        [
-            "最近楼层逐人发言摘要（身份经本地代码校验）:",
-            *(
-                f"- {speaker_keys.get(speaker, 'speaker_unknown')}: {summary}"
-                for speaker, summary in result.thread_items
-            ),
-        ]
-        if result.thread_items
-        else ["最近楼层逐人发言摘要: [无可验证身份的发言摘要]"]
     )
     image_lines = (
         [
