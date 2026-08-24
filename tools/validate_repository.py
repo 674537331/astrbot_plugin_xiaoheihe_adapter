@@ -96,6 +96,25 @@ def _release_version_failures() -> list[str]:
     if stale_literal:
         failures.append("xiaoheihe/web_api.py: diagnostics version must use package __version__")
 
+    main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+    register_match = re.search(
+        r"@register\((.*?)\)\s*class XiaoheiheAdapterPlugin", main_source, re.S
+    )
+    if register_match is None or "__version__" not in register_match.group(1):
+        failures.append("main.py: @register version must use package __version__")
+
+    runtime_source = (ROOT / "xiaoheihe" / "runtime.py").read_text(encoding="utf-8")
+    if '"version": f"v{__version__}"' not in runtime_source:
+        failures.append("xiaoheihe/runtime.py: status version must use package __version__")
+
+    approval_harness = (ROOT / "tests" / "fixtures" / "approval_page_harness.html").read_text(
+        encoding="utf-8"
+    )
+    if f'version: "v{expected}"' not in approval_harness:
+        failures.append(f"approval_page_harness.html: status fixture must be v{expected}")
+    if f"index.html?v={expected}" not in approval_harness:
+        failures.append(f"approval_page_harness.html: page cache marker must be v{expected}")
+
     docs_markers = {
         "docs/architecture.md": f"# 架构说明（v{expected}）",
         "docs/compatibility.md": f"# AstrBot 兼容性说明（v{expected}）",

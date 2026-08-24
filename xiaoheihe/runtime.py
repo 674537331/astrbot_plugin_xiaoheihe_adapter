@@ -8,6 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .api_client import (
     CredentialInvalidError,
     SendUncertainError,
@@ -813,7 +814,7 @@ class RuntimeServices:
             if adapter_id not in active_ids
         )
         return {
-            "version": "v1.2.17",
+            "version": f"v{__version__}",
             "profiles": profiles,
             "adapters": adapters,
             "tasks": self.tasks.task_names(),
