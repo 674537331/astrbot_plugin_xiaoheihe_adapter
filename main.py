@@ -15,6 +15,7 @@ from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.message import TextPart
 
+from .xiaoheihe import __version__
 from .xiaoheihe.adapter import XiaoheihePlatformAdapter  # noqa: F401
 from .xiaoheihe.context_compression import (
     ThreadCompressionSource,
@@ -116,7 +117,7 @@ except ModuleNotFoundError as exc:
     PLUGIN_NAME,
     "RyanVaderAn",
     "AstrBot 的小黑盒原生平台适配器",
-    "1.2.17",
+    __version__,
 )
 class XiaoheiheAdapterPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:

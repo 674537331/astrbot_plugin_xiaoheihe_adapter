@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from xiaoheihe import __version__
 from xiaoheihe.api_client import SendUncertainError, XiaoheiheApiError
 from xiaoheihe.models import (
     Credentials,
@@ -86,7 +87,7 @@ async def test_runtime_status_has_no_credentials(tmp_path, fake_config) -> None:
         ]
     )
     status = await runtime.status()
-    assert status["version"] == "v1.2.17"
+    assert status["version"] == f"v{__version__}"
     assert status["profiles"][0]["has_credentials"] is False
     assert status["database_size"] >= 0
     assert status["adapters"] == [
