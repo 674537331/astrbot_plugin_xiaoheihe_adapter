@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Deterministic routing primitives for keeping nearby conversation context closest."""
+
 from dataclasses import dataclass
 
 VALID_RELATIONS = frozenset({"related", "partial", "drifted", "unclear"})
