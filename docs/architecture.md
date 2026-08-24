@@ -1,202 +1,166 @@
-# 架构
+# 架构说明（v1.3.0）
 
-## 数据流
+## 总体边界
+
+插件是 AstrBot 的小黑盒平台接入层。小黑盒 HTTP 数据经过本插件规范化、权限过滤和上下文构建后，以 `AstrBotMessage` / `XiaoheiheMessageEvent` 提交给 AstrBot；人格、Conversation、Agent Runner、MCP、Skills、工具调用和最终模型执行仍由 AstrBot 原生管线负责。
 
 ```text
 小黑盒 HTTP API
-  → XiaoheiheApiClient（连接池、签名、限流、重试、脱敏）
-  → NotificationService / FeedService
-  → notification_cursors（分账号、分通知类型 message_id 边界）
-  → Repository（先持久化再入队、事务幂等）+ PermissionService + ContextBuilder
+  → XiaoheiheApiClient（连接池 / 签名 / 限流 / 重试 / 脱敏）
+  → NotificationService / FeedService / TopicService
+  → Repository（SQLite：游标 / 幂等 / 候选 / 发送记录 / 快照）
+  → PermissionService + ContextBuilder
   → XiaoheihePlatformAdapter
   → AstrBotMessage + XiaoheiheMessageEvent
   → Platform.commit_event()
-  → Agent 构建前 Provider 路由与图片转述（插件识图 > AstrBot 识图 > AstrBot 主模型）
-  → 楼层共享 session + 每轮发送者 UID 持久化到 LLM 用户历史
-  → 被动楼层焦点路由（当前消息 > 直接回复对象 > 最近楼层 > 原帖背景）
-  → 长被动楼层按来源语义压缩（原帖 / 最近楼层分离；当前消息与直接回复对象保留原文）
-  → 被动楼层图片预处理（当前评论图片 > 原帖图片；原帖原图 fail-closed）
-  → AstrBot 原生会话 / 人格 / 记忆 / Agent / MCP / Skills / Tools
-  → 指定工具兼容层（Grok 普通网页查询临时隔离事件原图并在调用后恢复）
-  → Agent 生命周期跟踪 + XiaoheiheMessageEvent 回复聚合
-  → 模拟运行 / feed candidate / 无审核直发 / 单条真实评论
+  → AstrBot 原生 Agent / 人格 / 会话 / 工具
+  → XiaoheiheMessageEvent 聚合最终回复
+  → dry-run / 审核候选 / 真实评论
 ```
 
-插件只负责平台输入输出。模型、人格、会话历史、长期记忆、Agent Runner 和工具执行全部由
-AstrBot 原生管线负责。
+## 主要模块
 
-## 模块职责
+- `adapter.py`：平台注册、生命周期、原生消息转换、事件提交、`send_by_session()`。
+- `event.py`：路由恢复、Agent 中间/控制消息过滤、流式/分段文本聚合、一次发送保护。
+- `api_client.py`：长生命周期异步 HTTP Client、签名、重试、认证失效与结构化错误。
+- `endpoints.py`：集中维护小黑盒端点，隔离非公开接口变化。
+- `parsers.py`：通知、帖子、评论和 feed 响应规范化。
+- `auth.py`：二维码登录状态机、凭证原子存储。
+- `notification_service.py`：`message_id` 边界、分页、回填、有界队列和到期重试恢复。
+- `topic_service.py`：真实分区目录与真实分区帖子流的只读 GET 封装、`topic_id` 校验和目录扁平化。
+- `feed_service.py`：主动浏览来源选择、帖子过滤、AI 请求限额、候选审核和无审核直发入口。
+- `context_builder.py` / `context_compression.py`：帖子/楼层上下文、焦点路由、身份锚点、长楼层压缩。
+- `provider_routing.py`：主模型和图片 Provider 路由计算。
+- `database.py` / `repository.py`：SQLite 迁移、索引、幂等、发送闸门、视觉快照、保留与诊断。
+- `config_service.py`：配置迁移、校验、保存、Plugin Page 通用 schema 过滤和后台任务刷新通知。
+- `runtime.py` / `task_manager.py`：客户端、数据库、后台任务、锁、SSE、熔断和析构。
+- `web_api.py`：受 AstrBot Dashboard 会话保护的 Plugin Page API。
 
-- `adapter.py`：平台注册、生命周期、原生消息转换、事件提交、主动会话发送。
-- `event.py`：结构化路由、Agent 中间/控制消息分类、一次发送保护、插件直接结果去重，以及任意数量的流式与 AstrBot 分段文本聚合。
-- `api_client.py`：单账号长生命周期异步客户端和结构化错误。
-- `endpoints.py` / `parsers.py` / `request_signing.py`：隔离不稳定的外部契约。
-- `auth.py`：二维码状态机与原子凭证存储。
-- `notification_service.py`：`message_id` 分页边界、有界优先队列、首次基线和到期重试恢复。
-- `context_builder.py`：帖子/楼层缓存、内容清洗、图片 URL 校验、临时上下文，以及被动回复与主动刷帖分离的上下文预算/焦点路由和图片来源标记。
-- `context_compression.py`：长楼层压缩输入/JSON 输出契约、原帖与楼层摘要硬上限、话题迁移标记，以及来源感知图片描述提示词；所有生成结果仍按不可信社区背景处理。
-- `provider_routing.py`：纯数据方式计算插件/AstrBot 识图链、期望主模型链与 AstrBot 4.x 实际主模型链，不持有 Provider 实例。
-- `permission_service.py`：自身、黑名单、主人、白名单、普通触发的固定优先级。
-- `feed_service.py`：高风险主动刷帖筛选、候选、人工审核与无审核直发入口。
-- `database.py` / `repository.py`：迁移、事务、索引、幂等、保留和诊断。
-- `config_service.py`：同一个 `AstrBotConfig` 的校验、保存和热重载通知。
+## 主动浏览来源路由
 
-主插件的工具钩子只在平台为 `xiaoheihe` 且工具名为 `grok_web_search` 时介入。图片已在 Agent
-构建前从事件链移入有界引用库；普通网页查询看不到原图，明确要求搜图/识图时才在工具执行期间
-按原位置临时开放引用，工具返回后重新隔离，Agent 完成阶段还有异常兜底。其他工具不修改消息链。
+v1.3.0 的来源选择不是“多个过滤器同时工作”，而是明确的优先级路由：
 
-插件覆盖更新时，AstrBot 会先结束旧插件运行时。新插件实例在 `Star.initialize()` 阶段
-检查平台管理器：冷启动保持 AstrBot 原生创建顺序；热重载阶段则重建已启用的
-`xiaoheihe` 实例，使通知轮询、回复 worker 和主动帖子任务绑定到新的运行时。管理页状态
-同时保留已配置实例清单，恢复失败时显示停止状态和脱敏错误提醒。
-- `task_manager.py` / `runtime.py`：任务、客户端、数据库、锁、SSE 和析构。
-- `web_api.py`：认证后的 Plugin Page 后端。
+```text
+proactive_feed.topic_ids 是否为空？
+  ├─ 是
+  │   → GET /bbs/app/feeds
+  │   → fallback_sources 本地标签分类
+  │   → 安全过滤 / 去重 / AI
+  │
+  └─ 否
+      → 最多 4 路并发 GET /bbs/app/topic/feeds
+      → 按帖子 ID 跨分区去重
+      → 按发布时间 / 热度合并排序
+      → 至少一个真实分区请求成功？
+          ├─ 是 → 只处理真实分区结果
+          └─ 否 → 仅额外 GET 一次 /bbs/app/feeds
+                  → fallback_sources 本地分类
+                  → 安全过滤 / 去重 / AI
+```
 
-## 会话与路由
+### 关键不变量
 
-路由对象始终保存：
+1. **真实分区优先。** `topic_ids` 非空时，不先拉推荐流。
+2. **部分失败不触发回退。** 例如 3 个真实分区中 1 个成功、2 个失败，本轮只使用成功分区的帖子。
+3. **全部失败才回退。** 只有所有真实分区请求都失败，才额外拉一次推荐流。
+4. **取消不是失败。** `asyncio.CancelledError` 会继续向上传播，热重载/停机不会误触发推荐流请求。
+5. **推荐流分类只是兼容过滤。** `fallback_sources` 仅匹配 `/bbs/app/feeds` 返回帖子的 `section_names`/主题标签，不是服务端真实分区参数。
+6. **AI 限额在帖子合格后才占用。** 网络浏览、本地分类和被过滤帖子不消耗主动 AI 请求额度。
+
+## 真实分区探测
+
+Plugin Page “浏览来源 → 探测/刷新真实分区”调用：
+
+```text
+GET Plugin Page API /feed/topics/probe
+  → GET /bbs/app/api/topic/index/?type=list
+  → 解析真实 topic_id / 名称 / 分组
+  → 最多尝试 5 个候选 topic_id 验证分区帖子流
+  → 每次最多读取 3 条样例
+  → 只返回脱敏、有限的目录和验证信息
+```
+
+探测不会调用 AI，不会执行评论 POST，也不会修改小黑盒账号状态。
+
+## 配置持久化
+
+主动浏览来源有三个与升级相关的字段：
+
+```text
+source             # v1.2.x 旧单选字段，仅用于迁移
+topic_ids          # v1.3.0 真实分区 ID 列表
+fallback_sources   # v1.3.0 推荐流多选回退分类
+```
+
+这三个字段都保留在 `_conf_schema.json` 中并设置 `invisible: true`，原因是 AstrBot 会按 schema 对配置补默认值/归一化；字段不能仅存在于 `DEFAULT_CONFIG`，否则独立页面保存的值可能在配置加载时被移除。
+
+Plugin Page 的通用“设置”表单通过 `ConfigService.ui_schema()` 再移除这三个字段，因此来源只在独立“浏览来源”页面编辑。
+
+升级旧配置时，如果 AstrBot 已提前补入 schema 默认 `fallback_sources=["all"]`，但仍存在旧非默认 `source`，迁移器会把旧值转换为新列表；若已经存在新的非默认 `fallback_sources`，则新配置优先。
+
+## 会话与身份
+
+路由对象保存：
 
 ```text
 profile_id / post_id / root_comment_id / parent_comment_id / notification_id
 ```
 
-会话是可逆且确定性的：
-
-- 帖子：`xhh_post_<post_id>`
-- 楼层：`xhh_thread_<post_id>_<root_comment_id>`
-- group ID：`xhh_post_<post_id>`
-- message ID：`xhh_<event_type>_<notification_id>_<external_comment_id>`
-
-`send_by_session()` 只接受上述格式；完整恢复帖子和楼层后才进入发送，目标信息缺失时直接
-返回明确错误。
-
-同一楼层中的不同用户刻意共享同一个 `xhh_thread_*`，以保留公开讨论的连续语境；发送者身份
-不进入 session ID。正常情况下 `AstrBotMessage.sender.user_id` 使用当前通知的真实小黑盒 UID；
-API 缺少 UID 时改用评论/通知 ID 哈希生成的非空运行时 ID，并保留单独的本地身份锚点。适配器
-在 `on_llm_request` 中额外追加非临时 `<xiaoheihe_sender_identity>` 内容块，昵称、UID/缺失标记和锚点作为
-块内不可信数据行写入，不拼接进标签属性；本地生成的可信部分只声明两者与本轮发言的绑定关系。
-AstrBot 会将普通 `extra_user_content_parts` 持久化到该轮 `role=user` 历史，因此后续即使 A、B、C
-共用一个 Conversation，每一轮历史仍带有各自 UID 或本地锚点。帖子、楼层全文和实时状态继续
-使用 `mark_as_temp()`，只参与当前请求，不重复写入历史。本地锚点不是小黑盒 UID，不参与自身、
-主人、管理员或 UID 黑白名单匹配；白名单模式在 UID 缺失时 fail-closed。
-
-v1.2.12 在不改变上述 session 和持久化身份模型的前提下，对临时社区背景增加事件类型相关的
-焦点路由。评论回复/@ 以当前原生用户消息为最高优先级，从通知引用关系或楼层父评论中单独
-提取直接回复对象，再提供最近楼层窗口，最后才提供低相关性的原帖背景；当前入站评论和直接
-回复对象会从普通楼层窗口去重。默认楼层回复原帖预算为 1600 字、最近窗口为 12 条且单条最多
-800 字，并在临时背景尾部重复当前消息作为定位副本，再追加不含社区正文的可信焦点规则。
-主动推荐流不套用这些缩减预算，继续以原帖为主要话题并使用完整的全局帖子/评论上限。
-
-v1.2.13 将上述 1600 字 / 12 条策略改为短上下文和故障路径的确定性兜底。被动楼层的可压缩
-背景超过默认 2400 字时，适配器在 `on_llm_request` 中先调用可选的上下文 Provider；压缩器最多
-接收 8000 字原帖正文和合计 8000 字最近楼层，并要求把 `post_summary`、`thread_summary`、
-`local_topic`、`relation_to_post` 分字段返回。输出再次由本地代码硬限制为配置的 700 / 1400
-字等预算，当前消息和直接回复对象不使用压缩结果替代。压缩失败、超时或返回格式异常不会失败
-本轮事件，而是直接使用 v1.2.12 背景。可信焦点块改为在文本压缩和图片背景之后最后注入。
-
-v1.2.14 在压缩源中额外保存本轮实际纳入窗口的参与者身份，并修复 `on_llm_request` 二次转换时
-遗漏该字段的问题。每条楼层在交给压缩器前已经按 `昵称 (UID ...)` 标注；本地代码从最终保留的
-楼层行生成去重身份锚点，压缩 Provider 只负责语义归纳并被要求原样使用这些身份。压缩完成后
-身份锚点再次由本地代码附回不可信临时上下文，所以昵称/UID 映射不依赖模型摘要是否完整。当前
-消息和直接回复对象仍走原有未压缩路径；system prompt 与 AstrBot 人格不由适配器修改。
-
-v1.2.15 在压缩源中再加入独立的 `post_image_caption`。该字段只来自插件先前验证成功的原帖
-视觉快照，压缩器必须单独返回 `post_image_summary`，最终继续标记为低相关性不可信背景；当前
-评论、直接回复对象、楼层文字和身份锚点均不能由图片摘要替代。压缩未触发或失败时，本地代码
-按 `thread_reply_compressed_image_chars` 硬截断快照，不为恢复图片而阻断回复。
-
-v1.2.16 在 `on_waiting_llm_request` 中先解析主模型路由并处理图片，此时 AstrBot 尚未构建
-`ProviderRequest`、下载/压缩消息图片或执行全局图片转述。识图成功后只把临时文字块交给后续
-`on_llm_request`；失败、超限或引用无效时同样移除原图并加入可信不可见说明。最终 Agent 仍由
-AstrBot 构建，因此人格、Conversation、Agent Runner、MCP、Skills、工具以及分段/流式回复不被
-插件旁路。插件主模型通过标准 `selected_provider` 选择；AstrBot 主模型和全局回退顺序只读取并
-记录，不修改其他平台共享的核心配置。
-
-v1.2.17 将身份归属改为贯穿事件的结构化数据，而不是依赖 LLM 从相邻文字推断。适配器为当前
-消息、原帖、每条楼层评论、直接回复对象及每张图片生成“昵称 + UID/本地备用锚点”；图片归属与
-URL 按相同索引传递，长度错位、来源冲突或 UID 冲突时降级为未知归属。长楼层压缩器只可选择
-程序分配的 `speaker_key`，本地解析器再映射回真实身份；任一身份项编造、交换或格式异常会拒绝
-整份压缩结果并回退确定性上下文，原帖摘要和图片摘要在渲染时重新附上原帖作者。
-因此共享楼层 session 可以继续保留公开讨论历史，而不会把楼主图片或 A 的言论默认归给当前 B。
-
-辅助图片转述/上下文压缩调用新增进程内 Provider 冷却：401/403、429、超时和普通异常分别进入
-有界冷却窗口，后续事件在冷却期间跳过该额外调用并继续备用 Provider 或确定性降级。冷却不会
-改变主 Agent Provider；Plugin Page 的状态接口暴露用途、Provider、剩余秒数和最近错误，并允许
-Dashboard 用户手动清除单个冷却。原帖图片的清洗后文字转述使用最多 512 条、24 小时的内存 LRU
-和 SQLite 双层快照，不保存图片二进制、URL 查询参数或访问令牌。快照先绑定入站事件；评论接口
-确认真实发送后，再把小黑盒返回的机器人评论 ID 绑定到同一快照。后续楼层按直接回复目标、根
-评论或有序图片指纹恢复，审核后发送与无审核直发使用相同链路。
-
-v1.2.17 的视觉快照同时保存所有者 UID、昵称和角色；内存键加入帖子 ID，读取内存或 SQLite 时
-都校验当前帖子作者与帖子锚点。作者 UID 暂缺的新快照仍可在同一账号、同一帖子和同一图片指纹下，
-凭已知昵称与 `post_author` 角色复用；迁移前缺少昵称/角色的旧快照、跨帖子同图指纹以及两个已知
-作者 UID 不匹配的记录均不复用。新增内存锚点是有界短文本，LRU 条数、24 小时 TTL、数据库 v10
-和不保存图片字节的边界保持不变。
-
-图片 URL 在 `ContextBuilder` 收集阶段同时记录 `current_comment` / `original_post` 来源。所有小黑盒
-图片在主 Agent 构建前按“插件识图 → AstrBot 默认图片转述 → AstrBot 当前主模型”逐级尝试，并按
-Provider 对象去重。当前评论生成最高优先级描述，原帖生成硬限长的低优先级描述，主动推荐流生成
-主要背景快照；任何来源全部失败都 fail-closed，最终主模型不会收到原图。短的“无法加载/看不到
-图片”占位输出视为失败且不缓存。每个候选最多按图数获得 15–120 秒，整条链默认最多 240 秒；
-事件另预留主模型回退宽限，总截止时间最高 900 秒。无图片事件只进行 O(1) Provider 路由解析，
-不会调用识图 Provider 或创建图片文字/字节缓存。
-
-## 事件状态
+确定性会话：
 
 ```text
-claimed → context_ready → dispatched → generated
-                                      ├─ sent
-                                      ├─ dry_run
-                                      ├─ send_unknown
-                                      ├─ retry_wait
-                                      └─ dead_letter
-claimed → ignored
+帖子 session  xhh_post_<post_id>
+楼层 session  xhh_thread_<post_id>_<root_comment_id>
+group ID      xhh_post_<post_id>
+message ID    xhh_<event_type>_<notification_id>_<external_comment_id>
 ```
 
-`dispatched` 在提交 AstrBot 队列前写入，避免快速完成的 `sent/dry_run` 被较旧状态覆盖。
-最终完成仅包括发送成功、成功模拟运行、明确忽略或人工丢弃。
+同一楼层中的不同用户共享公开讨论 session，但每一轮都保留发送者昵称和真实 UID；API 缺少 UID 时使用按事件隔离的本地身份锚点。备用锚点不能获得主人、管理员或 UID 白名单权限。
 
-热重载恢复采用保守策略：`claimed/context_ready` 且没有发送记录的事件可继续处理；
-`dispatched` 事件隔离为失败终态；已有 `sending/send_unknown` 记录的事件进入人工核对状态；
-已有失败发送记录的事件进入 `dead_letter`。该策略优先保证一个外部通知最多触发一次评论。
+被动楼层焦点顺序：
 
-## 并发
+```text
+当前原生用户消息
+  > 直接回复对象
+  > 最近楼层对话
+  > 原帖背景
+```
 
-- 每个 `profile_id` 只有一个轮询器；
-- 有界优先队列限制总积压和单用户积压；
-- 首次轮询把当前最新 `message_id` 写入 `notification_cursors`，默认从此后的新通知开始；
-- 新通知先原子写入 SQLite 再进入队列；扫描能在单轮内碰到旧边界时直接推进实时游标；
-- 单轮页数达到上限但尚未碰到旧边界时，未完成连续区间写入 `notification_backfills` 后再推进
-  实时 `notification_cursors`；后续轮询优先处理新通知，并用剩余分页预算继续回填旧区间；
-- 回填 offset 与最旧边界均持久化，插件重启后继续；回填期间再次出现超大新通知区间时会把 offset
-  安全回退到新的连续扫描末端，同时保留最旧边界，重复项继续由 `incoming_events` 唯一约束去重；
-- 队列或单用户上限触发时写入 `retry_wait`，每轮从 SQLite 主动恢复到期事件；
-- SQLite 唯一约束、发送记录和进程内事件键共同过滤重复通知；
-- 主人事件提高优先级但不突破硬上限；
-- 帖子/楼层上下文网络读取在锁外完成；同 key 缓存 miss 通过 in-flight Task 合并为一次网络读取，
-  默认 TTL 为 60 秒；通知已携带原帖快照的楼层只补取 root 评论树；同一楼层从原生事件提交到
-  最终发送或超时仍使用串行锁，不同楼层受 worker 数量限制；
-- HTTP Client 使用账号级并发初始化闸门，存活连接池直接复用；事件分发复用客户端内存凭证，
-  不再逐事件读取凭证文件；图片 URL 去重且同一事件相同 hostname 只解析一次；
-- 不在锁内执行轮询或上下文网络请求；
-- 所有任务由 `TaskManager` 持有并在 terminate 时取消等待。
+长楼层可额外调用上下文 Provider 做来源感知压缩；当前消息和直接回复对象始终保留原文。压缩失败时回到有界确定性窗口。
 
-## 安全边界
+## 图片链路
 
-- 凭证不进入配置、WebUI、日志或诊断；
-- Web API 要求 Dashboard 已认证用户，并重新校验所有输入；
-- UI 只用 `textContent` 创建外部内容，避免 XSS；
-- SQL 全部参数化；动态排序/表名只来自后端固定白名单；
-- 图片仅接受无用户信息的公开 HTTPS URL，并在提交组件前校验 DNS 解析结果；
-- v1.1.2 使用图片 URL 直传，本地图片字节缓存保持为空；v1.2.15 只增加有界的图片转述文字快照，
-  不预下载图片，持久层只保存脱敏图片指纹/主机和描述，因此不恢复单图/总图 MB 配置；
-- v1.2.16 按图片数、识图候选数和视觉总预算为基础回复超时增加有界宽限；单候选最多 120 秒、默认视觉总预算 240 秒、事件总截止时间最高 900 秒；
-- 评论区 @ 分别读取原帖详情与指定楼层，合并通知内原帖快照；评论图和原帖图交替进入图片上限；
-- 外部内容置于 `<xiaoheihe_context trust="untrusted">` 用户侧临时片段中；
-- 当前触发昵称与 UID 由通知解析结果写入持久化发送者身份块和可信运行时元数据；社区正文仍按外部内容处理；所有原帖、评论、回复对象及图片描述均携带程序生成的昵称/UID 归属，未知时禁止猜测；
-- POST 评论超时进入 `send_unknown`，核对结果不明确时保持人工检查状态；
-- 评论接口明确返回 `status=failed` 时进入失败终态，事件级发送闸门拦截第二次 POST；
-- 主动候选批准先原子转换为 `sending`，账号级审核锁限制并发；更新或重启遗留的
-  `sending` 转为 `send_unknown`；
-- 主动候选真实发送复用与普通回复相同的楼层锁、发送记录、自身评论记录和超时核对链路。
-- 无审核主动回复跳过候选表，但继续复用事件级发送记录、楼层锁、重复发送闸门和超时核对链路。
+小黑盒图片会在 AstrBot 构建主 Agent 之前按来源处理：
+
+```text
+插件 image_provider_id
+  → AstrBot 默认图片转述 Provider
+  → AstrBot 当前主模型
+```
+
+插件只保存安全公开 HTTPS URL 的有限引用；成功识图后向最终 Agent 提供来源明确的文字描述。全部候选失败、超时或返回占位结果时移除原图并注入可信失败说明，禁止最终模型猜图。
+
+主动帖子成功识图可生成 24 小时视觉文字快照。内存 LRU 和 SQLite 都只保存文字描述、图片指纹和脱敏元数据，不保存图片字节。
+
+## 发送与幂等
+
+真实评论发送前会先记录 outgoing attempt。已发送、正在发送或状态未知的事件都有数据库闸门：
+
+- 已确认发送：直接复用记录，禁止第二次 POST；
+- `sending` / `send_unknown`：先查询近期机器人评论尝试确认；不能确认时停止自动重发；
+- 明确失败：进入终态或按限定错误类型调度安全重试；
+- 任务在 POST 后被取消：标为 `send_unknown`，不假定服务端未收到。
+
+主动审核候选额外使用账号级并发锁和原子 claim，避免两个批准请求同时发送。
+
+## 生命周期与性能
+
+- 每账号复用长生命周期 HTTP Client；
+- 网络上下文有界 TTL + single-flight；
+- 主动真实分区最多 4 路并发；
+- FeedService 初始化时预计算真实分区 ID、推荐流别名、关键词、帖子类型和作者黑名单；
+- 图片文字快照内存 LRU 有硬上限；
+- 任务关闭时传播取消信号并关闭 HTTP Client、SQLite 和 SSE；
+- v1.3.0 **没有新增数据库迁移或运行依赖**。
+
+历史架构演进请查看 [CHANGELOG.md](../CHANGELOG.md)。
