@@ -253,3 +253,26 @@ python tools/validate_repository.py
 ```
 
 普通测试使用 Mock HTTP 和脱敏 fixture。仓库配置 CI、CodeQL、Dependency Review、Secret Scan 和 Dependabot。测试范围与最近一次验证结果见 [测试说明](docs/testing.md)。
+
+## 相关文档
+
+- [更新日志](CHANGELOG.md)
+- [架构说明](docs/architecture.md)
+- [AstrBot 兼容性](docs/compatibility.md)
+- [小黑盒 API 契约](docs/xiaoheihe-api-contract.md)
+- [测试说明](docs/testing.md)
+- [安全策略](SECURITY.md)
+- [贡献指南](CONTRIBUTING.md)
+
+## 致谢
+
+- [AstrBot](https://github.com/AstrBotDevs/AstrBot)：平台适配器与原生 Agent 管线；
+- [SomeOvO/xhhRobot](https://github.com/SomeOvO/xhhRobot)：登录、通知、帖子与评论功能行为研究；
+- [XiaHouSheng/heybox-core](https://github.com/XiaHouSheng/heybox-core)：MIT 许可的动态 `hkey` 行为参考；
+- [HadeonYu/heybox-bot](https://github.com/HadeonYu/heybox-bot)：MIT 许可的 Web 登录参数和客户端身份形状参考。
+
+本项目采用 Python 独立实现。第三方许可全文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## License
+
+[MIT License](LICENSE) © RyanVaderAn
