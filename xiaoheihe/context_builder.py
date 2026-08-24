@@ -887,8 +887,17 @@ def _reply_target_image_context(
     comment_b = dict(raw_comment_b) if isinstance(raw_comment_b, dict) else {}
 
     images = _image_values(candidate) if candidate else []
-    comment_b_id = _comment_id(comment_b) if comment_b else ""
-    comment_b_matches_target = bool(comment_b and (not comment_b_id or comment_b_id == target_id))
+    comment_b_ids = tuple(
+        value
+        for value in (
+            str(raw.get("comment_b_id") or ""),
+            _comment_id(comment_b) if comment_b else "",
+        )
+        if value
+    )
+    comment_b_matches_target = bool(
+        comment_b and comment_b_ids and all(value == target_id for value in comment_b_ids)
+    )
     if not images and comment_b_matches_target:
         # Some notification shapes retain the quoted comment media even when the
         # separately fetched thread-tree node contains only text. Preserve the

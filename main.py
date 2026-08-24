@@ -445,6 +445,14 @@ class XiaoheiheAdapterPlugin(Star):
             return fallback
         supplied_source = str(value.get("source", "") or "").strip()
         if source in {"direct_reply_target", "thread_anchor"}:
+            raw = cls._event_raw_message(event)
+            route = raw.get("route", {})
+            route = route if isinstance(route, dict) else {}
+            expected_comment_id = str(
+                raw.get("reply_target_comment_id", "")
+                if source == "direct_reply_target"
+                else route.get("root_comment_id", "")
+            ).strip()
             expected_role = (
                 ContentOwnerRole.DIRECT_REPLY_TARGET.value
                 if source == "direct_reply_target"
@@ -455,7 +463,8 @@ class XiaoheiheAdapterPlugin(Star):
             if (
                 supplied_source != source
                 or role != expected_role
-                or not identity_key.startswith("comment:")
+                or not expected_comment_id
+                or identity_key != f"comment:{expected_comment_id}"
             ):
                 return cls._fallback_image_attribution(event, "event_image")
             return ImageAttribution(
@@ -1180,7 +1189,9 @@ class XiaoheiheAdapterPlugin(Star):
                     image_chars=image_chars,
                     allowed_participants=source.recent_participants,
                 )
-                if source.post_image_caption and not result.post_image_summary:
+                if not source.post_image_caption and result.post_image_summary:
+                    result = replace(result, post_image_summary="")
+                elif source.post_image_caption and not result.post_image_summary:
                     result = replace(
                         result,
                         post_image_summary=clean_untrusted_text(

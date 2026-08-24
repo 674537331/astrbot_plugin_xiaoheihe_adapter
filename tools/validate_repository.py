@@ -9,9 +9,13 @@ from pathlib import Path
 
 import yaml
 
-from xiaoheihe.config_service import DEFAULT_CONFIG
-
 ROOT = Path(__file__).resolve().parents[1]
+ROOT_TEXT = str(ROOT)
+if not sys.path or sys.path[0] != ROOT_TEXT:
+    sys.path.insert(0, ROOT_TEXT)
+
+from xiaoheihe.config_service import DEFAULT_CONFIG  # noqa: E402
+
 EXCLUDED = {
     ".git",
     ".pytest_cache",
