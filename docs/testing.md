@@ -1,208 +1,157 @@
-# 测试说明
+# 测试说明（v1.3.0）
 
-## 本地命令
+## 最近一次完整验证
+
+日期：**2026-08-24**
+
+v1.3.0 发布审计分支的完整质量任务结果：
+
+```text
+278 passed in 5.09s
+TOTAL 4007 statements / 1300 branches
+branch coverage: 83%
+```
+
+关键模块覆盖率：
+
+```text
+xiaoheihe/config_service.py   84%
+xiaoheihe/feed_service.py     83%
+xiaoheihe/topic_service.py    91%
+xiaoheihe/repository.py       88%
+xiaoheihe/security.py         83%
+```
+
+同一轮还通过：
+
+- `python tools/validate_repository.py`；
+- Ruff lint；
+- Ruff format check；
+- `python -m compileall -q .`；
+- `node --check pages/xiaoheihe/app.js`；
+- `node --check pages/xiaoheihe/topic_probe.js`；
+- AstrBot API stub import smoke；
+- AstrBot 4.24.2 兼容检查；
+- AstrBot 4.26.2 兼容检查；
+- 当前支持范围内最新稳定 AstrBot 兼容检查；
+- Dependency Review；
+- Secret Scan；
+- CodeQL Python / JavaScript-TypeScript（以最终 PR 检查结果为准）。
+
+## 本地执行
 
 ```bash
 python -m pip install -e ".[test]"
 ruff check .
 ruff format --check .
-python -m coverage run -m pytest -q
-python -m coverage report
 python -m compileall -q .
+node --check pages/xiaoheihe/app.js
+node --check pages/xiaoheihe/topic_probe.js
+python tools/validate_repository.py
+coverage run -m pytest -q
+coverage report
 ```
 
-测试默认不访问网络、不需要小黑盒账号、不读取真实凭证。HTTP 行为使用
-`httpx.MockTransport`，外部响应使用 `tests/fixtures/` 下的脱敏 JSON。
+CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本做包级 API 契约检查。
 
-## 覆盖范围
+## v1.3.0 新增重点测试
 
-- 二维码获取、等待、成功、过期、凭证保存/恢复/删除和登录失效；
-- 通知解析、分页、首次基线、可选回溯、有界队列、并发唯一约束；
-- 按账号/通知类型持久化 `message_id` 边界、缺省时间历史过滤和游标原子推进；
-- 队列拥塞先持久化、SQLite 到期重试主动恢复和更新后状态继承；
-- 自身消息、黑白名单、主人 UID 和管理员映射默认关闭；
-- 当前评论/原帖/楼层上下文、被动回复焦点优先级、直接回复对象保留、v1.2.12 兜底预算、长楼层来源感知语义压缩、程序化昵称/UID 身份锚点、主动浏览差异、HTML 清洗、临时上下文、双方图片 URL、图片来源优先级、被动楼层图片 Provider 逐级预处理、原帖图片转述缓存、辅助 Provider 冷却/手动恢复、原帖图片 fail-closed 与视觉降级提示；
-- SSRF 基础防护、路径穿越、日志/响应脱敏、回复清理与长度；
-- 确定性 session/message ID、唤醒标记、父类发送状态；
-- 同楼层不同发送者共享 session 但保留各自 `MessageMember.user_id`，每轮 UID 身份块持久化而楼层背景保持临时；
-- 模拟运行、流式聚合、一次事件一次真实发送；
-- 成功发送、发送状态未知、近期评论确认、不盲重试；
-- 明确 `status=failed` 终态、已有发送记录闸门和重启后 `dispatched` 隔离；
-- 401/403 熔断、429 `Retry-After`、5xx 与网络重试；
-- 主动帖子筛选、候选、批准、拒绝、并发批准闸门和每日上限；
-- SQLite WAL、迁移、索引、事务幂等、恢复、清理和计数；
-- 配置同步、保存成功提示、保存回滚、Plugin Page API、SSE、任务关闭和 HTTP Client 关闭；
-- 覆盖更新后的适配器实例重建、冷启动不重复加载和配置实例状态回显；
-- 平台注册与 `PlatformMetadata` 均使用仓库 `logo.png`；
-- 主模块只注册平台适配器；固定 LLM Provider 通过事件选择进入 AstrBot 原生链路，被动楼层图片预处理只调用已有 AstrBot Provider 并生成临时图片描述。
+### 1. 真实分区浏览
 
-Coverage 启用分支统计，综合门槛为 80%。适配器、事件和 Web API 由专门的契约测试覆盖，
-但因为运行时必须由 AstrBot 注入模块而不计入核心 coverage 分母；CI 另执行真实 AstrBot
-发布包的文件/符号契约检查。
+覆盖：
 
-## 2026-08-12 v1.2.17 本地结果
+- 真实分区目录递归解析；
+- `topic_id` 只允许 1–32 位数字；
+- `/bbs/app/topic/feeds` 参数和分页限制；
+- 最多 20 个分区选择；
+- 多分区有界并发；
+- 跨分区帖子去重；
+- 按创建时间 / 热度排序；
+- 单个分区失败时继续其他分区；
+- `CancelledError` 继续向上传播；
+- 所有真实分区失败时才读取一次推荐流回退；
+- 任一真实分区成功时不混入推荐流。
 
-- Pytest：`251 passed`；Coverage：`82%`（branch，达到 `fail_under = 80`）；
-- Ruff Check/Format、Python compileall、前端 `node --check`、JSON/YAML、仓库静态校验、stub import、`git diff --check`：通过；
-- AstrBot 包级契约：4.24.2 通过 13 项核心文件检查，4.26.2 与 4.27.2 均通过 14 项含 Plugin Page API 的检查；没有新增 AstrBot API 依赖；
-- 身份回归覆盖当前消息、原帖、楼层、直接回复对象、逐图归属、缓存描述和压缩摘要；UID/昵称篡改、来源数组错位、压缩器任一身份键编造、UID 缺失通知/权限/持久化/自身循环、同名匿名评论及无图评论引用原帖图均 fail-closed 或进入确定性回退；
-- 数据库从 v9 升级到 v10 的旧视觉快照保留但标为未知所有者；新快照持久化 UID、昵称和角色，作者 UID 暂缺时只允许同帖/同指纹/已知昵称与作者角色命中，跨帖子相同图片指纹不会命中内存缓存，查询计划继续使用 `idx_visual_context_lookup` 且不创建临时排序；
-- 开销审计确认：普通无图消息不新增模型或数据库调用；备用运行时 ID 仅对缺 UID 事件计算一个短 SHA-256，身份和图片归属处理为有界字符串及每事件最多 20 张图片的线性遍历，楼层压缩输出最多解析 64 项；视觉 LRU 仍最多 512 条、TTL 24 小时且不保存图片字节；
-- 仓库校验统计 99 个打包文件、2,104,309 字节（约 2.10 MB）；无新增运行依赖，本轮 UID 缺失备用修复不新增数据库迁移，最新版本仍为 v10。
+### 2. 浏览来源 Plugin Page
 
-## 2026-08-09 v1.2.16 本地结果
+覆盖：
 
-- Pytest：`236 passed`；Coverage：`82%`（branch，达到 `fail_under = 80`）；
-- Ruff Check/Format、Python compileall、前端 `node --check`、JSON/YAML、仓库静态校验、stub import、`git diff --check`：通过；
-- AstrBot 包级契约：PyPI wheel 4.24.2、4.26.2 与源码 4.27.2 均通过 13/14 项文件与符号检查；新增检查确认 `on_waiting_llm_request` 先于 `build_main_agent()` 和 `on_llm_request`；
-- 识图执行回归覆盖插件图片 → AstrBot 图片 → AstrBot 主模型顺序、去重、明确纯文本模型跳过、超时/异常/占位结果继续回退、全失败隔离原图，以及纯文本最终请求不含 `Image`；
-- 主模型回归覆盖有效 `selected_provider`、无效插件模型构建前退回、期望/原生回退链差异提示；无图片事件不调用辅助模型，未安装/未调用 Grok 和其他工具保持零介入，明确 Grok 搜图只临时打开早期图片引用；
-- 时间边界覆盖图片数 × 候选数、视觉总预算、主模型回退宽限与 900 秒事件硬上限；健康模型完成后无额外等待；
-- 开销审计确认：回复 worker 默认 2、待处理队列默认 50、网络上下文 LRU 默认 256、图片文字 LRU 硬限 512、内存日志默认 2000；每事件图片引用硬限 20 且 Agent 完成即释放，不保存图片字节。早期配置快照在同一事件复用，视觉缓存 miss 不在后续钩子重复查 SQLite；
-- 仓库校验统计 99 个打包文件、约 2.04 MB；v1.2.16 无数据库迁移、无新增运行依赖。
+- 独立 `浏览来源` 标签存在；
+- 真实分区只读探测 API；
+- 最多尝试有限候选分区验证帖子流；
+- 返回目录、已配置 topic、样例帖子与 feed 验证状态；
+- 页面支持真实分区多选；
+- 页面支持名称 / 分组 / topic_id 搜索；
+- 回退推荐流分类支持多选；
+- 真实分区启用时回退控件置灰；
+- `topic_ids` / `fallback_sources` 通过同一 `config/save` 持久化。
 
-## 2026-08-09 v1.2.15 本地结果
+### 3. v1.2.x → v1.3.0 配置迁移
 
-- Pytest：`227 passed`；
-- Coverage：`82%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、JSON/YAML、仓库静态校验、AstrBot stub import 与 `git diff --check`：通过；
-- 24 小时视觉快照覆盖内存/SQLite 复用、插件重载边界、事件链接、机器人评论 ID 链接、到期清理与外键级联；模拟视觉元数据写入失败不会回滚已经确认成功的小黑盒评论；
-- 后续楼层接口不再返回原图时，可按直接回复目标或根评论恢复主动评论当时的视觉描述；缓存图片描述单独参与楼层 LLM 压缩，压缩关闭或失败仍受本地字符硬上限约束；
-- “无法加载/看不到图片”等 Provider 占位输出会被拒绝且不缓存；真实“错误界面截图”的具体视觉描述不会被简单关键词误判；
-- 主动帖子未配置独立图片 Provider 时按固定 LLM / 当前会话 Provider 生成快照，全部失败仍回到 AstrBot 原生视觉路径；无图片、无 Grok、普通发送和其他平台回归通过；
-- 默认 1/2/3/4–6 图视觉预处理上限 30/60/90/120 秒、单 Provider 最多 60 秒，并继续受 AstrBot 事件总截止时间约束；数据库查询计划确认评论绑定使用主键、原帖快照直接使用帖子/来源/指纹/到期复合索引且不建立临时排序，内存缓存硬限 512 条且不保存图片字节。
+特别覆盖 AstrBot schema 更新顺序：
 
-## 2026-08-08 v1.2.14 本地结果
+```text
+旧配置 source=hardware
+  + AstrBot 根据新 schema 先补 fallback_sources=["all"]
+  → ConfigService
+  → fallback_sources=["digital_tech"]
+```
 
-- Pytest：`217 passed`；
-- Coverage：`82%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、JSON/YAML、仓库静态校验、AstrBot stub import 与 `git diff --check`：通过；
-- 通知超过单轮分页上限时会原子推进实时 cursor 并持久化旧区间 backfill；后续轮询在处理最新消息后继续消化旧区间，重建 `NotificationService` 后仍可从 SQLite offset 恢复；
-- 回填期间再次出现超过单轮窗口的新消息时会回退 backfill offset、保留最旧边界；回归测试确认中间通知最终全部进入既有幂等入站记录；
-- 长楼层压缩输入携带程序提取的昵称/UID 只读身份列表，主钩子重建压缩源时继续保留该字段，压缩完成后身份锚点由本地代码重新附回；当前消息和直接回复对象仍保留原文；
-- 辅助图片/上下文 Provider 失败后进入有界冷却，重复事件不会继续调用已知故障模型；状态 API、Plugin Page 展示和 WebUI 手动结束冷却均有回归覆盖；
-- 原帖图片文字转述复用有界 TTL 缓存；同楼层并发 miss 只执行一次网络读取，新轮询观察到的楼层事件会绕过过时缓存，通知原帖快照可省去一次原帖请求；
-- SQLite v8 索引与长期元数据回收、多批清理、无效图片 MB 配置淘汰，以及无压缩/短楼层、无图片、Grok 可选集成、Agent 最终回复聚合继续通过全量测试；
-- AstrBot 包级契约：4.24.2、4.26.2、4.27.2 全部通过。
+同时验证：
 
-## 2026-08-08 v1.2.13 本地结果
+- 新的非默认 `fallback_sources` 优先于残留旧 `source`；
+- `source` 在迁移后从插件运行配置中移除；
+- `_conf_schema.json` 仍持久化 `source` / `topic_ids` / `fallback_sources`，三者均为 `invisible`；
+- Plugin Page 通用“设置” schema 会移除三者，避免与独立“浏览来源”页重复编辑。
 
-- Pytest：`202 passed`；
-- Coverage：`82%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、JSON、仓库静态校验与 `git diff --check`：通过；
-- 长被动楼层超过阈值时，原帖与最近楼层分别进入语义压缩，压缩结果具有本地硬上限，当前消息/直接回复对象仍保留原文；
-- 短楼层不额外调用上下文 Provider；压缩 Provider 异常时自动恢复 v1.2.12 的 1600 字 / 最近 12 条兜底上下文且继续本轮回复；
-- 压缩器输入窗口比 v1.2.12 兜底更宽但仍硬限制原帖/楼层各 8000 字，覆盖话题在较早楼层已经迁移的情况；
-- 被动楼层会按固定图片 Provider → 固定 LLM Provider → 当前会话 Provider 逐级预处理；原帖图描述硬限长且原图不进入最终 Agent，全部预处理失败时 fail-closed；当前评论图只有在全部预处理失败时才保留原图兜底；
-- 主动浏览继续以原帖为主要内容并跳过被动楼层文本压缩；多人 UID、Grok 图片隔离与 Agent 最终回复聚合继续回归；
-- AstrBot 包级契约：4.24.2、4.26.2、当前稳定版 4.27.2 全部通过。
+### 4. 发布一致性
 
-## 2026-08-08 v1.2.12 本地结果
+`tools/validate_repository.py` 新增硬检查：
 
-- Pytest：`188 passed`；
-- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、仓库静态校验与 `git diff --check`：通过；
-- 被动楼层回复会把当前消息和直接回复对象放在最高相关性位置，并对原帖正文、普通最近楼层实施独立物理预算；
-- 通知提供的直接回复对象即使落在最近楼层窗口之外也会单独保留，当前触发评论不会在普通楼层背景中重复；
-- 当前消息的定位副本保持临时，不重复写入 AstrBot 会话历史；v1.2.11 的持久 UID 身份块保持不变；
-- 主动浏览不使用被动回复预算，继续以原帖为主要话题并使用全局原帖/评论上限；
-- AstrBot 包级契约：4.24.2、4.26.2、当前稳定版 4.27.2 全部通过。
+- `metadata.yaml` 版本；
+- `pyproject.toml` 版本；
+- `xiaoheihe.__version__`；
+- README “当前版本”；
+- CHANGELOG 第一条版本；
+- Bug Report 模板默认插件版本；
+- `web_api.py` 禁止重新出现硬编码诊断版本；
+- 浏览来源三个 schema 持久化字段必须存在、隐藏且默认值正确。
 
-## 2026-08-06 v1.2.11 本地结果
+这类遗漏现在会直接让 CI 失败，而不是等发布后人工发现。
 
-- Pytest：186 passed；
-- Coverage：81%；
-- AstrBot 包级契约：4.24.2、4.26.2、4.27.2 全部通过；
-- 同一 `xhh_thread_*` 中 A/B 事件保持同一 session，但 `MessageMember.user_id` 分别保留真实 UID；
-- `on_llm_request` 为每轮小黑盒用户输入追加非临时 UID 身份块，楼层动态上下文继续标记为 temp；
-- 当前可信运行时元数据明确提供触发 UID，并约束不同 UID 的第一人称不得串人；
-- 非小黑盒平台不注入 UID 身份块，v1.2.10 Grok 图片隔离和 Agent 最终回复聚合继续回归。
+## 既有回归范围
 
-## 2026-08-06 v1.2.10 本地结果
+完整 pytest 仍覆盖以下长期能力：
 
-- Pytest：`184 passed`；
-- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check、Ruff Format Check、Python compileall、前端 `node --check`、仓库静态校验与 `git diff --check`：通过；
-- 带图普通 Grok 网页查询会临时隔离原图并在工具结果后恢复，明确图片搜索与其他工具保持原图；
-- 工具结果回调缺失时由 `on_agent_done` 兜底恢复图片，避免异常路径污染事件消息链；
-- Grok 查询约束只在实际 `grok_web_search` 调用中修改该工具参数，其他工具参数保持原值；
-- 包级契约新增 `on_using_llm_tool` / `on_llm_tool_respond`；
-- AstrBot 4.24.2、4.26.2 和当前稳定版 4.27.2 的契约检查纳入发布验证。
+- 二维码登录、状态查询、凭证失效和安全登出；
+- mention/reply 分页、首次历史基线、跨轮 backfill 和游标恢复；
+- 帖子/楼层/评论解析和富文本图片；
+- 黑白名单、主人权限、缺 UID 的 fail-closed 身份处理；
+- 同楼层多人 sender 身份持久化；
+- 长楼层焦点路由和 LLM 压缩降级；
+- 图片 Provider 路由、预算、缓存、归属校验和 24 小时视觉快照；
+- Grok 普通搜索图片隔离与显式搜图兼容；
+- Agent begin/done、工具调用、流式/分段回复聚合；
+- dry-run、人工审核和无审核主动直发三种路径；
+- outgoing 幂等、`send_unknown`、近期评论核对和取消语义；
+- SQLite 迁移、清理、软上限与日志脱敏；
+- Plugin Page 配置、事件、候选、日志 SSE、存储和诊断 API。
 
-## 2026-08-04 v1.2.9 本地结果
+## 外部集成测试
 
-- Pytest：`181 passed`；
-- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check 与 Ruff Format Check：通过；
-- Python compileall、前端 `node --check` 和仓库静态校验：通过；
-- 无工具调用的普通 Agent 回复、Grok 式工具状态/中间文本/最终回复、插件直发后继续 LLM、直接结果去重均有回归测试；
-- AstrBot 自带任意段数回复、流式回复、一次事件一次真实发送、主动候选和无审核直发回归保持通过；
-- AstrBot 4.24.2：12 个核心契约文件检查通过；
-- AstrBot 4.26.2：13 个完整契约文件检查通过；
-- 当前稳定版 AstrBot 4.27.1：13 个完整契约文件检查通过。
+真实账号测试默认不执行。需要显式：
 
-## 2026-08-03 v1.2.8 本地结果
+```text
+XHH_INTEGRATION_TEST=1
+```
 
-- Pytest：`175 passed`；
-- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check：通过；
-- Ruff Format Check：通过；
-- Python compileall：通过；
-- `node --check pages/xiaoheihe/app.js`：通过；
-- 仓库 JSON/YAML/静态文件/敏感运行文件检查：通过；
-- 主动刷帖允许 `dry_run=false / review_required=false`，配置保存和插件构造不再抛出安全组合异常；
-- 主动模式组合、合成事件分流和事件最终发送参数均有回归测试，无审核模式明确调用
-  `deliver(..., dry_run=False, proactive=True)`；
-- 默认主动刷帖关闭、模拟运行开启、人工审核开启，现有候选批准并发闸门保持不变；
-- AstrBot 4.24.2：12 个核心契约文件检查通过；
-- AstrBot 4.26.2：13 个完整契约文件检查通过；
-- 当前稳定版 AstrBot 4.27.1：13 个完整契约文件检查通过。
+真实账号集成验证应保持 dry-run，除非测试目标本身就是已确认的评论写入路径。禁止在测试日志、fixture、Issue 或 CI artifact 中保存 Cookie、Token、二维码、设备 ID、真实私人正文或其他未脱敏账号数据。
 
-## 2026-08-02 v1.2.7 本地结果
+## 测试与真实接口的边界
 
-- Pytest：`172 passed`；
-- Coverage：`81%`（启用 branch，达到 `fail_under = 80`）；
-- Ruff Check：通过；
-- Ruff Format Check：通过；
-- Python compileall：通过；
-- `node --check pages/xiaoheihe/app.js`：通过；
-- 仓库 JSON/YAML/静态文件/敏感运行文件检查：通过；
-- UTF-8 与连续乱码标记检查：通过；
-- 浏览器交互：首屏懒加载、日志 SSE 生命周期、移动端单栏和主动审核确认均通过；
-- 客户端池并发初始化回归：8 个并发调用只创建 1 个 HTTP Client、读取 1 次凭证；
-- 评论 @ 类型 `17` 已覆盖“解析 → 轮询入队 → SQLite 事件记录 → 模拟运行完成”集成路径；
-- 评论 @ 的原帖详情、指定楼层、通知原帖快照和双方图片合并路径已覆盖；
-- 设置保存成功提示由前端契约检查和仓库静态检查共同覆盖；
-- AstrBot 将完整模型结果拆成任意多次 `send()` 时，适配器恢复分段前文本、聚合为一次评论并显示管理页提醒；
-- 多图事件基础超时、6 图自动扩展至 300 秒及 900 秒硬上限均有回归测试；
-- 已完成事件、进程内重复通知、分页重复项和缺省时间历史通知的过滤回归测试通过；
-- SQLite v4 消息边界、到期重试、重启隔离、更新继承和评论发送闸门回归测试通过；
-- 主动候选并发批准只发送一次，更新或重启遗留 `sending` 转为 `send_unknown`；
-- 覆盖更新后已启用适配器由 `Star.initialize()` 协调重建，冷启动保持 AstrBot 原生顺序；
-- AstrBot 4.24.2：12 个核心契约文件检查通过（核心适配器范围）；
-- AstrBot 4.26.2：13 个完整契约文件检查通过；
-- 当前稳定版 AstrBot 4.26.8：13 个完整契约文件检查通过。
+Mock/fixture 测试用于锁定**本项目认为正确的请求与响应契约**，不能证明小黑盒未来不会调整非公开 API。因此：
 
-上述是单元、Mock、静态和包级契约结果，不代表真实小黑盒账号端到端测试。
-
-## 真实集成测试
-
-v1.0.0 不在普通 CI 中运行真实小黑盒集成测试，也不提交真实凭证。真实测试必须由维护者
-显式准备独立测试账号并保持：
-
-- 模拟运行开启（`dry_run: true`）；
-- 主动刷帖关闭；
-- 最小请求间隔不低于默认值；
-- 测试后检查并删除脱敏前的临时诊断；
-- 不把真实二维码、Cookie、Token、数据库或日志加入版本控制。
-
-真实账号测试状态与准确边界见 `docs/xiaoheihe-api-contract.md`。
-
-## CI
-
-- `ci.yml`：语法、Ruff、格式、Pytest、Coverage、导入、AstrBot 版本兼容、包体积、
-  禁止敏感运行文件、前端基础检查；
-- `codeql.yml`：Python 与 JavaScript CodeQL；
-- `dependency-review.yml`：PR 依赖审查；
-- `secret-scan.yml`：Gitleaks；
-- Dependabot：pip 与 GitHub Actions。
+- 小黑盒接口变化需要同时更新 `docs/xiaoheihe-api-contract.md`；
+- 新增/修改响应字段必须增加 parser fixture；
+- 真实分区路径变化必须增加 topic service 与回退行为测试；
+- 发送路径变化必须同时验证幂等和 `send_unknown`，不能只测试 HTTP 200。
