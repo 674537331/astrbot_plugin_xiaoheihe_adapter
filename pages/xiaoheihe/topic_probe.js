@@ -81,12 +81,25 @@ function renderSummary() {
   renderFallbackSources();
 }
 
+function renderProbeStatus() {
+  if (!lastProbe) return;
+  const verification = lastProbe.feed_verified
+    ? `已验证分区 ${lastProbe.verified_topic_id} 的真实帖子流。`
+    : `分区目录读取成功，但帖子流探测未通过：${lastProbe.feed_error || "未知错误"}`;
+  setStatus(
+    `读取到 ${lastProbe.topic_count || 0} 个真实分区。${verification}`,
+    lastProbe.feed_verified ? "success" : "warning",
+  );
+}
+
 function updateDraftState() {
   selectionCountNode.textContent = `${draftTopicIds.size} / ${MAX_SELECTED_TOPICS}`;
   saveTopicButton.disabled = !lastProbe || draftTopicIds.size > MAX_SELECTED_TOPICS;
   if (draftTopicIds.size > MAX_SELECTED_TOPICS) {
     setStatus(`最多选择 ${MAX_SELECTED_TOPICS} 个真实分区；当前已选择 ${draftTopicIds.size} 个。`, "error");
+    return;
   }
+  renderProbeStatus();
 }
 
 function renderTopics() {
@@ -227,13 +240,7 @@ async function probeTopics({ openEditor = false } = {}) {
     });
     lastProbe = result;
     lastProbeProfile = selectedProfile();
-    const verification = result.feed_verified
-      ? `已验证分区 ${result.verified_topic_id} 的真实帖子流。`
-      : `分区目录读取成功，但帖子流探测未通过：${result.feed_error || "未知错误"}`;
-    setStatus(
-      `读取到 ${result.topic_count || 0} 个真实分区。${verification}`,
-      result.feed_verified ? "success" : "warning",
-    );
+    renderProbeStatus();
     renderSummary();
     if (openEditor) {
       draftTopicIds = new Set(configuredTopicIds());
@@ -275,13 +282,10 @@ async function saveTopicSelection() {
     config.proactive_feed ||= {};
     config.proactive_feed.topic_ids = [...draftTopicIds];
     await bridge.apiPost("config/save", config);
-    currentConfig = config;
-    editorNode.hidden = true;
-    renderSummary();
-    setStatus(`已保存 ${draftTopicIds.size} 个真实分区。`, "success");
+    setStatus(`已保存 ${draftTopicIds.size} 个真实分区。页面将刷新以同步全部设置状态。`, "success");
+    window.setTimeout(() => window.location.reload(), 500);
   } catch (error) {
     setStatus(`保存真实分区失败：${error.message}`, "error");
-  } finally {
     saveTopicButton.disabled = false;
   }
 }
@@ -296,13 +300,13 @@ async function saveFallbackSources() {
     config.proactive_feed ||= {};
     config.proactive_feed.fallback_sources = selected;
     await bridge.apiPost("config/save", config);
-    currentConfig = config;
-    renderFallbackSources();
+    fallbackStatusNode.textContent = "回退推荐流分类已保存。页面将刷新以同步全部设置状态。";
+    fallbackStatusNode.dataset.tone = "success";
+    window.setTimeout(() => window.location.reload(), 500);
   } catch (error) {
     fallbackStatusNode.textContent = `保存回退分类失败：${error.message}`;
     fallbackStatusNode.dataset.tone = "error";
-  } finally {
-    if (!configuredTopicIds().length) saveFallbackButton.disabled = false;
+    saveFallbackButton.disabled = false;
   }
 }
 
