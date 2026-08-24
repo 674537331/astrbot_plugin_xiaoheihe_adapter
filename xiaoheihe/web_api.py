@@ -9,6 +9,7 @@ from typing import Any
 
 from astrbot.api.web import error_response, json_response, request, stream_response
 
+from . import __version__
 from .config_service import DEFAULT_CONFIG, ConfigValidationError
 from .runtime import PLUGIN_NAME, RuntimeServices
 from .security import SecurityError, redact_data, redact_text, validate_profile_id
@@ -461,7 +462,7 @@ class WebApiController:
         await self.runtime.ensure_started()
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "plugin": {"name": PLUGIN_NAME, "version": "v1.2.18"},
+            "plugin": {"name": PLUGIN_NAME, "version": f"v{__version__}"},
             "status": await self.runtime.status(),
             "storage": await self.runtime.repository.diagnostic_snapshot(),
             "logs": self.runtime.logging.list(limit=100),

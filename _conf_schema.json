@@ -69,11 +69,7 @@
         "description": "轮询间隔（秒）",
         "type": "int",
         "default": 60,
-        "slider": {
-          "min": 30,
-          "max": 1800,
-          "step": 5
-        }
+        "slider": {"min": 30, "max": 1800, "step": 5}
       },
       "poll_jitter_seconds": {
         "description": "轮询随机抖动（秒）",
@@ -107,21 +103,21 @@
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "小黑盒主 Agent 的首选 Provider；无效时本轮退回 AstrBot 主模型，留空直接跟随配置文件或会话。AstrBot 4.x 的后续回退仍按全局回退列表执行。"
+        "hint": "小黑盒主 Agent 的首选 Provider；无效时本轮退回 AstrBot 主模型，留空跟随当前配置。"
       },
       "image_provider_id": {
         "description": "固定图片 Provider",
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "小黑盒图片理解首选 Provider；留空或失败时依次尝试 AstrBot 默认图片转述模型、AstrBot 当前主模型。全部失败时隔离原图并禁止最终模型猜图。"
+        "hint": "图片理解首选 Provider；失败时依次尝试 AstrBot 默认图片转述模型和当前主模型。"
       },
       "context_provider_id": {
         "description": "上下文压缩 Provider",
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "hint": "用于长楼层的正文/评论语义压缩；留空时复用固定 LLM Provider，固定 LLM 也留空时跟随当前会话 Provider。压缩失败会自动回退 v1.2.12 的硬截断上下文。"
+        "hint": "用于长楼层语义压缩；留空时复用固定 LLM，再留空则跟随当前会话 Provider。"
       }
     }
   },
@@ -129,39 +125,29 @@
     "type": "object",
     "description": "上下文与图片",
     "items": {
-      "max_post_chars": {
-        "description": "帖子正文最大字符数",
-        "type": "int",
-        "default": 6000
-      },
-      "max_thread_comments": {
-        "description": "楼层最大评论数",
-        "type": "int",
-        "default": 40
-      },
+      "max_post_chars": {"description": "帖子正文最大字符数", "type": "int", "default": 6000},
+      "max_thread_comments": {"description": "楼层最大评论数", "type": "int", "default": 40},
       "thread_reply_post_chars": {
         "description": "楼层回复时原帖正文字符预算",
         "type": "int",
         "default": 1600,
-        "hint": "长楼层语义压缩未触发或失败时的 v1.2.12 兜底预算；主动刷帖仍使用完整帖子预算。"
+        "hint": "长楼层压缩未触发、关闭或失败时的确定性兜底预算。"
       },
       "thread_reply_recent_comments": {
         "description": "楼层回复时最近对话条数",
         "type": "int",
         "default": 12,
-        "hint": "长楼层语义压缩未触发或失败时的 v1.2.12 兜底窗口；直接回复对象始终另行保留原文。"
+        "hint": "长楼层压缩未触发、关闭或失败时的确定性兜底窗口。"
       },
       "enable_thread_reply_compression": {
         "description": "启用长楼层 LLM 语义压缩",
         "type": "bool",
-        "default": true,
-        "hint": "仅压缩被动评论回复/@ 的低、中优先级背景；当前消息和直接回复对象保留原文，主动刷帖不使用。失败自动回退 v1.2.12 的硬截断上下文。"
+        "default": true
       },
       "thread_reply_compression_trigger_chars": {
         "description": "楼层压缩触发字符数",
         "type": "int",
-        "default": 2400,
-        "hint": "原帖标题/正文与最近楼层合计超过此值才额外调用上下文 Provider，短对话不增加一次 LLM 请求。"
+        "default": 2400
       },
       "thread_reply_compressed_post_chars": {
         "description": "压缩后原帖摘要字符上限",
@@ -176,20 +162,17 @@
       "thread_reply_compressed_image_chars": {
         "description": "被动回复原帖图片/缓存描述字符上限",
         "type": "int",
-        "default": 800,
-        "hint": "被动楼层的原帖图片或 24 小时视觉快照会按来源压到该长度以内，并作为低优先级背景；识图按插件图片、AstrBot 图片、AstrBot 主模型依次回退。"
+        "default": 800
       },
       "thread_reply_compression_timeout_seconds": {
         "description": "上下文压缩超时秒数",
         "type": "int",
-        "default": 30,
-        "hint": "超时或 Provider 异常不会中断回复，将回退 v1.2.12 的硬截断上下文。"
+        "default": 30
       },
       "context_cache_ttl_seconds": {
         "description": "上下文缓存 TTL",
         "type": "int",
-        "default": 60,
-        "hint": "活跃评论楼层默认只缓存 60 秒，减少近期评论滞后；同一楼层并发读取会自动合并为一次请求。"
+        "default": 60
       },
       "context_cache_max_entries": {
         "description": "上下文缓存最大条目",
@@ -204,20 +187,17 @@
       "max_images_per_event": {
         "description": "每事件最大图片数",
         "type": "int",
-        "default": 6,
-        "hint": "实际处理图数不会超过此值；超限图片会在 Agent 构建前隔离。视觉预算也按实际图数和此上限共同计算。"
+        "default": 6
       },
       "image_timeout_seconds": {
         "description": "单图视觉处理时间基数",
         "type": "int",
-        "default": 15,
-        "hint": "每个候选识图 Provider 按实际图片数获得处理时间；与总视觉预算共同限制，单次最多 120 秒。"
+        "default": 15
       },
       "image_total_timeout_seconds": {
         "description": "单事件视觉处理总预算（秒）",
         "type": "int",
-        "default": 240,
-        "hint": "插件识图、AstrBot 默认识图和 AstrBot 主模型共享该预算；实际截止时间同时按图片数和候选数量缩放。"
+        "default": 240
       }
     }
   },
@@ -228,36 +208,17 @@
       "dry_run_mark_processed": {
         "description": "模拟运行后标记完成",
         "type": "bool",
-        "default": true,
-        "hint": "保存模拟回复后完成该事件，相同通知后续轮询直接读取完成状态。"
+        "default": true
       },
-      "max_reply_chars": {
-        "description": "最大回复字符数",
-        "type": "int",
-        "default": 500,
-        "hint": "小黑盒实际限制待真实环境确认。"
-      },
-      "reply_timeout_seconds": {
-        "description": "回复生成超时",
-        "type": "int",
-        "default": 120
-      },
+      "max_reply_chars": {"description": "最大回复字符数", "type": "int", "default": 500},
+      "reply_timeout_seconds": {"description": "回复生成超时", "type": "int", "default": 120},
       "provider_fallback_grace_seconds": {
         "description": "主模型回退宽限（秒）",
         "type": "int",
-        "default": 60,
-        "hint": "额外留给插件主模型失败后执行 AstrBot 全局回退列表的时间；要让 AstrBot 主模型最先回退，请将其放在全局回退列表第一位。健康请求不会主动等待。"
+        "default": 60
       },
-      "max_retries": {
-        "description": "安全请求最大重试次数",
-        "type": "int",
-        "default": 3
-      },
-      "only_explicit_mentions": {
-        "description": "只回复明确 @",
-        "type": "bool",
-        "default": true
-      },
+      "max_retries": {"description": "安全请求最大重试次数", "type": "int", "default": 3},
+      "only_explicit_mentions": {"description": "只回复明确 @", "type": "bool", "default": true},
       "reply_to_direct_replies": {
         "description": "回复别人对机器人评论的直接回复",
         "type": "bool",
@@ -269,51 +230,12 @@
     "type": "object",
     "description": "身份与过滤",
     "items": {
-      "whitelist_mode": {
-        "description": "启用用户白名单模式",
-        "type": "bool",
-        "default": false
-      },
-      "user_whitelist": {
-        "description": "用户 UID 白名单",
-        "type": "list",
-        "default": [],
-        "items": {
-          "type": "string"
-        }
-      },
-      "user_blacklist": {
-        "description": "用户 UID 黑名单",
-        "type": "list",
-        "default": [],
-        "items": {
-          "type": "string"
-        }
-      },
-      "author_whitelist": {
-        "description": "帖子作者 UID 白名单",
-        "type": "list",
-        "default": [],
-        "items": {
-          "type": "string"
-        }
-      },
-      "author_blacklist": {
-        "description": "帖子作者 UID 黑名单",
-        "type": "list",
-        "default": [],
-        "items": {
-          "type": "string"
-        }
-      },
-      "keyword_blacklist": {
-        "description": "关键词黑名单",
-        "type": "list",
-        "default": [],
-        "items": {
-          "type": "string"
-        }
-      },
+      "whitelist_mode": {"description": "启用用户白名单模式", "type": "bool", "default": false},
+      "user_whitelist": {"description": "用户 UID 白名单", "type": "list", "default": [], "items": {"type": "string"}},
+      "user_blacklist": {"description": "用户 UID 黑名单", "type": "list", "default": [], "items": {"type": "string"}},
+      "author_whitelist": {"description": "帖子作者 UID 白名单", "type": "list", "default": [], "items": {"type": "string"}},
+      "author_blacklist": {"description": "帖子作者 UID 黑名单", "type": "list", "default": [], "items": {"type": "string"}},
+      "keyword_blacklist": {"description": "关键词黑名单", "type": "list", "default": [], "items": {"type": "string"}},
       "map_owner_to_astrbot_admin": {
         "description": "将主人映射为 AstrBot 管理员",
         "type": "bool",
@@ -326,52 +248,20 @@
     "type": "object",
     "description": "网络、并发和重试",
     "items": {
-      "request_timeout_seconds": {
-        "description": "请求总超时",
-        "type": "int",
-        "default": 20
-      },
-      "connect_timeout_seconds": {
-        "description": "连接超时",
-        "type": "int",
-        "default": 8
-      },
-      "read_timeout_seconds": {
-        "description": "读取超时",
-        "type": "int",
-        "default": 15
-      },
-      "min_request_interval_seconds": {
-        "description": "最小请求间隔",
-        "type": "float",
-        "default": 1.0
-      },
-      "max_reply_concurrency": {
-        "description": "最大回复并发",
-        "type": "int",
-        "default": 2
-      },
-      "max_pending_events": {
-        "description": "待处理事件硬上限",
-        "type": "int",
-        "default": 50
-      },
-      "max_pending_per_user": {
-        "description": "单用户待处理上限",
-        "type": "int",
-        "default": 5
-      }
+      "request_timeout_seconds": {"description": "请求总超时", "type": "int", "default": 20},
+      "connect_timeout_seconds": {"description": "连接超时", "type": "int", "default": 8},
+      "read_timeout_seconds": {"description": "读取超时", "type": "int", "default": 15},
+      "min_request_interval_seconds": {"description": "最小请求间隔", "type": "float", "default": 1.0},
+      "max_reply_concurrency": {"description": "最大回复并发", "type": "int", "default": 2},
+      "max_pending_events": {"description": "待处理事件硬上限", "type": "int", "default": 50},
+      "max_pending_per_user": {"description": "单用户待处理上限", "type": "int", "default": 5}
     }
   },
   "proactive_feed": {
     "type": "object",
     "description": "主动刷帖（高风险）",
     "items": {
-      "enabled": {
-        "description": "启用主动刷帖",
-        "type": "bool",
-        "default": false
-      },
+      "enabled": {"description": "启用主动刷帖", "type": "bool", "default": false},
       "dry_run": {
         "description": "主动帖子模拟运行（仅生成，不发送）",
         "type": "bool",
@@ -384,63 +274,42 @@
         "default": true,
         "hint": "高风险：与模拟运行同时关闭时，AI 生成的主动回复会直接发布到小黑盒。"
       },
-      "interval_seconds": {
-        "description": "运行间隔",
-        "type": "int",
-        "default": 900
-      },
-      "jitter_seconds": {
-        "description": "每轮附加随机抖动",
-        "type": "int",
-        "default": 60
-      },
-      "max_per_run": {
-        "description": "每轮主动 AI 请求上限",
-        "type": "int",
-        "default": 1
-      },
+      "interval_seconds": {"description": "运行间隔", "type": "int", "default": 900},
+      "jitter_seconds": {"description": "每轮附加随机抖动", "type": "int", "default": 60},
+      "max_per_run": {"description": "每轮主动 AI 请求上限", "type": "int", "default": 1},
       "max_per_day": {
         "description": "每日主动 AI 请求上限",
         "type": "int",
         "default": 10,
-        "hint": "仅在合格帖子即将提交给 AI 生成回复时计数；本地浏览和过滤不占额度。"
+        "hint": "仅在合格帖子提交给 AI 前计数；浏览和本地过滤不占额度。"
       },
       "source": {
-        "description": "推荐流分区",
+        "description": "旧版推荐流分类（仅迁移）",
         "type": "string",
         "default": "all",
-        "options": ["all", "pc_game", "mobile_game", "console_game", "community", "daily", "digital_tech", "anime", "film_tv", "esports", "guide", "deals", "indie_game"],
-        "option_labels": {
-          "all": "全部",
-          "pc_game": "PC 游戏",
-          "mobile_game": "手机游戏",
-          "console_game": "主机游戏",
-          "community": "盒友杂谈",
-          "daily": "盒友日常",
-          "digital_tech": "数码科技",
-          "anime": "动漫二次元",
-          "film_tv": "影视娱乐",
-          "esports": "电竞赛事",
-          "guide": "游戏攻略",
-          "deals": "优惠资讯",
-          "indie_game": "独立游戏"
-        }
+        "invisible": true,
+        "hint": "v1.2.x 兼容字段。v1.3.0 启动后迁移到 fallback_sources，不再作为当前设置入口。"
       },
-      "keywords": {
-        "description": "允许关键词",
+      "topic_ids": {
+        "description": "真实分区 ID（由浏览来源页管理）",
         "type": "list",
         "default": [],
-        "items": {
-          "type": "string"
-        }
+        "invisible": true,
+        "items": {"type": "string"}
       },
+      "fallback_sources": {
+        "description": "兼容/回退推荐流分类（由浏览来源页管理）",
+        "type": "list",
+        "default": ["all"],
+        "invisible": true,
+        "items": {"type": "string"}
+      },
+      "keywords": {"description": "允许关键词", "type": "list", "default": [], "items": {"type": "string"}},
       "allowed_post_types": {
         "description": "允许的帖子类型（空列表表示不限制）",
         "type": "list",
         "default": [],
-        "items": {
-          "type": "string"
-        }
+        "items": {"type": "string"}
       }
     }
   },
@@ -448,51 +317,15 @@
     "type": "object",
     "description": "数据保留与上限",
     "items": {
-      "incoming_body_days": {
-        "description": "通知正文保留天数",
-        "type": "int",
-        "default": 30
-      },
-      "dry_run_days": {
-        "description": "模拟运行正文保留天数",
-        "type": "int",
-        "default": 30
-      },
-      "failed_days": {
-        "description": "失败记录保留天数",
-        "type": "int",
-        "default": 30
-      },
-      "success_reply_days": {
-        "description": "成功回复正文保留天数",
-        "type": "int",
-        "default": 90
-      },
-      "session_mapping_days": {
-        "description": "会话映射闲置保留天数",
-        "type": "int",
-        "default": 180
-      },
-      "dedup_days": {
-        "description": "去重键保留天数",
-        "type": "int",
-        "default": 365
-      },
-      "database_warn_mb": {
-        "description": "数据库警告阈值 MB",
-        "type": "int",
-        "default": 150
-      },
-      "database_soft_limit_mb": {
-        "description": "数据库软上限 MB",
-        "type": "int",
-        "default": 200
-      },
-      "log_total_limit_mb": {
-        "description": "日志总上限 MB",
-        "type": "int",
-        "default": 100
-      }
+      "incoming_body_days": {"description": "通知正文保留天数", "type": "int", "default": 30},
+      "dry_run_days": {"description": "模拟运行正文保留天数", "type": "int", "default": 30},
+      "failed_days": {"description": "失败事件保留天数", "type": "int", "default": 30},
+      "success_reply_days": {"description": "成功回复记录保留天数", "type": "int", "default": 90},
+      "session_mapping_days": {"description": "会话映射保留天数", "type": "int", "default": 180},
+      "dedup_days": {"description": "去重记录保留天数", "type": "int", "default": 365},
+      "database_warn_mb": {"description": "数据库警告阈值 MB", "type": "int", "default": 150},
+      "database_soft_limit_mb": {"description": "数据库软上限 MB", "type": "int", "default": 200},
+      "log_total_limit_mb": {"description": "日志总上限 MB", "type": "int", "default": 100}
     }
   },
   "logging": {
@@ -500,21 +333,12 @@
     "description": "日志",
     "items": {
       "level": {
-        "description": "最低日志级别",
+        "description": "日志级别",
         "type": "string",
         "default": "INFO",
-        "options": [
-          "DEBUG",
-          "INFO",
-          "WARNING",
-          "ERROR"
-        ]
+        "options": ["DEBUG", "INFO", "WARNING", "ERROR"]
       },
-      "max_memory_entries": {
-        "description": "WebUI 内存日志条数",
-        "type": "int",
-        "default": 2000
-      }
+      "max_memory_entries": {"description": "内存日志条数", "type": "int", "default": 2000}
     }
   }
 }

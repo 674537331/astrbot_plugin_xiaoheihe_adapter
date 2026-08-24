@@ -171,7 +171,8 @@ class ConfigService:
             raise ConfigValidationError("配置界面定义根节点必须是对象")
         proactive_items = schema.get("proactive_feed", {}).get("items", {})
         if isinstance(proactive_items, dict):
-            proactive_items.pop("source", None)
+            for field in ("source", "topic_ids", "fallback_sources"):
+                proactive_items.pop(field, None)
         return schema
 
     def add_restart_callback(self, callback: RestartCallback) -> None:
@@ -227,10 +228,9 @@ class ConfigService:
             if profile_id in seen:
                 raise ConfigValidationError(f"profile_id 重复: {profile_id}")
             seen.add(profile_id)
-            for key in ("owner_uid",):
-                value = profile.get(key, "")
-                if value is not None and not isinstance(value, (str, int)):
-                    raise ConfigValidationError(f"{profile_id}.{key} 必须是 UID 字符串")
+            value = profile.get("owner_uid", "")
+            if value is not None and not isinstance(value, (str, int)):
+                raise ConfigValidationError(f"{profile_id}.owner_uid 必须是 UID 字符串")
 
         polling = _object(config, "polling")
         _bounded_int(polling, "poll_interval_seconds", 30, 86400)
@@ -292,6 +292,7 @@ class ConfigService:
                 raise ConfigValidationError(f"proactive_feed.{key} 必须是字符串列表")
             if any(len(item) > 100 for item in values):
                 raise ConfigValidationError(f"proactive_feed.{key} 单项不能超过 100 字符")
+
         topic_ids = proactive.get("topic_ids")
         if not isinstance(topic_ids, list) or not all(isinstance(item, str) for item in topic_ids):
             raise ConfigValidationError("proactive_feed.topic_ids 必须是字符串列表")
@@ -361,10 +362,25 @@ class ConfigService:
         if not isinstance(proactive, dict):
             return
 
-        if "fallback_sources" not in proactive and "source" in proactive:
-            source = str(proactive.get("source", "all"))
-            proactive["fallback_sources"] = [LEGACY_FEED_SOURCES.get(source, source)]
+        legacy_present = "source" in proactive
+        legacy_source = LEGACY_FEED_SOURCES.get(
+            str(proactive.get("source", "all")),
+            str(proactive.get("source", "all")),
+        )
         fallback_sources = proactive.get("fallback_sources")
+
+        # AstrBot may populate a newly introduced schema field with its default before
+        # this plugin sees the old configuration. Treat the schema default ["all"] as
+        # migration-neutral when a non-default legacy source is still present.
+        if legacy_present and (
+            "fallback_sources" not in proactive
+            or not isinstance(fallback_sources, list)
+            or not fallback_sources
+            or (fallback_sources == ["all"] and legacy_source != "all")
+        ):
+            proactive["fallback_sources"] = [legacy_source]
+            fallback_sources = proactive["fallback_sources"]
+
         if isinstance(fallback_sources, list):
             normalized: list[str] = []
             for value in fallback_sources:
