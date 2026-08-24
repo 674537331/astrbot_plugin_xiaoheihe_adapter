@@ -640,7 +640,7 @@ async def test_dns_rebinding_to_private_address_is_nonfatal() -> None:
         raise SecurityError("private DNS result")
 
     result = await ContextBuilder(max_images=6, host_resolver=private_resolver).build(
-        page.items[0]["notification"], FakeClient()
+        notification, FakeClient()
     )
     assert result.image_urls == []
     assert any("private DNS result" in warning for warning in result.warnings)
