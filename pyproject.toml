@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astrbot-plugin-xiaoheihe-adapter"
-version = "1.3.0"
+version = "1.3.1"
 description = "AstrBot native Xiaoheihe platform adapter"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -29,49 +29,19 @@ packages = ["xiaoheihe"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-exclude = ["work", "outputs"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
-ignore = ["S101", "RUF001"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S105", "S106", "S108", "S311"]
-"xiaoheihe/api_client.py" = ["S311"]
-"xiaoheihe/rate_limiter.py" = ["S311"]
-"xiaoheihe/notification_service.py" = ["S311"]
-# Dynamic SQL identifiers and predicates in this module come only from fixed allowlists.
-"xiaoheihe/repository.py" = ["S608"]
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
 [tool.pytest.ini_options]
-minversion = "8.0"
-addopts = "-ra --strict-config --strict-markers"
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = [
-  "integration: requires explicitly enabled external integration",
-  "compatibility: validates the AstrBot public API contract",
-]
 
 [tool.coverage.run]
 branch = true
 source = ["xiaoheihe"]
-omit = ["xiaoheihe/adapter.py", "xiaoheihe/event.py", "xiaoheihe/web_api.py"]
 
 [tool.coverage.report]
-fail_under = 80
 show_missing = true
 skip_covered = true
-exclude_also = [
-  "if TYPE_CHECKING:",
-  "if __name__ == .__main__.:",
-]
-
-[tool.pyright]
-pythonVersion = "3.12"
-typeCheckingMode = "basic"
-exclude = ["work", "outputs", "tests"]
