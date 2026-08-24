@@ -76,8 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-    matrix:
-      astrbot-version: ["4.24.2", "4.26.2"]
+      matrix:
+        astrbot-version: ["4.24.2", "4.26.2"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
