@@ -36,3 +36,5 @@ jobs:
           git add -A
           git commit -m "feat: finalize v1.3.3 context relevance routing"
           git push origin HEAD:release/v1.3.3
+
+# connector-triggered rerun
