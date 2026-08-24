@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Deterministic routing primitives for keeping nearby conversation context closest."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 
