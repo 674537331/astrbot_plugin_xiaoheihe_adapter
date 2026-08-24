@@ -5,39 +5,9 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-v133:
-    if: github.event_name == 'pull_request' && github.head_ref == 'release/v1.3.3'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: release/v1.3.3
-          fetch-depth: 0
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Apply v1.3.3 patch
-        run: |
-          python -c "from pathlib import Path; p=Path('tools/apply_v133_patch.py'); s=p.read_text(encoding='utf-8'); s=s.replace('for field in (\"images\", \"image_urls\", \"comment_a_images\", \"imgs\", \"thumbs\"):', 'for key in (\"images\", \"image_urls\", \"comment_a_images\", \"imgs\", \"thumbs\"):').replace('raw_values = item.get(field, [])', 'raw_values = item.get(key, [])').replace('isinstance(raw_values, (str, dict))', 'isinstance(raw_values, str | dict)'); p.write_text(s, encoding='utf-8')"
-          python tools/apply_v133_patch.py
-      - name: Format patch
-        run: |
-          python -m pip install --disable-pip-version-check ruff==0.12.12
-          ruff format main.py xiaoheihe/context_builder.py xiaoheihe/context_compression.py xiaoheihe/context_relevance.py xiaoheihe/models.py xiaoheihe/adapter.py tests/test_context_builder.py tests/test_adapter.py tests/test_v133_relevance.py
-      - name: Remove one-shot machinery and commit
-        run: |
-          git fetch origin main --depth=1
-          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
-          rm -f .github/workflows/v133_apply.yml tools/apply_v133_patch.py
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -A
-          git commit -m "feat: route thread context by local relevance"
-          git push origin HEAD:release/v1.3.3
-
   quality:
     runs-on: ubuntu-latest
     steps:

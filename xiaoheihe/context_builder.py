@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from .api_client import XiaoheiheApiClient
 from .context_compression import ThreadCompressionSource
+from .context_relevance import detect_explicit_original_post_reference, image_source_priority
 from .models import (
     ContentOwnerRole,
     ImageAttribution,
@@ -46,6 +47,7 @@ class BuiltContext:
     image_sources: list[str] = field(default_factory=list)
     image_attributions: list[ImageAttribution] = field(default_factory=list)
     reply_target_comment_id: str = ""
+    explicit_post_reference: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +109,7 @@ class ContextBuilder:
             user_text = "[用户发送了图片]"
         if not user_text:
             user_text = "[用户没有留下可读文本]"
+        explicit_post_reference = detect_explicit_original_post_reference(user_text)
 
         is_thread_reply = notification.event_type is not NotificationType.PROACTIVE_FEED and bool(
             notification.root_comment_id
@@ -129,6 +132,10 @@ class ContextBuilder:
         )
         reply_target_id = ""
         reply_target = "[本轮不是楼层回复]"
+        reply_target_images: list[str] = []
+        reply_target_attribution: ImageAttribution | None = None
+        thread_anchor_images: list[str] = []
+        thread_anchor_attribution: ImageAttribution | None = None
         excluded_comment_ids = {notification.external_comment_id}
         if is_thread_reply:
             reply_target_id, reply_target = self._render_reply_target(
@@ -138,6 +145,14 @@ class ContextBuilder:
             )
             if reply_target_id:
                 excluded_comment_ids.add(reply_target_id)
+                reply_target_images, reply_target_attribution = _reply_target_image_context(
+                    notification, thread.comments, reply_target_id
+                )
+            anchor_id = str(notification.root_comment_id or "")
+            if anchor_id and anchor_id not in {notification.external_comment_id, reply_target_id}:
+                thread_anchor_images, thread_anchor_attribution = _thread_anchor_image_context(
+                    thread.comments, anchor_id
+                )
         comments = self._render_comments(
             thread.comments,
             bot_names,
@@ -230,6 +245,8 @@ class ContextBuilder:
             f"父评论 ID: {notification.parent_comment_id}",
             f"帖子作者身份（仅用于归属）: {post_identity}",
             f"当前评论图片: {len(notification.image_urls)} 张",
+            f"直接回复对象图片: {len(reply_target_images)} 张",
+            f"楼层锚点图片: {len(thread_anchor_images)} 张",
             f"原帖图片: {len(thread.image_urls)} 张",
         ]
         if is_thread_reply:
@@ -303,11 +320,16 @@ class ContextBuilder:
             owner_role=ContentOwnerRole.POST_AUTHOR.value,
             owner_identity_key=post_identity_key,
         )
+        image_groups: list[tuple[ImageAttribution, list[str]]] = [
+            (notification_attribution, notification.image_urls),
+        ]
+        if reply_target_attribution is not None and reply_target_images:
+            image_groups.append((reply_target_attribution, reply_target_images))
+        if thread_anchor_attribution is not None and thread_anchor_images:
+            image_groups.append((thread_anchor_attribution, thread_anchor_images))
+        image_groups.append((post_attribution, thread.image_urls))
         image_urls, image_attributions, warnings = await self._collect_images(
-            _interleave_attributed_images(
-                (notification_attribution, notification.image_urls),
-                (post_attribution, thread.image_urls),
-            )
+            _prioritized_attributed_images(*image_groups)
         )
         image_sources = [item.source for item in image_attributions]
         return BuiltContext(
@@ -323,6 +345,7 @@ class ContextBuilder:
             image_sources=image_sources,
             image_attributions=image_attributions,
             reply_target_comment_id=reply_target_id,
+            explicit_post_reference=explicit_post_reference,
         )
 
     async def _get_thread(
@@ -598,8 +621,8 @@ class ContextBuilder:
                 '<xiaoheihe_reply_focus trust="trusted" mode="thread_reply">',
                 "本轮回复相关性优先级（必须遵守）:",
                 "1. 当前原生用户消息及当前评论自己的图片：最高优先级，决定本轮真正要回答的话题。",
-                "2. 当前消息直接回复对象：用于理解当前回复承接的具体内容。",
-                "3. 最近楼层对话：用于补充局部对话上下文。",
+                "2. 当前消息直接回复对象及其图片：高优先级，用于理解当前回复承接的具体内容。",
+                "3. 当前楼层锚点及最近楼层对话：用于补充局部对话上下文。",
                 "4. 原帖标题、正文及原帖图片：最低优先级，仅作为必要背景。",
                 (
                     "若当前消息本身可以独立理解，即使已经偏离原帖主题，也必须直接跟随当前"
@@ -788,16 +811,118 @@ def _post_author_identity_key(profile_id: object, post_id: object) -> str:
     return f"post:{safe_profile}:{safe_post}:author"
 
 
-def _interleave_attributed_images(
+def _image_values(item: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("images", "image_urls", "comment_a_images", "imgs", "thumbs"):
+        raw_values = item.get(key, [])
+        if isinstance(raw_values, str | dict):
+            raw_values = [raw_values]
+        if not isinstance(raw_values, list):
+            continue
+        for raw_value in raw_values:
+            if isinstance(raw_value, dict):
+                value = str(
+                    raw_value.get(
+                        "url",
+                        raw_value.get(
+                            "src",
+                            raw_value.get(
+                                "original",
+                                raw_value.get("image_url", raw_value.get("large_url", "")),
+                            ),
+                        ),
+                    )
+                    or ""
+                )
+            else:
+                value = str(raw_value or "")
+            if value:
+                values.append(value)
+    return list(dict.fromkeys(values))
+
+
+def _comment_image_attribution(
+    item: dict[str, Any],
+    *,
+    source: str,
+    comment_id: str,
+) -> ImageAttribution:
+    user = item.get("user", item.get("sender", {}))
+    if not isinstance(user, dict):
+        user = {}
+    nickname = user.get("nickname", user.get("username", user.get("name", "未知昵称")))
+    uid = user.get(
+        "uid",
+        user.get(
+            "heybox_id",
+            user.get(
+                "heyboxid",
+                user.get("user_id", user.get("userid", user.get("id", ""))),
+            ),
+        ),
+    )
+    role = (
+        ContentOwnerRole.DIRECT_REPLY_TARGET.value
+        if source == "direct_reply_target"
+        else ContentOwnerRole.THREAD_ANCHOR.value
+    )
+    return ImageAttribution(
+        source=source,
+        owner_uid=_clean_identity_part(uid, fallback="未知"),
+        owner_nickname=_clean_identity_part(nickname, fallback="未知昵称"),
+        owner_role=role,
+        owner_identity_key=f"comment:{comment_id or 'unknown'}",
+    )
+
+
+def _reply_target_image_context(
+    notification: Notification,
+    comments: list[dict[str, Any]],
+    target_id: str,
+) -> tuple[list[str], ImageAttribution | None]:
+    matched = next((item for item in comments if _comment_id(item) == target_id), None)
+    candidate = dict(matched) if isinstance(matched, dict) else {}
+    raw = notification.raw if isinstance(notification.raw, dict) else {}
+    comment_b = raw.get("comment_b", {})
+    if not candidate and isinstance(comment_b, dict):
+        candidate = dict(comment_b)
+    if candidate and not isinstance(candidate.get("user"), dict):
+        user_b = raw.get("user_b", {})
+        if isinstance(user_b, dict):
+            candidate["user"] = user_b
+    images = _image_values(candidate) if candidate else []
+    if not images:
+        return [], None
+    return images, _comment_image_attribution(
+        candidate,
+        source="direct_reply_target",
+        comment_id=target_id,
+    )
+
+
+def _thread_anchor_image_context(
+    comments: list[dict[str, Any]],
+    anchor_id: str,
+) -> tuple[list[str], ImageAttribution | None]:
+    matched = next((item for item in comments if _comment_id(item) == anchor_id), None)
+    if not isinstance(matched, dict):
+        return [], None
+    images = _image_values(matched)
+    if not images:
+        return [], None
+    return images, _comment_image_attribution(
+        matched,
+        source="thread_anchor",
+        comment_id=anchor_id,
+    )
+
+
+def _prioritized_attributed_images(
     *sources: tuple[ImageAttribution, list[str]],
 ) -> list[tuple[str, ImageAttribution]]:
     values: list[tuple[str, ImageAttribution]] = []
-    max_length = max((len(items) for _, items in sources), default=0)
-    for index in range(max_length):
-        for attribution, items in sources:
-            if index >= len(items):
-                continue
-            value = items[index]
-            if value:
-                values.append((value, attribution))
+    for attribution, items in sorted(
+        sources, key=lambda item: image_source_priority(item[0].source)
+    ):
+        values.extend((value, attribution) for value in items if value)
     return values

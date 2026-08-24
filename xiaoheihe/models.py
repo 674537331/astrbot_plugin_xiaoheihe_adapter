@@ -26,6 +26,8 @@ class NotificationType(StrEnum):
 
 class ContentOwnerRole(StrEnum):
     CURRENT_SENDER = "current_sender"
+    DIRECT_REPLY_TARGET = "direct_reply_target"
+    THREAD_ANCHOR = "thread_anchor"
     POST_AUTHOR = "post_author"
     UNKNOWN = "unknown"
 

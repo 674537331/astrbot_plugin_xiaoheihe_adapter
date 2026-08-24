@@ -235,14 +235,14 @@ async def test_comment_mention_includes_comment_and_original_post_media() -> Non
     assert "原帖图片: 2 张" in result.dynamic_context
     assert result.image_urls == [
         "https://cdn.example.com/comment-1.png",
-        "https://cdn.example.com/post-1.png",
+        "https://cdn.example.com/comment-2.png",
     ]
-    assert result.image_sources == ["current_comment", "original_post"]
-    assert [item.owner_uid for item in result.image_attributions] == ["user-1", "author-1"]
-    assert [item.owner_nickname for item in result.image_attributions] == ["用户", "作者"]
+    assert result.image_sources == ["current_comment", "current_comment"]
+    assert [item.owner_uid for item in result.image_attributions] == ["user-1", "user-1"]
+    assert [item.owner_nickname for item in result.image_attributions] == ["用户", "用户"]
     assert [item.owner_role for item in result.image_attributions] == [
         "current_sender",
-        "post_author",
+        "current_sender",
     ]
 
 

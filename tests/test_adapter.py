@@ -108,8 +108,9 @@ def test_image_events_receive_bounded_vision_processing_grace() -> None:
             base_timeout_seconds=120,
             image_count=0,
             image_timeout_seconds=15,
+            context_timeout_seconds=30,
         )
-        == 120
+        == 150
     )
     assert (
         effective_reply_timeout_seconds(

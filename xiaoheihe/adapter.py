@@ -94,15 +94,17 @@ def effective_reply_timeout_seconds(
     image_provider_candidates: int = MAX_IMAGE_PROVIDER_CANDIDATES,
     image_group_counts: tuple[int, ...] | list[int] | None = None,
     provider_fallback_grace_seconds: int = 0,
+    context_timeout_seconds: int = 0,
 ) -> int:
-    """Reserve bounded vision-chain and main-provider fallback time."""
+    """Reserve independent context, vision, main-provider, and fallback budgets."""
     base_timeout = max(5, int(base_timeout_seconds))
     fallback_grace = max(0, min(300, int(provider_fallback_grace_seconds)))
+    context_budget = max(0, min(120, int(context_timeout_seconds)))
     count = max(0, int(image_count))
     if count == 0:
         return min(
             MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS,
-            base_timeout + fallback_grace,
+            base_timeout + fallback_grace + context_budget,
         )
     candidate_count = max(1, min(MAX_IMAGE_PROVIDER_CANDIDATES, int(image_provider_candidates)))
     visual_budget = int(
@@ -117,7 +119,7 @@ def effective_reply_timeout_seconds(
     )
     return min(
         MAX_EFFECTIVE_REPLY_TIMEOUT_SECONDS,
-        base_timeout + fallback_grace + visual_budget,
+        base_timeout + fallback_grace + context_budget + visual_budget,
     )
 
 
@@ -366,6 +368,12 @@ class XiaoheihePlatformAdapter(Platform):
         image_attributions = _bound_image_attributions(context, notification)
         image_sources = [item.source for item in image_attributions]
         base_reply_timeout = int(runtime_config["reply"]["reply_timeout_seconds"])
+        context_timeout_budget = (
+            int(runtime_config["context"].get("thread_reply_compression_timeout_seconds", 30))
+            if context.compression_source is not None
+            and bool(runtime_config["context"].get("enable_thread_reply_compression", True))
+            else 0
+        )
         image_group_counts: dict[tuple[str, str, str, str], int] = {}
         if image_understanding_enabled:
             for attribution in image_attributions:
@@ -387,6 +395,7 @@ class XiaoheihePlatformAdapter(Platform):
             provider_fallback_grace_seconds=int(
                 runtime_config["reply"].get("provider_fallback_grace_seconds", 60)
             ),
+            context_timeout_seconds=context_timeout_budget,
         )
         message.message = components
         message.message_str = context.user_text
@@ -414,8 +423,10 @@ class XiaoheihePlatformAdapter(Platform):
             "image_sources": image_sources,
             "image_attributions": [item.as_dict() for item in image_attributions],
             "reply_target_comment_id": context.reply_target_comment_id,
+            "explicit_post_reference": bool(context.explicit_post_reference),
             "warnings": list(context.warnings),
             "reply_timeout_base_seconds": base_reply_timeout,
+            "reply_timeout_context_seconds": context_timeout_budget,
             "reply_timeout_effective_seconds": effective_reply_timeout,
             "provider_fallback_grace_seconds": int(
                 runtime_config["reply"].get("provider_fallback_grace_seconds", 60)
