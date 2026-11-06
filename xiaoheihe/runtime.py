@@ -62,13 +62,11 @@ class RuntimeServices:
         self.database = Database(self.data_dir / "xiaoheihe.db")
         self.repository = Repository(self.database)
         log_config = self.config.snapshot()["logging"]
-        retention = self.config.snapshot()["retention"]
         self.logging = LoggingService(
             self.data_dir,
             self.tasks,
             level=str(log_config["level"]),
             max_memory_entries=int(log_config["max_memory_entries"]),
-            total_limit_mb=int(retention["log_total_limit_mb"]),
         )
         self.credentials = CredentialStore(self.data_dir)
         self.auth = AuthService(
@@ -1036,12 +1034,11 @@ class RuntimeServices:
 
     async def _on_config_changed(self, changed: set[str]) -> None:
         snapshot = self.config.snapshot()
-        if changed & {"logging", "retention"}:
+        if "logging" in changed:
             logging_config = snapshot["logging"]
             self.logging.reconfigure(
                 level=str(logging_config["level"]),
                 max_memory_entries=int(logging_config["max_memory_entries"]),
-                total_limit_mb=int(snapshot["retention"]["log_total_limit_mb"]),
             )
         if changed & {"network", "reply"}:
             for key in tuple(set(self._clients) | set(self._client_locks)):

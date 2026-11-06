@@ -5,6 +5,7 @@ import importlib.metadata
 from pathlib import Path
 
 CONTRACT: dict[str, tuple[str, ...]] = {
+    "api/__init__.py": ("logger",),
     "api/platform/__init__.py": (
         "AstrBotMessage",
         "MessageMember",

@@ -433,7 +433,7 @@ async function loadStatus() {
     metric("今日主动 AI 请求", first.proactive_count || 0),
     metric("模拟运行", first.dry_run ? "开启" : "关闭"),
     metric("数据库", bytes(state.status.database_size)),
-    metric("日志", bytes(state.status.log_size)),
+    metric("历史日志文件", bytes(state.status.log_size)),
     metric("后台任务", (state.status.tasks || []).length),
     metric("辅助模型冷却", (state.status.provider_cooldowns || []).length),
     metric(
@@ -754,7 +754,7 @@ async function loadStorage() {
   const cards = $("storage-cards");
   cards.replaceChildren(
     metric("数据库", bytes(result.database_size)),
-    metric("日志总量", bytes(result.log_size)),
+    metric("历史日志文件", bytes(result.log_size)),
     metric("上次清理", formatTime(result.last_cleanup_at)),
     ...Object.entries(result.counts || {}).map(([key, value]) => metric(key, value)),
   );

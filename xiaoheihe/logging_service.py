@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import logging
 from collections import deque
 from datetime import UTC, datetime
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+
+from astrbot.api import logger
 
 from .security import redact_log_data, redact_log_text
 from .task_manager import TaskManager
 
-try:
-    from astrbot.api import logger as astrbot_logger
-except ImportError:
-    astrbot_logger = None
+LEVEL_PRIORITIES = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 
 
 class LoggingService:
@@ -24,32 +21,15 @@ class LoggingService:
         *,
         level: str = "INFO",
         max_memory_entries: int = 2000,
-        total_limit_mb: int = 100,
     ) -> None:
         self._entries: deque[dict[str, Any]] = deque(
             maxlen=max(100, min(max_memory_entries, 10000))
         )
         self._tasks = task_manager
-        log_dir = data_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self._log_path = log_dir / "xiaoheihe.log"
-        self._logger = logging.getLogger(f"astrbot.xiaoheihe.file.{id(self)}")
-        self._logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-        # AstrBot's root formatter expects fields injected only by its public
-        # logger. Keep the plugin file logger isolated, then emit separately
-        # through astrbot.api.logger when that public API is available.
-        self._logger.propagate = False
-        per_file = 5 * 1024 * 1024
-        backups = max(1, min(39, int(total_limit_mb) // 5 - 1))
-        handler = RotatingFileHandler(
-            self._log_path,
-            maxBytes=per_file,
-            backupCount=backups,
-            encoding="utf-8",
-        )
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        self._handler = handler
-        self._logger.addHandler(handler)
+        # The path is read only for legacy storage accounting. AstrBot owns all
+        # persistent logging; this service never creates or attaches handlers.
+        self._log_path = data_dir / "logs" / "xiaoheihe.log"
+        self._minimum_level = LEVEL_PRIORITIES.get(level.upper(), LEVEL_PRIORITIES["INFO"])
 
     @property
     def log_path(self) -> Path:
@@ -64,6 +44,8 @@ class LoggingService:
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_level = level.upper()
+        if normalized_level not in LEVEL_PRIORITIES:
+            normalized_level = "INFO"
         safe_message = redact_log_text(message).replace("\r", "\\r").replace("\n", "\\n")
         entry = {
             "time": datetime.now(UTC).isoformat(),
@@ -73,25 +55,12 @@ class LoggingService:
             "details": redact_log_data(details or {}),
         }
         self._entries.append(entry)
-        log_method = getattr(self._logger, normalized_level.lower(), self._logger.info)
-        log_method(
-            "[profile=%s] %s %s",
-            profile_id or "-",
-            safe_message,
-            entry["details"] or "",
-        )
-        if astrbot_logger is not None:
-            astrbot_log_method = getattr(
-                astrbot_logger,
-                normalized_level.lower(),
-                astrbot_logger.info,
-            )
-            astrbot_log_method(
-                "[小黑盒][profile=%s] %s %s",
-                profile_id or "-",
-                safe_message,
-                entry["details"] or "",
-            )
+        if LEVEL_PRIORITIES[normalized_level] >= self._minimum_level:
+            log_method = getattr(logger, normalized_level.lower())
+            rendered = f"[小黑盒][profile={profile_id or '-'}] {safe_message}"
+            if entry["details"]:
+                rendered += f" {entry['details']}"
+            log_method(rendered)
         self._tasks.publish_sse({"type": "log", "entry": entry})
         return entry
 
@@ -110,6 +79,8 @@ class LoggingService:
         return result
 
     def total_size(self) -> int:
+        """Return existing legacy log bytes without creating or changing files."""
+
         return sum(
             path.stat().st_size
             for path in self._log_path.parent.glob("xiaoheihe.log*")
@@ -121,14 +92,11 @@ class LoggingService:
         *,
         level: str,
         max_memory_entries: int,
-        total_limit_mb: int,
     ) -> None:
-        self._logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+        self._minimum_level = LEVEL_PRIORITIES.get(level.upper(), LEVEL_PRIORITIES["INFO"])
         max_entries = max(100, min(max_memory_entries, 10000))
         if self._entries.maxlen != max_entries:
             self._entries = deque(list(self._entries)[-max_entries:], maxlen=max_entries)
-        self._handler.backupCount = max(1, min(39, int(total_limit_mb) // 5 - 1))
 
     def close(self) -> None:
-        self._logger.removeHandler(self._handler)
-        self._handler.close()
+        """Keep the lifecycle hook; AstrBot owns the logger and its resources."""
