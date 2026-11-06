@@ -1,0 +1,4 @@
+# Public hkey alphabet, not an account credential. Ignore only the two original
+# historical findings; all other paths, constants and generic-api-key checks stay enabled.
+769a08313582482cc50089f332164e8611e5febb:xiaoheihe/request_signing.py:generic-api-key:11
+0c7d6c3dca83efcac4cf33bf98cb054391674f8c:xiaoheihe/request_signing.py:generic-api-key:11

@@ -6,6 +6,7 @@ import pytest
 from xiaoheihe.api_client import RateLimitedError, XiaoheiheApiClient
 from xiaoheihe.models import Credentials
 from xiaoheihe.rate_limiter import AsyncRateLimiter
+from xiaoheihe.request_signing import generate_hkey
 
 
 def make_client(handler, max_retries=3):
@@ -55,11 +56,13 @@ async def test_429_exhaustion_exposes_retry_after() -> None:
 
 async def test_5xx_retries_safe_get(monkeypatch) -> None:
     count = 0
+    queries = []
     monkeypatch.setattr("xiaoheihe.api_client._backoff", lambda attempt: 0)
 
     def handler(request):
         nonlocal count
         count += 1
+        queries.append(dict(request.url.params))
         if count < 3:
             return httpx.Response(503, json={"error": "busy"})
         return httpx.Response(200, json={"result": {"uid": "1"}})
@@ -67,5 +70,10 @@ async def test_5xx_retries_safe_get(monkeypatch) -> None:
     client, http_client = make_client(handler)
     await client.check_credentials()
     assert count == 3
+    assert len({query["nonce"] for query in queries}) == 3
+    for query in queries:
+        assert query["hkey"] == generate_hkey(
+            "/bbs/app/api/user/permission", int(query["_time"]), query["nonce"]
+        )
     await client.close()
     await http_client.aclose()

@@ -51,6 +51,24 @@ def test_sensitive_log_redaction() -> None:
     }
 
 
+@pytest.mark.parametrize("key", ["_rnd", "hkey", "nonce", "_time"])
+def test_signature_fields_are_redacted_in_data_and_text(key: str) -> None:
+    value = "fixture-signature-value"
+    assert redact_data({"nested": {key: value}}) == {"nested": {key: "[REDACTED]"}}
+    for message in (
+        f"{key}={value}",
+        f'{key}: "{value}"',
+        f'{{"{key}": "{value}"}}',
+        f"{{'{key}': '{value}'}}",
+        f"{key}%3D{value}",
+    ):
+        assert value not in redact_text(message)
+    assert redact_data({"notification_count": 2, "signature_version": "15"}) == {
+        "notification_count": 2,
+        "signature_version": "15",
+    }
+
+
 def test_reply_cleanup_and_length() -> None:
     result = sanitize_reply_text("hello\n```tool\nsecret\n```\nworld", 8)
     assert result == "hello\nwo"

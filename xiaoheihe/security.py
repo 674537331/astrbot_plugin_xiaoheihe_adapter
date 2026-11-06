@@ -21,15 +21,16 @@ MULTI_BLANK_RE = re.compile(r"\n{3,}")
 URL_RE = re.compile(r"https?://[^\s<>()]+", re.I)
 SENSITIVE_KEY_RE = re.compile(
     r"(?:cookie|token|secret|authorization|pkey|device[_-]?id|"
-    r"signing[_-]?key|^session$|^session[_-]?(?:id|key|token)$)",
+    r"signing[_-]?key|^(?:_rnd|hkey|nonce|_time)$|"
+    r"^session$|^session[_-]?(?:id|key|token)$)",
     re.I,
 )
 BEARER_RE = re.compile(r"(?i)\b(Bearer|Token)\s+[A-Za-z0-9._~+/=-]{8,}")
 COOKIE_RE = re.compile(r"(?i)\b(cookie|set-cookie)\s*[:=]\s*[^,\s;]+(?:;[^,\r\n]*)?")
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(access[_-]?token|refresh[_-]?token|token|secret|device[_-]?id|"
-    r"signing[_-]?key|session(?:_id)?|authorization)\b"
-    r"(\s*[:=]\s*|%3[dD])([^&\s,;}\]]+)"
+    r"signing[_-]?key|session(?:_id)?|authorization|_rnd|hkey|nonce|_time)\b"
+    r"([\"']?\s*[:=]\s*|%3[dD])([\"']?)([^&\s,;}\]\"']+)"
 )
 
 
@@ -47,7 +48,7 @@ def validate_profile_id(profile_id: str) -> str:
 def redact_text(value: str) -> str:
     text = BEARER_RE.sub(r"\1 [REDACTED]", str(value))
     text = COOKIE_RE.sub(r"\1=[REDACTED]", text)
-    return SECRET_ASSIGNMENT_RE.sub(r"\1\2[REDACTED]", text)
+    return SECRET_ASSIGNMENT_RE.sub(r"\1\2\3[REDACTED]", text)
 
 
 def redact_log_text(value: str) -> str:

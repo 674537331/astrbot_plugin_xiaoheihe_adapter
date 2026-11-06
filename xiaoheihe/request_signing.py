@@ -58,8 +58,8 @@ class RequestSigner:
         normalized.setdefault("hkey", generate_hkey(path, timestamp, request_nonce))
         if device_id:
             normalized.setdefault("device_id", device_id)
-        # These arguments remain in the boundary for future, independently
-        # verified Workshop signing. They are not part of the GET hkey.
+        # This signer produces the common hkey. Endpoint-specific web write
+        # parameters and `_rnd` are added by the API client over this nonce/time.
         del method, json_body, signing_key
         return SignedRequest(params=normalized, headers={})
 
@@ -113,7 +113,7 @@ def ensure_client_identity(
 # public values shipped in the www.xiaoheihe.cn bundle; they are not secrets of
 # this project and rotate when the upstream client changes.
 _WRITE_RND_VERSION = "15"
-_WRITE_RND_SECRET = "Z7mFG4tQp9Ws2LxB8H"  # gitleaks:allow
+_WRITE_RND_SECRET = "Z7mFG4tQp9Ws2LxB8H"  # noqa: S105 - public web constant; gitleaks:allow
 
 
 def build_write_rnd(nonce: str, timestamp: str) -> str:

@@ -1,4 +1,4 @@
-# 小黑盒 API 契约与验证状态（v1.3.3）
+# 小黑盒 API 契约与验证状态（v1.3.4）
 
 ## 重要声明
 
@@ -50,9 +50,13 @@ device_info=Chrome
 _rnd = "15:" + HMAC_SHA256(key=secret, msg=secret + nonce + _time + ":" + nonce).hex()
 ```
 
-`secret` / 版本号是网页包里的公开常量（`request_signing._WRITE_RND_VERSION` / `_WRITE_RND_SECRET`）。缺 `_rnd` 时服务端返回 `status=failed, msg=缺失参数`，即使 `hkey`、`_time`、`nonce` 全都有效（v1.3.3 之前的所有真实发送都撞在这里）。上游换包后这两个常量可能变化，届时症状会与「缺失参数」完全一致。
+`secret` / 版本号是网页包里的公开常量（`request_signing._WRITE_RND_VERSION` / `_WRITE_RND_SECRET`）。缺 `_rnd` 时服务端返回 `status=failed, msg=缺失参数`，即使 `hkey`、`_time`、`nonce` 全都有效；PR #32 的对照请求复现了这一情形。上游换包后这两个常量或其他字段可能变化，「缺失参数」需要结合当前请求契约排查。
 
 端点通过 `Endpoint.write_signature` 声明自己需要写签名，`_request()` 据此切换参数集并追加 `_rnd`；读请求路径不受影响。
+
+v1.3.4 的签名在限流等待结束后生成，安全 GET 的每次重试也会重新签名。评论 POST 不自动重试；已发送但无法确认结果的情形继续由发送闸门核对。若写接口返回“缺失参数”，客户端提供 `write_contract` 分类及网页签名排查提示；这不证明只有常量失效，仍需核对上游字段、域名和登录态。
+
+验证来源：[PR #32](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/32) 贡献者在 AstrBot 4.29.3 下提供了参数对照和单账号真实发送成功结果；[xhhRobot 2026-10-06 更新](https://github.com/SomeOvO/xhhRobot/commit/b709386e52f471269b37f9ddc5a35a8adaa81507) 也报告了评论接口变化并采用相同形状的附加签名。本轮维护独立复核固定向量、请求形状与离线回归，未使用维护者账号真实发评，也未将贡献者的实测扩大为全部账号或后续上游版本的保证。
 
 ## 通知契约
 
@@ -229,3 +233,7 @@ POST https://api.xiaoheihe.cn/bbs/app/comment/create
 ## 参考与许可
 
 第三方行为参考和许可证说明见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。许可证未明确的项目仅用于观察外部行为和协议交互，本项目不复制其源码、特殊常量、注释或目录结构。
+
+### v1.3.4 发送核对边界
+
+近期评论必须同时匹配帖子、根楼层、直接回复对象、机器人 UID、正文和发送窗口才可确认。多个别名字段只要存在冲突就拒绝确认；缺少目标字段也保留 `send_unknown`。发送窗口允许 5 秒的时间取整/时钟误差，较早的同文评论不能用于本次确认。该行为宁可保留待核对状态，也不基于未经验证的服务端筛选推断成功或自动重发。

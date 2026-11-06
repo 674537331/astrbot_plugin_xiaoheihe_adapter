@@ -6,9 +6,17 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.3.3**
+当前版本：**v1.3.4**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权工具仍由 AstrBot 负责；本插件负责小黑盒平台接入、上下文构建、图片预处理、幂等发送与主动浏览。
+
+## v1.3.4 重点
+
+- 合入 [PR #32](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/32)：评论创建切换到网页写入契约，补齐 `_rnd` 签名，修复发送时返回“缺失参数”的问题。
+- 请求在限流等待结束后签名；安全 GET 的每次重试重新生成签名。评论 POST 仍只尝试一次，状态不明时先核对近期评论并阻止重复发送。
+- 发送结果核对同时校验帖子、根楼层、回复目标和时间；信息不足时保留状态未知，阻止重发。
+- 新增评论写入契约异常提示；独立 `_rnd`、`hkey`、`nonce`、`_time` 字段纳入日志和诊断脱敏，HTTP User-Agent 自动使用当前插件版本。
+- 修复历史公开签名字母表导致的 Secret Scan 误报，以及本地虚拟环境导致的仓库检查误报。完整审查结论和功能取舍见 [维护审查](docs/maintenance-audit-2026-11-06.md)。
 
 ## v1.3.3 重点
 
