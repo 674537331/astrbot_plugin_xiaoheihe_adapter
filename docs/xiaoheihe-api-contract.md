@@ -17,7 +17,7 @@
 | 当前账号检查 | GET | `/bbs/app/api/user/permission` | 是 | 认证失效会触发 relogin/熔断处理 |
 | 用户消息中心 | GET | `/bbs/app/user/message` | 是 | mention/reply 轮询 |
 | 帖子/楼层树 | GET | `/bbs/app/link/tree` | 是 | 原帖与评论上下文 |
-| 创建评论 | POST | `/bbs/app/comment/create` | 是 | `workshopapi.xiaoheihe.cn` |
+| 创建评论 | POST | `/bbs/app/comment/create` | 是 | `api.xiaoheihe.cn`，需 `_rnd` 写签名 |
 | 近期机器人评论 | GET | `/bbs/app/comment/user` | 是 | 用于发送状态未知核对 |
 | 推荐信息流 | GET | `/bbs/app/feeds` | 是 | v1.3.x 兼容/回退流 |
 | 真实分区目录 | GET | `/bbs/app/api/topic/index/` | 是 | v1.3.x 只读探测 |
@@ -41,6 +41,18 @@ device_info=Chrome
 ```
 
 每次需要签名的请求生成动态时间、nonce 和 `hkey`；Cookie、Token、二维码参数、设备 ID 和完整签名值不会写入普通日志或诊断导出。
+
+### 写请求的 `_rnd` 签名
+
+写请求（目前只有创建评论）走网页客户端的写契约：域名 `api.xiaoheihe.cn`，查询参数用 `app=heybox`、`web_version=3.0`、`x_client_version=`（空但必须存在），**URL 不带 `heybox_id`**，并额外追加一个 `_rnd`：
+
+```text
+_rnd = "15:" + HMAC_SHA256(key=secret, msg=secret + nonce + _time + ":" + nonce).hex()
+```
+
+`secret` / 版本号是网页包里的公开常量（`request_signing._WRITE_RND_VERSION` / `_WRITE_RND_SECRET`）。缺 `_rnd` 时服务端返回 `status=failed, msg=缺失参数`，即使 `hkey`、`_time`、`nonce` 全都有效（v1.3.3 之前的所有真实发送都撞在这里）。上游换包后这两个常量可能变化，届时症状会与「缺失参数」完全一致。
+
+端点通过 `Endpoint.write_signature` 声明自己需要写签名，`_request()` 据此切换参数集并追加 `_rnd`；读请求路径不受影响。
 
 ## 通知契约
 
@@ -173,8 +185,10 @@ GET /<plugin>/feed/topics/probe?profile_id=<id>[&topic_id=<id>]
 真实评论使用：
 
 ```text
-POST https://workshopapi.xiaoheihe.cn/bbs/app/comment/create
+POST https://api.xiaoheihe.cn/bbs/app/comment/create
 ```
+
+查询参数走写契约（`app=heybox`、`web_version=3.0`、`x_client_version=`、`_rnd=15:<sig>`，不带 `heybox_id`），表单字段为 `is_cy` / `link_id` / `reply_id` / `root_id` / `text`。
 
 插件的写入安全语义比 HTTP 成功/失败更严格：
 
@@ -199,6 +213,7 @@ POST https://workshopapi.xiaoheihe.cn/bbs/app/comment/create
 - 多分区去重/排序/部分失败/全部失败回退；
 - Plugin Page 只读探测；
 - 评论发送成功/失败/状态未知和重复发送闸门；
+- 写请求参数集与 `_rnd` 签名（固定向量，已与网页包算法交叉验证）；
 - 401/403/429/5xx/网络异常；
 - 日志和响应脱敏。
 

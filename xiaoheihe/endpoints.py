@@ -31,6 +31,9 @@ class Endpoint:
     authenticated: bool
     retry_safe: bool
     base_url: str = API_BASE_URL
+    # Write requests are signed like the web client: they carry the app client
+    # flags and an additional `_rnd` parameter over the same path.
+    write_signature: bool = False
 
 
 ENDPOINTS: dict[EndpointName, Endpoint] = {
@@ -44,12 +47,17 @@ ENDPOINTS: dict[EndpointName, Endpoint] = {
     ),
     EndpointName.USER_MESSAGES: Endpoint("GET", "/bbs/app/user/message", True, True),
     EndpointName.POST_TREE: Endpoint("GET", "/bbs/app/link/tree", True, True),
+    # Comment creation follows the web client contract, which is served from the
+    # main API host: the query carries the app client flags plus an extra `_rnd`
+    # write signature. Only this combination is verified against the live API;
+    # `_rnd` alone is the parameter proven necessary.
     EndpointName.CREATE_COMMENT: Endpoint(
         "POST",
         "/bbs/app/comment/create",
         True,
         False,
-        WORKSHOP_API_BASE_URL,
+        API_BASE_URL,
+        True,
     ),
     EndpointName.RECENT_COMMENTS: Endpoint("GET", "/bbs/app/comment/user", True, True),
     EndpointName.FEED: Endpoint("GET", "/bbs/app/feeds", True, True),

@@ -40,6 +40,8 @@ ignore = ["S101", "RUF001"]
 "xiaoheihe/api_client.py" = ["S311"]
 "xiaoheihe/rate_limiter.py" = ["S311"]
 "xiaoheihe/notification_service.py" = ["S311"]
+# The `_rnd` key is a public constant published in the upstream web bundle.
+"xiaoheihe/request_signing.py" = ["S105"]
 # Dynamic SQL identifiers and predicates in this module come only from fixed allowlists.
 "xiaoheihe/repository.py" = ["S608"]
 

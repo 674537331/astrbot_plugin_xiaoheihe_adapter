@@ -6,6 +6,7 @@ import hashlib
 from xiaoheihe.models import Credentials
 from xiaoheihe.request_signing import (
     RequestSigner,
+    build_write_rnd,
     ensure_client_identity,
     generate_hkey,
     generate_xhh_token_id,
@@ -84,3 +85,16 @@ def test_missing_client_identity_is_generated_once() -> None:
     assert credentials.device_id == "a" * 32
     assert ensure_client_identity(credentials, device_id="b" * 32) is False
     assert credentials.cookies["x_xhh_tokenid"] == first_token
+
+
+def test_write_rnd_matches_web_client_vector() -> None:
+    # Cross-checked against the web bundle algorithm with Node's crypto module:
+    # HMAC-SHA256(key=secret, msg=secret + nonce + timestamp + ":" + nonce).
+    assert (
+        build_write_rnd("0123456789ABCDEF0123456789ABCDEF", "1700000000")
+        == "15:7957b69b426ea6a38049ddf527a43d6dd33c8f77dac16eb4a71e40972506d18b"
+    )
+    assert (
+        build_write_rnd("fixed", "100")
+        == "15:c0d3f4c20f8df217223daaafca5c787f3723fe13c549273dae7a0a22953a8d2e"
+    )

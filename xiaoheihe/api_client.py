@@ -37,6 +37,7 @@ from .parsers import (
 from .rate_limiter import AsyncRateLimiter
 from .request_signing import (
     RequestSigner,
+    build_write_rnd,
     ensure_client_identity,
     generate_device_id,
 )
@@ -55,6 +56,15 @@ WEB_CLIENT_PARAMS = {
     "x_os_type": "Windows",
     "device_info": "Chrome",
     "_notip": "true",
+}
+
+# Query flags the web client uses for write requests. They override the
+# read-only set above and the account id is left out of the URL.
+WRITE_CLIENT_PARAMS = {
+    "app": "heybox",
+    "web_version": "3.0",
+    "version": "999.0.4",
+    "x_client_version": "",
 }
 
 
@@ -393,6 +403,9 @@ class XiaoheiheApiClient:
             request_params.setdefault(key, value)
         if self.credentials and self.credentials.uid:
             request_params.setdefault("heybox_id", self.credentials.uid)
+        if contract.write_signature:
+            request_params.update(WRITE_CLIENT_PARAMS)
+            request_params.pop("heybox_id", None)
         signed = self._signer.sign(
             contract.method,
             contract.path,
@@ -401,6 +414,11 @@ class XiaoheiheApiClient:
             signing_key=self.credentials.signing_key if self.credentials else "",
             device_id=self._device_id,
         )
+        if contract.write_signature:
+            signed.params["_rnd"] = build_write_rnd(
+                signed.params["nonce"],
+                signed.params["_time"],
+            )
         headers = dict(signed.headers)
         headers["Referer"] = "https://www.xiaoheihe.cn/"
         if self.credentials and self.credentials.access_token:

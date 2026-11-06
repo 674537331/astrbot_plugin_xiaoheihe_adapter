@@ -459,9 +459,16 @@ async def test_qr_success_uses_state_response_without_unverified_restore_request
 async def test_comment_send_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/bbs/app/comment/create"
-        assert request.url.host == "workshopapi.xiaoheihe.cn"
+        assert request.url.host == "api.xiaoheihe.cn"
         assert request.headers["origin"] == "https://www.xiaoheihe.cn"
         assert request.headers["referer"] == "https://www.xiaoheihe.cn/"
+        query = request.url.params
+        assert query["app"] == "heybox"
+        assert query["web_version"] == "3.0"
+        assert query["x_client_version"] == ""
+        assert "heybox_id" not in query
+        assert query["_rnd"].startswith("15:")
+        assert len(query["_rnd"]) == len("15:") + 64
         body = parse_qs(request.content.decode("utf-8"))
         assert body == {
             "is_cy": ["0"],

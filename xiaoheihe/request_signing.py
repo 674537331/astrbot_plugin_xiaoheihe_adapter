@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import secrets
 import time
 from dataclasses import dataclass
@@ -104,6 +105,23 @@ def ensure_client_identity(
         credentials.cookies["x_xhh_tokenid"] = generate_xhh_token_id()
         changed = True
     return changed
+
+
+# The web client sends an extra `_rnd` signature on write requests. The server
+# answers `缺失参数` when it is missing, even when `hkey`, `_time` and `nonce`
+# are all valid, so a write is never accepted without it. Both constants are
+# public values shipped in the www.xiaoheihe.cn bundle; they are not secrets of
+# this project and rotate when the upstream client changes.
+_WRITE_RND_VERSION = "15"
+_WRITE_RND_SECRET = "Z7mFG4tQp9Ws2LxB8H"  # gitleaks:allow
+
+
+def build_write_rnd(nonce: str, timestamp: str) -> str:
+    """Return the `_rnd` write signature in `<version>:<hex digest>` form."""
+
+    message = f"{_WRITE_RND_SECRET}{nonce}{timestamp}:{nonce}".encode()
+    digest = hmac.new(_WRITE_RND_SECRET.encode(), message, hashlib.sha256).hexdigest()
+    return f"{_WRITE_RND_VERSION}:{digest}"
 
 
 def generate_hkey(path: str, timestamp: int, nonce: str) -> str:
