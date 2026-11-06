@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -198,6 +199,47 @@ def _schema_failures() -> list[str]:
     return failures
 
 
+def _logging_failures() -> list[str]:
+    """Enforce the marketplace rule: plugins use only AstrBot's public logger."""
+
+    failures = []
+    public_logger_imported = False
+    for path in (ROOT / "main.py", *(ROOT / "xiaoheihe").rglob("*.py")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            failures.append(f"{relative}: invalid Python syntax: {exc}")
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                modules = [node.module or ""]
+                for alias in node.names:
+                    if alias.name == "logger":
+                        if node.module != "astrbot.api":
+                            failures.append(
+                                f"{relative}:{node.lineno}: logger must be imported "
+                                "from astrbot.api"
+                            )
+                        elif relative == "xiaoheihe/logging_service.py":
+                            public_logger_imported = True
+            else:
+                continue
+            if any(
+                module.split(".", 1)[0] in {"logging", "loguru", "structlog"} for module in modules
+            ):
+                failures.append(
+                    f"{relative}:{node.lineno}: use astrbot.api.logger instead of a logging backend"
+                )
+    if not public_logger_imported:
+        failures.append("xiaoheihe/logging_service.py: missing public astrbot.api logger import")
+    return failures
+
+
 def main() -> int:
     failures: list[str] = []
     repository_files = files()
@@ -251,6 +293,7 @@ def main() -> int:
 
     failures.extend(_release_version_failures())
     failures.extend(_schema_failures())
+    failures.extend(_logging_failures())
 
     package_bytes = sum(
         path.stat().st_size

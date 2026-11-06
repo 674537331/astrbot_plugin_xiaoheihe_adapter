@@ -6,9 +6,15 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.3.4**
+当前版本：**v1.3.5**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权工具仍由 AstrBot 负责；本插件负责小黑盒平台接入、上下文构建、图片预处理、幂等发送与主动浏览。
+
+## v1.3.5 重点
+
+- 修复上架日志规范问题：移除插件自建文件日志器，所有日志统一通过 `from astrbot.api import logger` 输出，由 AstrBot 管理持久化与轮转。
+- 管理页保留脱敏日志缓存、筛选和 SSE 实时推送；缓存随运行时重载清空，历史运行日志在 AstrBot 中查看。
+- 移除失效的独立文件日志总量设置；升级前旧日志不删除、不续写，存储页只显示其历史占用。CI 增加公共 logger 使用检查，阻止违规日志后端重新进入运行代码。
 
 ## v1.3.4 重点
 
@@ -163,6 +169,14 @@ v1.3.0 将浏览来源独立为“小黑盒管理 → **浏览来源**”。
 | `false` | `false` | AI 生成后直接真实发送，高风险显式模式 |
 
 默认：主动刷帖关闭、`dry_run=true`、`review_required=true`。
+
+## 日志查看与升级
+
+当前日志统一交给 AstrBot 公共 logger；输出位置、历史保留及轮转由 AstrBot 管理。插件不会创建自己的文件日志器。
+
+管理页“运行日志”保留有界、脱敏的当前运行缓存及 SSE 实时推送，重载后缓存清空。`logging.max_memory_entries` 控制缓存数量；`logging.level` 控制提交给宿主的最低日志级别，不修改 AstrBot 全局级别，最终显示仍受宿主日志配置影响。
+
+升级前 `data/plugin_data/astrbot_plugin_xiaoheihe_adapter/logs/xiaoheihe.log*` 文件保留且不再续写；状态和存储页的“历史日志文件”只统计这些旧文件，不代表 AstrBot 日志总量。旧 `retention.log_total_limit_mb` 自动忽略，无需手动修改配置。
 
 ## 常用设置
 

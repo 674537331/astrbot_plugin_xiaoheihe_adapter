@@ -12,6 +12,18 @@ class Plain:
         self.text = text
 
 
+class PublicLoggerStub:
+    """Stand-in for AstrBot's public logger without a separate logging backend."""
+
+    def info(self, message: str) -> None:
+        return None
+
+    debug = info
+    warning = info
+    error = info
+    critical = info
+
+
 class Image:
     def __init__(self, file: str = "", url: str = "") -> None:
         self.file = file
@@ -271,6 +283,7 @@ def install() -> None:
     provider.LLMResponse = LLMResponse
     core_agent_message.TextPart = TextPart
     api.AstrBotConfig = AstrBotConfig
+    api.logger = PublicLoggerStub()
     star.Context = object
     star.Star = Star
     star.StarTools = StarTools

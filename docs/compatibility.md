@@ -1,4 +1,4 @@
-# AstrBot 兼容性说明（v1.3.4）
+# AstrBot 兼容性说明（v1.3.5）
 
 ## 支持范围
 
@@ -19,6 +19,8 @@ v1.3.3 只调整插件送入 Agent 的楼层相关性路由、图片来源优先
 
 v1.3.4 修复既有评论端点的网页写签名，不增加端点、数据库迁移、配置项或运行依赖。已在 AstrBot 4.24.2、4.26.2 和当前稳定版 4.29.4 的发布包上通过接口文件、符号和 Agent 钩子顺序检查；这属于包级契约检查，不代表带真实账号启动完整 AstrBot 的端到端验收。
 
+v1.3.5 的日志只使用 `from astrbot.api import logger`；包级契约额外检查该公共导出，最低支持版本不变。独立文件日志上限自动移除，日志级别与内存缓存配置保留；无需手动迁移或重新登录。已通过上述三个 AstrBot 版本的包级契约检查，插件市场上架审核仍需单独重新提交。
+
 ## 使用的 AstrBot 能力
 
 | 能力 | 使用方式 | 兼容性边界 |
@@ -34,7 +36,8 @@ v1.3.4 修复既有评论端点的网页写签名，不增加端点、数据库�
 | Provider 选择 | `selected_provider` + `Context.get_provider_by_id()` | 插件主模型仍进入 AstrBot 原生 Agent；回退列表由 AstrBot 全局配置决定 |
 | Plugin Page | `window.AstrBotPluginPage` + `context.register_web_api()` + `astrbot.api.web` | Dashboard 认证后访问插件管理 API |
 | 配置 | `AstrBotConfig` + `save_config()` + `_conf_schema.json` | Plugin Page 与原生插件设置共享配置对象 |
-| 数据目录 | `StarTools.get_data_dir()` | SQLite、凭证和日志保留在插件专属数据目录 |
+| 数据目录 | `StarTools.get_data_dir()` | SQLite、凭证及升级前旧日志保留在插件专属目录；当前日志经 AstrBot 管理 |
+| 日志 | `from astrbot.api import logger` | 只使用公共 logger；插件仅保留有界脱敏管理页缓存，不自行建立文件日志器 |
 | 生命周期 | `initialize()` / `terminate()` / `Platform.terminate()` | 热重载重建适配器；关闭任务、HTTP Client、SQLite、SSE |
 
 ## v1.3.x 配置兼容性

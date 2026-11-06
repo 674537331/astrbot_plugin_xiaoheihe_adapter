@@ -13,6 +13,8 @@ python tools/validate_repository.py
 
 真实账号集成测试必须由环境变量 `XHH_INTEGRATION_TEST=1` 显式开启，且必须保持 dry-run；禁止提交任何凭证或未脱敏响应。
 
+运行代码的日志必须统一使用 `from astrbot.api import logger`。不得直接导入标准库或第三方日志后端，也不得自行创建文件日志器、添加处理器或调整宿主 logger 的全局状态。管理页缓存和 SSE 仍必须先脱敏；`tools/validate_repository.py` 会检查日志导入规范。
+
 建议为 GitHub `main` 分支启用保护：禁止直接推送和 force push，PR 必须通过 CI 与 CodeQL，不得存在高危扫描结果，并至少获得一次审查。
 
 ## 发布检查

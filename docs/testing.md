@@ -1,21 +1,30 @@
-# 测试说明（v1.3.4）
+# 测试说明（v1.3.5）
 
 ## 最近一次完整验证
 
-日期：**2026-11-06**
+日期：**2026-11-07**
 
-v1.3.4 评论写签名与维护修复的本地验证：
+v1.3.5 公共日志修复的本地验证：
 
 ```text
-321 passed
-TOTAL 4152 statements / 1350 branches
+330 passed
+TOTAL 4136 statements / 1354 branches
 coverage.py 总覆盖率（启用分支计数）：84%
 语句覆盖率：87%；分支覆盖率：72%
 ```
 
-覆盖率范围见 `pyproject.toml`：统计 `xiaoheihe` 核心服务，`adapter.py`、`event.py`、`web_api.py` 和仓库入口 `main.py` 不计入该百分比；这些入口仍有 AstrBot stub 契约测试，不能将 83% 理解为完整宿主运行时的覆盖率。
+覆盖率范围见 `pyproject.toml`：统计 `xiaoheihe` 核心服务，`adapter.py`、`event.py`、`web_api.py` 和仓库入口 `main.py` 不计入该百分比；这些入口仍有 AstrBot stub 契约测试，不能将 84% 理解为完整宿主运行时的覆盖率。
 
-同轮本地验证还包括仓库版本/schema/页面校验、Ruff lint/format、Python 编译、两个前端 JavaScript 文件语法、AstrBot stub 导入、AstrBot 4.24.2 / 4.26.2 / 最新稳定 4.29.4 包级契约，以及 Gitleaks 8.24.3 全历史与当前目录扫描。远端 CI、CodeQL 与 Dependency Review 以本次维护 PR 的 GitHub Actions 结果为准。
+同轮本地验证包括仓库版本/schema/页面及公共 logger 规则、Ruff lint/format、Python 编译、前端 JavaScript 语法、AstrBot stub 导入、AstrBot 4.24.2 / 4.26.2 / 4.29.4 包级接口契约及 Gitleaks 扫描。远端 CI、CodeQL 与 Dependency Review 以 v1.3.5 维护 PR 的 GitHub Actions 结果为准。
+
+## v1.3.5 回归重点
+
+- 公共 logger 恰好接收一次脱敏文本，签名及凭证不会通过消息或 details 泄漏；正常输出不会创建插件日志目录或文件。
+- 日志级别热更新只控制本插件向宿主提交的输出，不调用宿主 logger 的级别或处理器管理接口；管理页缓存仍保留各级别并支持筛选，数量始终有界。
+- SSE 继续发布脱敏日志；旧独立日志只计量、不续写、不删除，关闭服务不关闭宿主 logger。
+- 旧独立文件日志上限自动移除，现有日志级别及缓存数量保留；schema 与运行配置保持一致。
+- AST 检查拒绝运行代码导入标准库或第三方日志后端，以及从非公共入口导入 logger；要求日志服务显式从 `astrbot.api` 导入 logger。
+- AstrBot 兼容性检查增加公共 logger 导出符号；不将包级文件/符号检查解释为完整宿主启动或市场审核通过。
 
 ## v1.3.4 回归重点
 

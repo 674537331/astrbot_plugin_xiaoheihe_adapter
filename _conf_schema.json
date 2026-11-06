@@ -324,8 +324,7 @@
       "session_mapping_days": {"description": "会话映射保留天数", "type": "int", "default": 180},
       "dedup_days": {"description": "去重记录保留天数", "type": "int", "default": 365},
       "database_warn_mb": {"description": "数据库警告阈值 MB", "type": "int", "default": 150},
-      "database_soft_limit_mb": {"description": "数据库软上限 MB", "type": "int", "default": 200},
-      "log_total_limit_mb": {"description": "日志总上限 MB", "type": "int", "default": 100}
+      "database_soft_limit_mb": {"description": "数据库软上限 MB", "type": "int", "default": 200}
     }
   },
   "logging": {
@@ -333,7 +332,7 @@
     "description": "日志",
     "items": {
       "level": {
-        "description": "日志级别",
+        "description": "宿主日志输出级别",
         "type": "string",
         "default": "INFO",
         "options": ["DEBUG", "INFO", "WARNING", "ERROR"]

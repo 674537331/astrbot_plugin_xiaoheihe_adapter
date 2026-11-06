@@ -46,6 +46,16 @@ def test_legacy_unused_image_byte_limit_settings_are_dropped(fake_config) -> Non
     assert "image_cache_soft_limit_mb" not in snapshot["retention"]
 
 
+def test_legacy_file_log_limit_is_removed_without_changing_logging_preferences(fake_config) -> None:
+    fake_config["retention"]["log_total_limit_mb"] = 50
+    fake_config["logging"].update(level="WARNING", max_memory_entries=500)
+    service = ConfigService(fake_config)
+
+    assert "log_total_limit_mb" not in service.snapshot()["retention"]
+    assert "log_total_limit_mb" not in service.ui_schema()["retention"]["items"]
+    assert service.snapshot()["logging"] == {"level": "WARNING", "max_memory_entries": 500}
+
+
 @pytest.mark.asyncio
 async def test_config_save_uses_same_object_and_callback(fake_config) -> None:
     service = ConfigService(fake_config)

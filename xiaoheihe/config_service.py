@@ -101,7 +101,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dedup_days": 365,
         "database_warn_mb": 150,
         "database_soft_limit_mb": 200,
-        "log_total_limit_mb": 100,
     },
     "logging": {"level": "INFO", "max_memory_entries": 2000},
 }
@@ -343,7 +342,6 @@ class ConfigService:
             _bounded_int(retention, key, 1, 3650)
         _bounded_int(retention, "database_warn_mb", 1, 10240)
         _bounded_int(retention, "database_soft_limit_mb", 1, 10240)
-        _bounded_int(retention, "log_total_limit_mb", 5, 2048)
         if retention["database_soft_limit_mb"] < retention["database_warn_mb"]:
             raise ConfigValidationError("数据库软上限不能小于警告阈值")
 

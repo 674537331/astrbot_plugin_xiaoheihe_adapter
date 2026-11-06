@@ -1,4 +1,4 @@
-# 架构说明（v1.3.4）
+# 架构说明（v1.3.5）
 
 ## 总体边界
 
@@ -33,6 +33,7 @@
 - `provider_routing.py`：主模型和图片 Provider 路由计算。
 - `database.py` / `repository.py`：SQLite 迁移、索引、幂等、发送闸门、视觉快照、保留与诊断。
 - `config_service.py`：配置迁移、校验、保存、Plugin Page 通用 schema 过滤和后台任务刷新通知。
+- `logging_service.py`：日志脱敏、有界管理页缓存与 SSE；实际日志只交给 `astrbot.api.logger`，不创建文件日志器或处理器。
 - `runtime.py` / `task_manager.py`：客户端、数据库、后台任务、锁、SSE、熔断和析构。
 - `web_api.py`：受 AstrBot Dashboard 会话保护的 Plugin Page API。
 
@@ -196,6 +197,7 @@ v1.3.4 起，评论端点独立声明 `write_signature`，API Client 按声明�
 
 ## 生命周期与性能
 
+- v1.3.5 起，日志持久化、轮转和 logger 生命周期由 AstrBot 管理。`logging.level` 仅过滤本插件提交给宿主的最低级别，不调用宿主级别/处理器管理接口；管理页独立保留所有级别的有界脱敏缓存，缓存随运行时重载清空。旧独立日志目录只用于历史占用统计，不创建、不续写、不删除文件，旧 `retention.log_total_limit_mb` 自动忽略。
 - 每账号复用长生命周期 HTTP Client；
 - 网络上下文有界 TTL + single-flight；
 - 主动真实分区最多 4 路并发；
