@@ -1,61 +1,52 @@
-# 测试说明（v1.3.3）
+# 测试说明（v1.3.4）
 
 ## 最近一次完整验证
 
-日期：**2026-08-24**
+日期：**2026-11-06**
 
-v1.3.3 上下文相关性与视觉路由优化的最终质量任务结果：
-
-```text
-292 passed
-TOTAL 4118 statements / 1340 branches
-branch coverage: 83%
-```
-
-测试耗时受 GitHub Actions runner 与依赖缓存状态影响，因此发布文档只记录稳定的测试数量和覆盖率指标。
-
-关键模块覆盖率：
+v1.3.4 评论写签名与维护修复的本地验证：
 
 ```text
-xiaoheihe/context_builder.py       91%
-xiaoheihe/context_compression.py   85%
-xiaoheihe/context_relevance.py     90%
-xiaoheihe/config_service.py        84%
-xiaoheihe/feed_service.py          83%
-xiaoheihe/topic_service.py         91%
-xiaoheihe/repository.py            88%
-xiaoheihe/security.py              83%
+321 passed
+TOTAL 4152 statements / 1350 branches
+coverage.py 总覆盖率（启用分支计数）：84%
+语句覆盖率：87%；分支覆盖率：72%
 ```
 
-同一轮还通过：
+覆盖率范围见 `pyproject.toml`：统计 `xiaoheihe` 核心服务，`adapter.py`、`event.py`、`web_api.py` 和仓库入口 `main.py` 不计入该百分比；这些入口仍有 AstrBot stub 契约测试，不能将 83% 理解为完整宿主运行时的覆盖率。
 
-- `python tools/validate_repository.py`；
-- Ruff lint；
-- Ruff format check（75 个 Python 文件）；
-- `python -m compileall -q .`；
-- `node --check pages/xiaoheihe/app.js`；
-- `node --check pages/xiaoheihe/topic_probe.js`；
-- AstrBot API stub import smoke；
-- AstrBot 4.24.2 兼容检查；
-- AstrBot 4.26.2 兼容检查；
-- 当前支持范围内最新稳定 AstrBot 兼容检查；
-- Dependency Review；
-- Secret Scan；
-- CodeQL Python / JavaScript-TypeScript。
+同轮本地验证还包括仓库版本/schema/页面校验、Ruff lint/format、Python 编译、两个前端 JavaScript 文件语法、AstrBot stub 导入、AstrBot 4.24.2 / 4.26.2 / 最新稳定 4.29.4 包级契约，以及 Gitleaks 8.24.3 全历史与当前目录扫描。远端 CI、CodeQL 与 Dependency Review 以本次维护 PR 的 GitHub Actions 结果为准。
+
+## v1.3.4 回归重点
+
+- 固定签名向量与评论写参数：主 API 域名、空 `x_client_version`、不携带 `heybox_id`，`_rnd` 和 hkey 使用同一 nonce/时间。
+- 写后读取继续使用原读参数集，无写参数污染；签名在限流后生成，安全 GET 的每次重试刷新 nonce 与 hkey。
+- 评论 HTTP 429/500/502/503 与超时不重复 POST；明确拒绝进入终态，5xx/异常响应进入 `send_unknown`，二次 delivery 继续被数据库闸门阻止。
+- 核对近期评论同时验证机器人 UID、正文、帖子、根楼层、直接回复目标和发送时间；缺字段、目标冲突、旧同文评论均不能确认成功。顶级评论的 0/-1 空目标形状与带 `link` 对象的回复可确认。
+- “缺失参数”写契约诊断与普通读取错误分开，结构化签名参数、JSON 字符串和编码赋值均脱敏。
+- 本地虚拟环境/依赖目录不参与源码扫描，普通未忽略源码和运行产物仍被检查；当前 HTTP User-Agent 自动使用包级版本。
+
+## 验证边界
+
+本轮没有维护者小黑盒凭据，未实际扫码登录、发评、上传图片或开启自动发帖。真实评论发送成功的证据来自 [PR #32](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/32) 的贡献者，不能替代维护者部署后的账号验收。包级 AstrBot 检查只核对发行包所需文件、公开符号和 Agent 阶段顺序，未启动全部宿主依赖。
 
 ## 本地执行
 
 ```bash
-python -m pip install -e ".[test]"
+python -m venv .venv
+# 激活虚拟环境后：
+python -m pip install -e ".[test]" ruff PyYAML
 ruff check .
 ruff format --check .
-python -m compileall -q .
+python -m compileall -q main.py xiaoheihe tests tools
 node --check pages/xiaoheihe/app.js
 node --check pages/xiaoheihe/topic_probe.js
 python tools/validate_repository.py
 coverage run -m pytest -q
 coverage report
 ```
+
+若本机设置了 SOCKS 代理，httpx 还需要其可选的 `socksio` 依赖。离线单元测试不依赖代理；可在测试命令进程中清除代理环境变量，避免环境设置影响客户端构造。本轮本地测试采用该方式，不修改插件运行时的代理策略。
 
 CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本做包级 API 契约检查。
 

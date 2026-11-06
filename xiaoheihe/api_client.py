@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
+from . import __version__
 from .endpoints import API_BASE_URL, EndpointName, endpoint
 from .models import (
     ApiPage,
@@ -170,7 +171,7 @@ class XiaoheiheApiClient:
                 follow_redirects=False,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "AstrBot-Xiaoheihe-Adapter/1.1.3",
+                    "User-Agent": f"AstrBot-Xiaoheihe-Adapter/{__version__}",
                 },
             )
         if self.credentials:
@@ -406,20 +407,7 @@ class XiaoheiheApiClient:
         if contract.write_signature:
             request_params.update(WRITE_CLIENT_PARAMS)
             request_params.pop("heybox_id", None)
-        signed = self._signer.sign(
-            contract.method,
-            contract.path,
-            params=request_params,
-            json_body=json_body or form_body,
-            signing_key=self.credentials.signing_key if self.credentials else "",
-            device_id=self._device_id,
-        )
-        if contract.write_signature:
-            signed.params["_rnd"] = build_write_rnd(
-                signed.params["nonce"],
-                signed.params["_time"],
-            )
-        headers = dict(signed.headers)
+        headers: dict[str, str] = {}
         headers["Referer"] = "https://www.xiaoheihe.cn/"
         if self.credentials and self.credentials.access_token:
             headers["Authorization"] = f"Bearer {self.credentials.access_token}"
@@ -439,6 +427,20 @@ class XiaoheiheApiClient:
         retry_count = 0
         while True:
             await self._limiter.wait()
+            # Sign after throttling, once per actual HTTP attempt. A queued
+            # request or Retry-After delay must not reuse an expired signature.
+            signed = self._signer.sign(
+                contract.method,
+                contract.path,
+                params=request_params,
+                json_body=json_body or form_body,
+                signing_key=self.credentials.signing_key if self.credentials else "",
+                device_id=self._device_id,
+            )
+            if contract.write_signature:
+                signed.params["_rnd"] = build_write_rnd(
+                    signed.params["nonce"], signed.params["_time"]
+                )
             try:
                 response = await self._client.request(
                     contract.method,
@@ -446,7 +448,7 @@ class XiaoheiheApiClient:
                     params=signed.params,
                     json=json_body,
                     data=form_body,
-                    headers=headers,
+                    headers={**signed.headers, **headers},
                     timeout=self._timeout,
                 )
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
@@ -542,11 +544,22 @@ class XiaoheiheApiClient:
             upstream_error = _upstream_error(payload) if contract.authenticated else ""
             if upstream_error:
                 credential_invalid = _is_relogin_response(payload)
+                write_contract_rejected = (
+                    contract.write_signature
+                    and not credential_invalid
+                    and "缺失参数" in upstream_error
+                )
+                category = "credential_invalid" if credential_invalid else "upstream_rejected"
+                if write_contract_rejected:
+                    category = "write_contract"
+                    upstream_error += (
+                        "；评论写入契约可能已变化，请更新插件并核对网页写签名，勿反复重试"
+                    )
                 error_type = CredentialInvalidError if credential_invalid else XiaoheiheApiError
                 error = error_type(
                     upstream_error,
                     status_code=401 if credential_invalid else response.status_code,
-                    category=("credential_invalid" if credential_invalid else "upstream_rejected"),
+                    category=category,
                     details=_response_shape_summary(payload),
                 )
                 self._remember_error(error)

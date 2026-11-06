@@ -7,7 +7,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tools import validate_repository
 from xiaoheihe.config_service import DEFAULT_CONFIG, ConfigService
+
+
+def test_repository_validator_skips_installed_dependencies_but_checks_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "source.py").write_text("fixture = True\n", encoding="utf-8")
+    (tmp_path / "unexpected.log").write_text("must still be checked", encoding="utf-8")
+    for directory in (".venv", "venv", "node_modules", "htmlcov", "fixture.egg-info"):
+        dependency = tmp_path / directory / "nested"
+        dependency.mkdir(parents=True)
+        (dependency / "ignored.log").write_text("third-party runtime artifact", encoding="utf-8")
+    monkeypatch.setattr(validate_repository, "ROOT", tmp_path)
+
+    assert {path.name for path in validate_repository.files()} == {"source.py", "unexpected.log"}
 
 
 def test_legacy_source_survives_astrbot_schema_default_prefill() -> None:

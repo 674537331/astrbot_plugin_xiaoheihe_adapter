@@ -428,9 +428,11 @@ async def test_runtime_send_unknown_never_blindly_retries(tmp_path, fake_config)
     await runtime.close()
 
 
+@pytest.mark.parametrize("category", ["upstream_rejected", "write_contract"])
 async def test_runtime_upstream_failed_is_terminal_and_never_resent(
     tmp_path,
     fake_config,
+    category,
 ) -> None:
     runtime = RuntimeServices(fake_config, tmp_path)
     await runtime.ensure_started()
@@ -438,7 +440,7 @@ async def test_runtime_upstream_failed_is_terminal_and_never_resent(
     client = FakeSendingClient(
         error=XiaoheiheApiError(
             "小黑盒 API 返回非成功状态 failed: code 1000",
-            category="upstream_rejected",
+            category=category,
         )
     )
 
@@ -476,8 +478,48 @@ async def test_runtime_upstream_failed_is_terminal_and_never_resent(
     await runtime.close()
 
 
+@pytest.mark.parametrize("category", ["server", "http", "response_shape"])
+async def test_runtime_ambiguous_response_blocks_second_post(
+    tmp_path, fake_config, category
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    await runtime.ensure_started()
+    event_id = await runtime.repository.claim_event(notification())
+    client = FakeSendingClient(error=XiaoheiheApiError("uncertain fixture", category=category))
+
+    async def get_client(profile_id, anonymous=False):
+        return client
+
+    runtime.get_client = get_client
+    route = RoutingTarget("default", "post", "root", "root")
+    try:
+        for _ in range(2):
+            with pytest.raises(SendUncertainError):
+                await runtime.deliver(
+                    event_id=event_id, route=route, content="maybe sent", dry_run=False
+                )
+        assert client.send_calls == 1
+        outgoing = await runtime.repository.latest_outgoing_for_event(event_id)
+        assert outgoing["status"] == "send_unknown"
+        assert await runtime.repository.due_retry_events(profile_id="default") == []
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("root_id", "parent_id", "wire_route"),
+    [
+        ("root", "root", {"link_id": "post", "root_id": "root", "reply_id": "root"}),
+        ("", "", {"post_id": "post", "root_id": -1, "reply_id": 0}),
+        (
+            "root",
+            "root",
+            {"link": {"linkid": "post"}, "root_comment_id": "root", "parent_comment_id": "root"},
+        ),
+    ],
+)
 async def test_runtime_timeout_is_confirmed_only_by_recent_matching_comment(
-    tmp_path, fake_config
+    tmp_path, fake_config, root_id, parent_id, wire_route
 ) -> None:
     runtime = RuntimeServices(fake_config, tmp_path)
     await runtime.ensure_started()
@@ -485,7 +527,8 @@ async def test_runtime_timeout_is_confirmed_only_by_recent_matching_comment(
     client = FakeSendingClient(error=SendUncertainError("unknown", category="send_unknown"))
     client.comments = [
         {
-            "id": "confirmed-after-timeout",
+            "commentid": "confirmed-after-timeout",
+            **wire_route,
             "content": "maybe sent",
             "created_at": time.time(),
             "user": {"uid": "bot"},
@@ -498,7 +541,7 @@ async def test_runtime_timeout_is_confirmed_only_by_recent_matching_comment(
     runtime.get_client = get_client
     result = await runtime.deliver(
         event_id=event_id,
-        route=RoutingTarget("default", "post", "root", "root"),
+        route=RoutingTarget("default", "post", root_id, parent_id),
         content="maybe sent",
         dry_run=False,
     )
@@ -510,6 +553,61 @@ async def test_runtime_timeout_is_confirmed_only_by_recent_matching_comment(
     assert row["status"] == EventState.SENT.value
     assert await runtime.repository.is_self_comment("default", "confirmed-after-timeout")
     await runtime.close()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"link_id": "other-post"},
+        {"root_id": "other-root"},
+        {"reply_id": "other-parent"},
+        {"link_id": None},
+        {"root_id": None},
+        {"reply_id": None},
+        {"post_id": "conflicting-post"},
+        {"created_at": -60},
+    ],
+)
+async def test_runtime_never_confirms_comment_with_wrong_or_missing_target(
+    tmp_path, fake_config, overrides
+) -> None:
+    runtime = RuntimeServices(fake_config, tmp_path)
+    await runtime.ensure_started()
+    event_id = await runtime.repository.claim_event(notification())
+    client = FakeSendingClient(error=SendUncertainError("unknown", category="send_unknown"))
+    comment = {
+        "commentid": "unrelated-comment",
+        "link_id": "post",
+        "root_id": "root",
+        "reply_id": "root",
+        "content": "maybe sent",
+        "created_at": time.time(),
+        "user": {"uid": "bot"},
+        **overrides,
+    }
+    if overrides.get("created_at") == -60:
+        comment["created_at"] = time.time() - 60
+    client.comments = [comment]
+
+    async def get_client(profile_id, anonymous=False):
+        return client
+
+    runtime.get_client = get_client
+    try:
+        for _ in range(2):
+            with pytest.raises(SendUncertainError):
+                await runtime.deliver(
+                    event_id=event_id,
+                    route=RoutingTarget("default", "post", "root", "root"),
+                    content="maybe sent",
+                    dry_run=False,
+                )
+        assert client.send_calls == 1
+        assert not await runtime.repository.is_self_comment("default", "unrelated-comment")
+        outgoing = await runtime.repository.latest_outgoing_for_event(event_id)
+        assert outgoing["status"] == "send_unknown"
+    finally:
+        await runtime.close()
 
 
 async def test_runtime_capture_candidate_and_floor_lock_bound(tmp_path, fake_config) -> None:

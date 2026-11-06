@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from tests.helpers import load_fixture
+from xiaoheihe import __version__
 from xiaoheihe.api_client import (
     CredentialInvalidError,
     ResponseContractError,
@@ -16,6 +17,7 @@ from xiaoheihe.api_client import (
 )
 from xiaoheihe.models import Credentials, NotificationType, RoutingTarget, ThreadContext
 from xiaoheihe.rate_limiter import AsyncRateLimiter
+from xiaoheihe.request_signing import RequestSigner, build_write_rnd, generate_hkey
 
 
 def credentials() -> Credentials:
@@ -469,6 +471,8 @@ async def test_comment_send_success() -> None:
         assert "heybox_id" not in query
         assert query["_rnd"].startswith("15:")
         assert len(query["_rnd"]) == len("15:") + 64
+        assert query["_rnd"] == build_write_rnd(query["nonce"], query["_time"])
+        assert query["hkey"] == generate_hkey(request.url.path, int(query["_time"]), query["nonce"])
         body = parse_qs(request.content.decode("utf-8"))
         assert body == {
             "is_cy": ["0"],
@@ -492,6 +496,124 @@ async def test_comment_send_success() -> None:
     assert result.external_comment_id == "sent-comment-1"
     await client.close()
     await http_client.aclose()
+
+
+async def test_write_contract_does_not_leak_into_subsequent_read() -> None:
+    observed = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(request)
+        if request.method == "POST":
+            return httpx.Response(200, json=load_fixture("send_success.json"))
+        return httpx.Response(200, json={"status": "ok", "result": {"uid": "10001"}})
+
+    client, http_client = client_with_handler(handler)
+    try:
+        await client.send_comment(RoutingTarget(profile_id="default", post_id="30003"), "hello")
+        await client.check_credentials()
+        query = observed[1].url.params
+        assert query["app"] == "web"
+        assert query["web_version"] == "2.5"
+        assert query["heybox_id"] == "10001"
+        assert "x_client_version" not in query
+        assert "_rnd" not in query
+        assert observed[0].url.params["nonce"] != query["nonce"]
+    finally:
+        await client.close()
+        await http_client.aclose()
+
+
+@pytest.mark.parametrize("write", [True, False])
+async def test_missing_parameter_diagnostic_is_limited_to_write_endpoints(write: bool) -> None:
+    observed = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(request)
+        return httpx.Response(200, json={"status": "failed", "msg": "缺失参数"})
+
+    client, http_client = client_with_handler(handler)
+    try:
+        with pytest.raises(XiaoheiheApiError) as captured:
+            if write:
+                await client.send_comment(
+                    RoutingTarget(profile_id="default", post_id="30003"), "hello"
+                )
+            else:
+                await client.check_credentials()
+        assert len(observed) == 1
+        assert captured.value.category == ("write_contract" if write else "upstream_rejected")
+        assert ("网页写签名" in str(captured.value)) is write
+        assert client.last_error["category"] == captured.value.category
+    finally:
+        await client.close()
+        await http_client.aclose()
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+async def test_comment_http_failure_never_retries_post(status: int) -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(status, json={"error": "fixture failure"})
+
+    client, http_client = client_with_handler(handler)
+    try:
+        with pytest.raises(XiaoheiheApiError):
+            await client.send_comment(RoutingTarget(profile_id="default", post_id="1"), "hello")
+        assert len(requests) == 1
+    finally:
+        await client.close()
+        await http_client.aclose()
+
+
+async def test_write_is_signed_after_rate_limiter_wait() -> None:
+    events = []
+
+    class ObservedSigner(RequestSigner):
+        def sign(self, *args, **kwargs):
+            events.append("sign")
+            return super().sign(*args, **kwargs)
+
+    class ObservedLimiter:
+        async def wait(self):
+            events.append("wait")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        events.append("request")
+        assert request.url.params["_rnd"] == build_write_rnd(
+            request.url.params["nonce"], request.url.params["_time"]
+        )
+        return httpx.Response(200, json=load_fixture("send_success.json"))
+
+    client, http_client = client_with_handler(handler)
+    client._signer = ObservedSigner()
+    client._limiter = ObservedLimiter()
+    try:
+        await client.send_comment(RoutingTarget(profile_id="default", post_id="1"), "hello")
+        assert events == ["wait", "sign", "request"]
+    finally:
+        await client.close()
+        await http_client.aclose()
+
+
+async def test_owned_http_client_uses_current_package_version(monkeypatch) -> None:
+    # Do not let host SOCKS proxy settings affect an offline client-construction test.
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    client = XiaoheiheApiClient("default")
+    try:
+        await client.start()
+        assert client._client.headers["User-Agent"] == f"AstrBot-Xiaoheihe-Adapter/{__version__}"
+    finally:
+        await client.close()
 
 
 async def test_comment_timeout_becomes_send_unknown() -> None:

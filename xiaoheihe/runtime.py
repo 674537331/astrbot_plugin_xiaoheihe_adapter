@@ -680,6 +680,8 @@ class RuntimeServices:
             content, int(self.config.snapshot()["reply"]["max_reply_chars"])
         )
         for comment in comments:
+            if not _recent_comment_matches_route(comment, route):
+                continue
             user = comment.get("user", comment.get("sender", {}))
             user = user if isinstance(user, dict) else {}
             uid = str(
@@ -695,7 +697,9 @@ class RuntimeServices:
                 )
             )
             candidate = str(comment.get("content", comment.get("text", ""))).strip()
-            comment_id = str(comment.get("comment_id", comment.get("id", "")))
+            comment_id = str(
+                comment.get("comment_id", comment.get("commentid", comment.get("id", "")))
+            )
             timestamp_value = comment.get(
                 "created_at",
                 comment.get("timestamp", comment.get("time")),
@@ -706,7 +710,9 @@ class RuntimeServices:
                     comment_time /= 1000
             except (TypeError, ValueError):
                 continue
-            within_window = attempted_at - 600 <= comment_time <= time.time() + 120
+            # API timestamps may be rounded to seconds. Older identical replies
+            # must not be mistaken for the HTTP attempt currently being checked.
+            within_window = attempted_at - 5 <= comment_time <= time.time() + 120
             if (
                 self_uid
                 and uid == self_uid
@@ -1221,6 +1227,38 @@ class RuntimeServices:
         self._configured_adapters.clear()
         self._started = False
         unbind_runtime(self)
+
+
+def _recent_comment_matches_route(comment: dict[str, Any], route: RoutingTarget) -> bool:
+    """Require explicit, non-conflicting target fields before confirming a write.
+
+    The recent-comments endpoint's server-side filtering is not a verified
+    guarantee. Missing route data therefore leaves the attempt uncertain.
+    """
+
+    def values(source: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
+        return [str(source[key]).strip() for key in keys if source.get(key) is not None]
+
+    post_ids = values(comment, ("post_id", "link_id", "linkid"))
+    link = comment.get("link")
+    if isinstance(link, dict):
+        post_ids.extend(values(link, ("post_id", "link_id", "linkid", "id")))
+    root_ids = values(comment, ("root_comment_id", "root_id", "rootCommentId"))
+    reply_ids = values(comment, ("parent_comment_id", "reply_id"))
+
+    def normalized(value: str) -> str:
+        return "" if value in {"", "0", "-1"} else value
+
+    return bool(
+        post_ids
+        and all(post_id == route.post_id for post_id in post_ids)
+        and root_ids
+        and all(normalized(root_id) == normalized(route.root_comment_id) for root_id in root_ids)
+        and reply_ids
+        and all(
+            normalized(reply_id) == normalized(route.parent_comment_id) for reply_id in reply_ids
+        )
+    )
 
 
 def _iso_now() -> str:

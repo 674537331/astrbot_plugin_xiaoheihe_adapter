@@ -20,6 +20,10 @@ EXCLUDED = {
     ".git",
     ".pytest_cache",
     ".ruff_cache",
+    ".venv",
+    "venv",
+    "node_modules",
+    "htmlcov",
     "work",
     "outputs",
     "__pycache__",
@@ -48,19 +52,22 @@ class BasicHtmlParser(HTMLParser):
 
 
 def files() -> list[Path]:
-    return [
-        path
-        for path in ROOT.rglob("*")
-        if path.is_file()
-        and path.name not in EXCLUDED_FILES
-        and not any(
-            part in EXCLUDED
-            or part == ".codex-remote-attachments"
-            or part.startswith(EXCLUDED_PREFIXES)
-            or part.endswith(".egg-info")
-            for part in path.relative_to(ROOT).parts
+    result = []
+    for directory, subdirectories, filenames in ROOT.walk():
+        subdirectories[:] = [
+            name
+            for name in subdirectories
+            if name not in EXCLUDED
+            and name != ".codex-remote-attachments"
+            and not name.startswith(EXCLUDED_PREFIXES)
+            and not name.endswith(".egg-info")
+        ]
+        result.extend(
+            directory / name
+            for name in filenames
+            if name not in EXCLUDED_FILES and (directory / name).is_file()
         )
-    ]
+    return result
 
 
 def _release_version_failures() -> list[str]:
@@ -110,6 +117,10 @@ def _release_version_failures() -> list[str]:
     runtime_source = (ROOT / "xiaoheihe" / "runtime.py").read_text(encoding="utf-8")
     if '"version": f"v{__version__}"' not in runtime_source:
         failures.append("xiaoheihe/runtime.py: status version must use package __version__")
+
+    api_source = (ROOT / "xiaoheihe" / "api_client.py").read_text(encoding="utf-8")
+    if 'f"AstrBot-Xiaoheihe-Adapter/{__version__}"' not in api_source:
+        failures.append("xiaoheihe/api_client.py: User-Agent version must use package __version__")
 
     approval_harness = (ROOT / "tests" / "fixtures" / "approval_page_harness.html").read_text(
         encoding="utf-8"
