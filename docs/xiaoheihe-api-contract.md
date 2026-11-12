@@ -1,6 +1,6 @@
-# 小黑盒 API 契约与验证状态（v1.3.5）
+# 小黑盒 API 契约与验证状态（v1.3.6）
 
-v1.3.5 仅修复插件日志规范和相关配置/显示，不更改本页所列小黑盒端点、签名算法、评论字段或发送状态机；真实账号验证边界沿用 v1.3.4 的明确记录。
+v1.3.6 将评论写入签名升级至 v16（AES-256-GCM），并对齐浏览器写请求参数。端点、评论表单和发送状态机不变；新增 `cryptography>=44.0.3` 依赖。真实浏览器抓包回解密和发评成功来自 issue #35 / PR #36 的贡献者，维护验证为离线协议与回归测试。
 
 ## 重要声明
 
@@ -46,19 +46,23 @@ device_info=Chrome
 
 ### 写请求的 `_rnd` 签名
 
-写请求（目前只有创建评论）走网页客户端的写契约：域名 `api.xiaoheihe.cn`，查询参数用 `app=heybox`、`web_version=3.0`、`x_client_version=`（空但必须存在），**URL 不带 `heybox_id`**，并额外追加一个 `_rnd`：
+写请求（目前只有创建评论）走网页客户端的写契约：域名 `api.xiaoheihe.cn`，查询参数用 `app=heybox`、`web_version=3.0`、`x_client_version=`（空值），**保留 `heybox_id`，移除 `device_info` 与 `_notip`**，并额外追加 v16 `_rnd`：
 
 ```text
-_rnd = "15:" + HMAC_SHA256(key=secret, msg=secret + nonce + _time + ":" + nonce).hex()
+path = pathname（已有末尾 / 时保留，否则追加 /）
+plaintext = UTF8(JSON.stringify([String(_time), String(nonce), path]))
+iv = 12 bytes of cryptographically secure randomness
+ciphertext_and_tag = AES_256_GCM(key, iv, plaintext, AAD="heybox-rnd:v16")
+_rnd = "16:" + base64url(iv || ciphertext_and_tag), without padding
 ```
 
-`secret` / 版本号是网页包里的公开常量（`request_signing._WRITE_RND_VERSION` / `_WRITE_RND_SECRET`）。缺 `_rnd` 时服务端返回 `status=failed, msg=缺失参数`，即使 `hkey`、`_time`、`nonce` 全都有效；PR #32 的对照请求复现了这一情形。上游换包后这两个常量或其他字段可能变化，「缺失参数」需要结合当前请求契约排查。
+`request_signing._WRITE_RND16_KEY_B64` 是网页包的公开 32 字节密钥常量，`_WRITE_RND16_AAD` 是对应的附加认证数据；两者均不是账号凭据。AES-GCM 输出包含 16 字节认证标签。时间、nonce 与路径均参与签名，每次请求生成独立 IV，不能再使用 v15 固定长度摘要或通过重复调用签名函数比对等值。两参数辅助调用仍生成根路径 `/` 的签名；实际写请求必须传入 `contract.path`。
 
-端点通过 `Endpoint.write_signature` 声明自己需要写签名，`_request()` 据此切换参数集并追加 `_rnd`；读请求路径不受影响。
+端点通过 `Endpoint.write_signature` 声明自己需要写签名，`_request()` 据此切换请求局部参数并追加 `_rnd`；读取接口继续使用原 `app=web`、`web_version=2.5`、`device_info=Chrome` 与 `_notip=true`，不追加写签名。
 
-v1.3.4 的签名在限流等待结束后生成，安全 GET 的每次重试也会重新签名。评论 POST 不自动重试；已发送但无法确认结果的情形继续由发送闸门核对。若写接口返回“缺失参数”，客户端提供 `write_contract` 分类及网页签名排查提示；这不证明只有常量失效，仍需核对上游字段、域名和登录态。
+签名在限流等待结束后生成，安全 GET 每次重试刷新签名。评论 POST 不自动重试；已发送但无法确认结果的情形继续由发送闸门核对。若写接口返回“缺失参数”，客户端提供 `write_contract` 分类及网页签名排查提示；其他拒绝仍按实际业务响应处理，不仅凭错误文案认定签名或登录失效。
 
-验证来源：[PR #32](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/32) 贡献者在 AstrBot 4.29.3 下提供了参数对照和单账号真实发送成功结果；[xhhRobot 2026-10-06 更新](https://github.com/SomeOvO/xhhRobot/commit/b709386e52f471269b37f9ddc5a35a8adaa81507) 也报告了评论接口变化并采用相同形状的附加签名。本轮维护独立复核固定向量、请求形状与离线回归，未使用维护者账号真实发评，也未将贡献者的实测扩大为全部账号或后续上游版本的保证。
+验证来源：[issue #35](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/issues/35) / [PR #36](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/36) 贡献者 @zyzeyu 于 2026-11-12 提供浏览器 `_rnd` 回解密和补丁后真实发评成功结果。维护复核使用 Node.js crypto 独立生成的 ASCII / UTF-8 固定 IV 向量、独立常量回解密、随机 IV 和 MockTransport 请求形状测试。`heybox_id` / `device_info` / `_notip` 的调整与签名升级一并实测，未逐项证明其必要性。本轮未使用维护者账号真实发评，不将贡献者的单账号结果扩大为所有账号或后续上游版本的保证。历史 v15 行为见 v1.3.4 发布记录与 PR #32；上游仍可能轮换公开常量或请求字段。
 
 ## 通知契约
 
@@ -194,7 +198,7 @@ GET /<plugin>/feed/topics/probe?profile_id=<id>[&topic_id=<id>]
 POST https://api.xiaoheihe.cn/bbs/app/comment/create
 ```
 
-查询参数走写契约（`app=heybox`、`web_version=3.0`、`x_client_version=`、`_rnd=15:<sig>`，不带 `heybox_id`），表单字段为 `is_cy` / `link_id` / `reply_id` / `root_id` / `text`。
+查询参数走写契约（`app=heybox`、`web_version=3.0`、`x_client_version=`、`_rnd=16:<base64url>`，保留 `heybox_id` 并移除 `device_info` / `_notip`），表单字段为 `is_cy` / `link_id` / `reply_id` / `root_id` / `text`。
 
 插件的写入安全语义比 HTTP 成功/失败更严格：
 
@@ -219,7 +223,7 @@ POST https://api.xiaoheihe.cn/bbs/app/comment/create
 - 多分区去重/排序/部分失败/全部失败回退；
 - Plugin Page 只读探测；
 - 评论发送成功/失败/状态未知和重复发送闸门；
-- 写请求参数集与 `_rnd` 签名（固定向量，已与网页包算法交叉验证）；
+- v16 写请求参数集与 `_rnd` 签名（Node.js 独立向量、回解密、随机 IV、末尾斜杠和读写隔离）；
 - 401/403/429/5xx/网络异常；
 - 日志和响应脱敏。
 

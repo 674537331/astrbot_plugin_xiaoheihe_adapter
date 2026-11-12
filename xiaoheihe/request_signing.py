@@ -3,11 +3,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import hmac
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .models import Credentials
 
@@ -108,15 +109,10 @@ def ensure_client_identity(
     return changed
 
 
-# The web client sends an extra `_rnd` signature on write requests. The server
-# answers `缺失参数` when it is missing, even when `hkey`, `_time` and `nonce`
-# are all valid, so a write is never accepted without it. Both constants are
-# public values shipped in the www.xiaoheihe.cn bundle; they are not secrets of
-# this project and rotate when the upstream client changes.
-# [rnd16][2026-11-12] 网页端写入签名升级到 v16：AES-GCM(32B key, 12B IV, AAD=heybox-rnd:v16)
-# 明文 = JSON.stringify([time, nonce, pathname+"/"])，输出 "16:" + base64url(iv+ct+tag)。
-# 旧 v15 HMAC 摘要已被服务端拒收（表现为"评论功能暂不可用"）。已用真实浏览器
-# 抓包的 _rnd 回解密验证算法一致。密钥为 www.xiaoheihe.cn 前端 bundle 公开常量。
+# The v16 web write contract uses AES-256-GCM with a fresh 12-byte IV and
+# JSON.stringify([time, nonce, pathname + "/"]). The key and AAD are public
+# web-client constants, not project credentials. Upstream may rotate them.
+# Protocol and contributor verification: issue #35 / PR #36 (2026-11-12).
 _WRITE_RND16_KEY_B64 = "HFFSTsqmvG3uGxPNXDQW+1VARfqgG4nT6LS1PX7F8NQ="  # gitleaks:allow
 _WRITE_RND16_AAD = b"heybox-rnd:v16"
 
@@ -124,18 +120,15 @@ _WRITE_RND16_AAD = b"heybox-rnd:v16"
 def build_write_rnd(nonce: str, timestamp: str, pathname: str = "") -> str:
     """Return the `_rnd` write signature in `16:<base64url(iv||ct||tag)>` form."""
 
-    import base64 as _b64
-    import os as _os
-
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-    key = _b64.b64decode(_WRITE_RND16_KEY_B64)
-    iv = _os.urandom(12)
+    key = base64.b64decode(_WRITE_RND16_KEY_B64)
+    iv = secrets.token_bytes(12)
     path = pathname if pathname.endswith("/") else f"{pathname}/"
-    plaintext = json.dumps([str(timestamp), str(nonce), path], separators=(",", ":")).encode()
+    plaintext = json.dumps(
+        [str(timestamp), str(nonce), path], ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
     ciphertext = AESGCM(key).encrypt(iv, plaintext, _WRITE_RND16_AAD)
     raw = iv + ciphertext
-    encoded = _b64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
     return f"16:{encoded}"
 
 

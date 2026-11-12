@@ -6,7 +6,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from tests.helpers import load_fixture
+from tests.helpers import decrypt_write_rnd, load_fixture
 from xiaoheihe import __version__
 from xiaoheihe.api_client import (
     CredentialInvalidError,
@@ -17,8 +17,7 @@ from xiaoheihe.api_client import (
 )
 from xiaoheihe.models import Credentials, NotificationType, RoutingTarget, ThreadContext
 from xiaoheihe.rate_limiter import AsyncRateLimiter
-from xiaoheihe.request_signing import RequestSigner, build_write_rnd, generate_hkey
-from tests.test_request_signing import decrypt_write_rnd
+from xiaoheihe.request_signing import RequestSigner, generate_hkey
 
 
 def credentials() -> Credentials:
@@ -474,7 +473,11 @@ async def test_comment_send_success() -> None:
         assert "_notip" not in query
         assert query["_rnd"].startswith("16:")
         assert "=" not in query["_rnd"]
-        assert decrypt_write_rnd(query["_rnd"]) == [query["_time"], query["nonce"], f"{request.url.path}/"]
+        assert decrypt_write_rnd(query["_rnd"]) == [
+            query["_time"],
+            query["nonce"],
+            f"{request.url.path}/",
+        ]
         assert query["hkey"] == generate_hkey(request.url.path, int(query["_time"]), query["nonce"])
         body = parse_qs(request.content.decode("utf-8"))
         assert body == {
@@ -518,6 +521,8 @@ async def test_write_contract_does_not_leak_into_subsequent_read() -> None:
         assert query["app"] == "web"
         assert query["web_version"] == "2.5"
         assert query["heybox_id"] == "10001"
+        assert query["device_info"] == "Chrome"
+        assert query["_notip"] == "true"
         assert "x_client_version" not in query
         assert "_rnd" not in query
         assert observed[0].url.params["nonce"] != query["nonce"]

@@ -6,9 +6,16 @@
 [![CodeQL](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml/badge.svg)](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-当前版本：**v1.3.5**
+当前版本：**v1.3.6**
 
 小黑盒通知会转换为 `AstrBotMessage`，通过 `commit_event()` 进入 AstrBot 原生事件队列。模型、人格、会话历史、记忆、Agent、MCP、Skills、Web Search 和已授权工具仍由 AstrBot 负责；本插件负责小黑盒平台接入、上下文构建、图片预处理、幂等发送与主动浏览。
+
+## v1.3.6 重点
+
+- 合入 @zyzeyu 的 [PR #36](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/36)，修复 [issue #35](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/issues/35)：网页评论 `_rnd` 签名从 v15 升级到 v16（AES-256-GCM），绑定本次时间、nonce 和端点路径，每次请求使用随机 IV。
+- 写请求保留 `heybox_id`，移除 `device_info` / `_notip`，读取接口继续使用原参数集。
+- 新增 `cryptography>=44.0.3` 运行依赖；更新时需完成依赖安装并重载插件。配置与数据库无需迁移，原有登录态可继续使用。
+- 补充 Node.js 独立签名向量、回解密、随机 IV、路径与读写隔离回归；真实发评验证来自贡献者，本轮维护执行离线测试，详见 [测试说明](docs/testing.md)。
 
 ## v1.3.5 重点
 

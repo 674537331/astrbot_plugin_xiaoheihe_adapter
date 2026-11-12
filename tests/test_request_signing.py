@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import pytest
 
+from tests.helpers import decode_write_rnd, decrypt_write_rnd
 from xiaoheihe.models import Credentials
 from xiaoheihe.request_signing import (
-    _WRITE_RND16_AAD,
-    _WRITE_RND16_KEY_B64,
     RequestSigner,
     build_write_rnd,
     ensure_client_identity,
@@ -92,37 +90,56 @@ def test_missing_client_identity_is_generated_once() -> None:
     assert credentials.cookies["x_xhh_tokenid"] == first_token
 
 
-def decode_write_rnd(rnd: str) -> tuple[bytes, bytes]:
-    """Split a `16:<base64url(iv||ct||tag)>` signature into (iv, ciphertext+tag)."""
+@pytest.mark.parametrize(
+    ("pathname", "expected"),
+    [
+        (
+            "/bbs/app/comment/create",
+            "16:AAECAwQFBgcICQoLfkeZnJBDf8gtT6mv9hPslIwrekJzKpip3WoO7J-NyPi6TamAEDR6bw4jWpVVayUz"
+            "jOqyFv336KZW5MZy_f87u-vhOt0JMQUmBhRRU6Wdai4dt561cHVIpVghnYQ",
+        ),
+        (
+            "/测试/评论/",
+            "16:AAECAwQFBgcICQoLfkeZnJBDf8gtT6mv9hPslIwrekJzKpip3WoO7J-NyPi6TamAEDR6bw4jWpVVayUz"
+            "jOqykioPL2izuwG-Fnr4ZKq3SI39iX4-bShjI_DKPWsGgOA",
+        ),
+    ],
+)
+def test_write_rnd_matches_node_crypto_vector(monkeypatch, pathname: str, expected: str) -> None:
+    # Independently generated with Node crypto.createCipheriv('aes-256-gcm'),
+    # JSON.stringify and IV bytes 00..0b. Only the test fixes the random input.
+    def fixed_iv(length: int) -> bytes:
+        assert length == 12
+        return bytes(range(length))
 
-    version, payload = rnd.split(":", 1)
-    assert version == "16"
-    raw = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
-    return raw[:12], raw[12:]
+    monkeypatch.setattr("xiaoheihe.request_signing.secrets.token_bytes", fixed_iv)
+    assert build_write_rnd("0123456789ABCDEF0123456789ABCDEF", "1700000000", pathname) == expected
 
 
-def decrypt_write_rnd(rnd: str) -> list[str]:
-    """Decrypt a v16 `_rnd` signature back to its JSON plaintext list."""
-
-    iv, ciphertext = decode_write_rnd(rnd)
-    key = base64.b64decode(_WRITE_RND16_KEY_B64)
-    return json.loads(AESGCM(key).decrypt(iv, ciphertext, _WRITE_RND16_AAD))
-
-
-def test_write_rnd_matches_web_client_vector() -> None:
-    # Cross-checked against the web bundle algorithm and a real browser capture:
-    # AES-256-GCM(key=public bundle constant, AAD="heybox-rnd:v16") over
-    # JSON.stringify([time, nonce, pathname + "/"]) with a random 12-byte IV.
-    rnd = build_write_rnd(
-        "0123456789ABCDEF0123456789ABCDEF", "1700000000", "/bbs/app/comment/create"
-    )
+@pytest.mark.parametrize(
+    "pathname", ["", "/", "/bbs/app/comment/create", "/bbs/app/comment/create/"]
+)
+def test_write_rnd_round_trip(pathname: str) -> None:
+    rnd = build_write_rnd("0123456789ABCDEF0123456789ABCDEF", "1700000000", pathname)
     assert rnd.startswith("16:")
     assert "=" not in rnd
     assert decrypt_write_rnd(rnd) == [
         "1700000000",
         "0123456789ABCDEF0123456789ABCDEF",
-        "/bbs/app/comment/create/",
+        pathname if pathname.endswith("/") else f"{pathname}/",
     ]
+
+
+def test_write_rnd_uses_fresh_iv_for_identical_inputs() -> None:
+    first = build_write_rnd("fixed", "100", "/bbs/app/comment/create")
+    second = build_write_rnd("fixed", "100", "/bbs/app/comment/create")
+    assert decode_write_rnd(first)[0] != decode_write_rnd(second)[0]
+    assert first != second
+    assert (
+        decrypt_write_rnd(first)
+        == decrypt_write_rnd(second)
+        == ["100", "fixed", "/bbs/app/comment/create/"]
+    )
 
 
 def test_write_rnd_defaults_to_root_path() -> None:

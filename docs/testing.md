@@ -1,21 +1,29 @@
-# 测试说明（v1.3.5）
+# 测试说明（v1.3.6）
 
 ## 最近一次完整验证
 
-日期：**2026-11-07**
+日期：**2026-11-12**
 
-v1.3.5 公共日志修复的本地验证：
+v1.3.6 网页写签名升级的本地验证：
 
 ```text
-330 passed
-TOTAL 4136 statements / 1354 branches
+337 passed
+TOTAL 4143 statements / 1354 branches
 coverage.py 总覆盖率（启用分支计数）：84%
 语句覆盖率：87%；分支覆盖率：72%
 ```
 
 覆盖率范围见 `pyproject.toml`：统计 `xiaoheihe` 核心服务，`adapter.py`、`event.py`、`web_api.py` 和仓库入口 `main.py` 不计入该百分比；这些入口仍有 AstrBot stub 契约测试，不能将 84% 理解为完整宿主运行时的覆盖率。
 
-同轮本地验证包括仓库版本/schema/页面及公共 logger 规则、Ruff lint/format、Python 编译、前端 JavaScript 语法、AstrBot stub 导入、AstrBot 4.24.2 / 4.26.2 / 4.29.4 包级接口契约及 Gitleaks 扫描。远端 CI、CodeQL 与 Dependency Review 以 v1.3.5 维护 PR 的 GitHub Actions 结果为准。
+同轮本地验证包括仓库版本/schema/页面及公共 logger 规则、Ruff lint/format、Python 编译、前端 JavaScript 语法、AstrBot stub 导入和 AstrBot 4.24.2 / 4.26.2 / 4.29.4 包级接口契约。完整回归使用 cryptography 50.0.2；依赖下限 cryptography 44.0.3 另通过 38 项签名与 API Client 测试。远端 CI、CodeQL、Secret Scan 与 Dependency Review 以 v1.3.6 维护 PR 的 GitHub Actions 结果为准。
+
+## v1.3.6 回归重点
+
+- Node.js crypto 独立生成的固定 IV 向量验证 AES-256-GCM、AAD、时间/nonce 顺序、ASCII / UTF-8 JSON 编码和 base64url 无 padding 输出；生产代码始终使用随机 IV。
+- 签名回解密使用测试端独立的协议常量，覆盖根路径、无末尾斜杠和已有末尾斜杠；相同输入的两次签名使用不同 IV。
+- MockTransport 校验实际评论路径参与签名，`heybox_id` 保留、`device_info` / `_notip` 移除；后续读取仍保留原读参数且不携带 `_rnd`。
+- 签名继续在限流后生成，评论失败不重复 POST，发送核对、幂等、凭证脱敏和公共 logger 规则继续通过全量回归。
+- 依赖下限与当前加密库版本分别验收，包级版本、Issue 默认版本和管理页 fixture 与 v1.3.6 一致。
 
 ## v1.3.5 回归重点
 
@@ -28,7 +36,7 @@ coverage.py 总覆盖率（启用分支计数）：84%
 
 ## v1.3.4 回归重点
 
-- 固定签名向量与评论写参数：主 API 域名、空 `x_client_version`、不携带 `heybox_id`，`_rnd` 和 hkey 使用同一 nonce/时间。
+- 历史 v15 固定签名向量与评论写参数已由 v1.3.6 的 v16 回解密和独立向量测试替代；主 API 域名、空 `x_client_version`、`_rnd` 和 hkey 使用同一 nonce/时间继续覆盖。
 - 写后读取继续使用原读参数集，无写参数污染；签名在限流后生成，安全 GET 的每次重试刷新 nonce 与 hkey。
 - 评论 HTTP 429/500/502/503 与超时不重复 POST；明确拒绝进入终态，5xx/异常响应进入 `send_unknown`，二次 delivery 继续被数据库闸门阻止。
 - 核对近期评论同时验证机器人 UID、正文、帖子、根楼层、直接回复目标和发送时间；缺字段、目标冲突、旧同文评论均不能确认成功。顶级评论的 0/-1 空目标形状与带 `link` 对象的回复可确认。
@@ -37,7 +45,7 @@ coverage.py 总覆盖率（启用分支计数）：84%
 
 ## 验证边界
 
-本轮没有维护者小黑盒凭据，未实际扫码登录、发评、上传图片或开启自动发帖。真实评论发送成功的证据来自 [PR #32](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/32) 的贡献者，不能替代维护者部署后的账号验收。包级 AstrBot 检查只核对发行包所需文件、公开符号和 Agent 阶段顺序，未启动全部宿主依赖。
+本轮没有维护者小黑盒凭据，未实际扫码登录、发评、上传图片或开启自动发帖。v16 真实浏览器签名回解密与评论发送成功的证据来自 [issue #35](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/issues/35) / [PR #36](https://github.com/674537331/astrbot_plugin_xiaoheihe_adapter/pull/36) 的贡献者，不能替代维护者部署后的账号验收；写参数组合一并实测，未单独证明各字段必要性。包级 AstrBot 检查只核对发行包所需文件、公开符号和 Agent 阶段顺序，未启动全部宿主依赖。
 
 ## 本地执行
 
@@ -55,7 +63,7 @@ coverage run -m pytest -q
 coverage report
 ```
 
-若本机设置了 SOCKS 代理，httpx 还需要其可选的 `socksio` 依赖。离线单元测试不依赖代理；可在测试命令进程中清除代理环境变量，避免环境设置影响客户端构造。本轮本地测试采用该方式，不修改插件运行时的代理策略。
+若本机设置了 SOCKS 代理，httpx 还需要其可选的 `socksio` 依赖，可安装 `httpx[socks]`。本轮本地验证在测试环境安装了该可选依赖后运行完整回归，保留继承的代理环境变量，不修改插件运行时的代理策略。测试网络交互使用 MockTransport，不发送真实评论。
 
 CI 使用 Python 3.12 执行核心测试，并额外安装不同 AstrBot 版本做包级 API 契约检查。
 
