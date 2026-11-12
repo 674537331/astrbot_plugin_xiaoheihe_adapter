@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
+import json
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .models import Credentials
 
@@ -107,21 +109,27 @@ def ensure_client_identity(
     return changed
 
 
-# The web client sends an extra `_rnd` signature on write requests. The server
-# answers `缺失参数` when it is missing, even when `hkey`, `_time` and `nonce`
-# are all valid, so a write is never accepted without it. Both constants are
-# public values shipped in the www.xiaoheihe.cn bundle; they are not secrets of
-# this project and rotate when the upstream client changes.
-_WRITE_RND_VERSION = "15"
-_WRITE_RND_SECRET = "Z7mFG4tQp9Ws2LxB8H"  # noqa: S105 - public web constant; gitleaks:allow
+# The v16 web write contract uses AES-256-GCM with a fresh 12-byte IV and
+# JSON.stringify([time, nonce, pathname + "/"]). The key and AAD are public
+# web-client constants, not project credentials. Upstream may rotate them.
+# Protocol and contributor verification: issue #35 / PR #36 (2026-11-12).
+_WRITE_RND16_KEY_B64 = "HFFSTsqmvG3uGxPNXDQW+1VARfqgG4nT6LS1PX7F8NQ="  # gitleaks:allow
+_WRITE_RND16_AAD = b"heybox-rnd:v16"
 
 
-def build_write_rnd(nonce: str, timestamp: str) -> str:
-    """Return the `_rnd` write signature in `<version>:<hex digest>` form."""
+def build_write_rnd(nonce: str, timestamp: str, pathname: str = "") -> str:
+    """Return the `_rnd` write signature in `16:<base64url(iv||ct||tag)>` form."""
 
-    message = f"{_WRITE_RND_SECRET}{nonce}{timestamp}:{nonce}".encode()
-    digest = hmac.new(_WRITE_RND_SECRET.encode(), message, hashlib.sha256).hexdigest()
-    return f"{_WRITE_RND_VERSION}:{digest}"
+    key = base64.b64decode(_WRITE_RND16_KEY_B64)
+    iv = secrets.token_bytes(12)
+    path = pathname if pathname.endswith("/") else f"{pathname}/"
+    plaintext = json.dumps(
+        [str(timestamp), str(nonce), path], ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    ciphertext = AESGCM(key).encrypt(iv, plaintext, _WRITE_RND16_AAD)
+    raw = iv + ciphertext
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return f"16:{encoded}"
 
 
 def generate_hkey(path: str, timestamp: int, nonce: str) -> str:

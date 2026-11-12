@@ -16,7 +16,7 @@ body:
     id: plugin_version
     attributes:
       label: 插件版本
-      value: v1.3.5
+      value: v1.3.6
     validations:
       required: true
   - type: dropdown

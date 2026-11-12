@@ -60,7 +60,7 @@ WEB_CLIENT_PARAMS = {
 }
 
 # Query flags the web client uses for write requests. They override the
-# read-only set above and the account id is left out of the URL.
+# read-only set above; account identity is retained in both request contracts.
 WRITE_CLIENT_PARAMS = {
     "app": "heybox",
     "web_version": "3.0",
@@ -406,7 +406,9 @@ class XiaoheiheApiClient:
             request_params.setdefault("heybox_id", self.credentials.uid)
         if contract.write_signature:
             request_params.update(WRITE_CLIENT_PARAMS)
-            request_params.pop("heybox_id", None)
+            # Match the v16 browser query without changing later read requests.
+            request_params.pop("device_info", None)
+            request_params.pop("_notip", None)
         headers: dict[str, str] = {}
         headers["Referer"] = "https://www.xiaoheihe.cn/"
         if self.credentials and self.credentials.access_token:
@@ -439,7 +441,7 @@ class XiaoheiheApiClient:
             )
             if contract.write_signature:
                 signed.params["_rnd"] = build_write_rnd(
-                    signed.params["nonce"], signed.params["_time"]
+                    signed.params["nonce"], signed.params["_time"], contract.path
                 )
             try:
                 response = await self._client.request(

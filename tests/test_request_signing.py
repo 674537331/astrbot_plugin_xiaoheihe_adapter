@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 
+import pytest
+
+from tests.helpers import decode_write_rnd, decrypt_write_rnd
 from xiaoheihe.models import Credentials
 from xiaoheihe.request_signing import (
     RequestSigner,
@@ -87,14 +90,59 @@ def test_missing_client_identity_is_generated_once() -> None:
     assert credentials.cookies["x_xhh_tokenid"] == first_token
 
 
-def test_write_rnd_matches_web_client_vector() -> None:
-    # Cross-checked against the web bundle algorithm with Node's crypto module:
-    # HMAC-SHA256(key=secret, msg=secret + nonce + timestamp + ":" + nonce).
+@pytest.mark.parametrize(
+    ("pathname", "expected"),
+    [
+        (
+            "/bbs/app/comment/create",
+            "16:AAECAwQFBgcICQoLfkeZnJBDf8gtT6mv9hPslIwrekJzKpip3WoO7J-NyPi6TamAEDR6bw4jWpVVayUz"
+            "jOqyFv336KZW5MZy_f87u-vhOt0JMQUmBhRRU6Wdai4dt561cHVIpVghnYQ",
+        ),
+        (
+            "/测试/评论/",
+            "16:AAECAwQFBgcICQoLfkeZnJBDf8gtT6mv9hPslIwrekJzKpip3WoO7J-NyPi6TamAEDR6bw4jWpVVayUz"
+            "jOqykioPL2izuwG-Fnr4ZKq3SI39iX4-bShjI_DKPWsGgOA",
+        ),
+    ],
+)
+def test_write_rnd_matches_node_crypto_vector(monkeypatch, pathname: str, expected: str) -> None:
+    # Independently generated with Node crypto.createCipheriv('aes-256-gcm'),
+    # JSON.stringify and IV bytes 00..0b. Only the test fixes the random input.
+    def fixed_iv(length: int) -> bytes:
+        assert length == 12
+        return bytes(range(length))
+
+    monkeypatch.setattr("xiaoheihe.request_signing.secrets.token_bytes", fixed_iv)
+    assert build_write_rnd("0123456789ABCDEF0123456789ABCDEF", "1700000000", pathname) == expected
+
+
+@pytest.mark.parametrize(
+    "pathname", ["", "/", "/bbs/app/comment/create", "/bbs/app/comment/create/"]
+)
+def test_write_rnd_round_trip(pathname: str) -> None:
+    rnd = build_write_rnd("0123456789ABCDEF0123456789ABCDEF", "1700000000", pathname)
+    assert rnd.startswith("16:")
+    assert "=" not in rnd
+    assert decrypt_write_rnd(rnd) == [
+        "1700000000",
+        "0123456789ABCDEF0123456789ABCDEF",
+        pathname if pathname.endswith("/") else f"{pathname}/",
+    ]
+
+
+def test_write_rnd_uses_fresh_iv_for_identical_inputs() -> None:
+    first = build_write_rnd("fixed", "100", "/bbs/app/comment/create")
+    second = build_write_rnd("fixed", "100", "/bbs/app/comment/create")
+    assert decode_write_rnd(first)[0] != decode_write_rnd(second)[0]
+    assert first != second
     assert (
-        build_write_rnd("0123456789ABCDEF0123456789ABCDEF", "1700000000")
-        == "15:7957b69b426ea6a38049ddf527a43d6dd33c8f77dac16eb4a71e40972506d18b"
+        decrypt_write_rnd(first)
+        == decrypt_write_rnd(second)
+        == ["100", "fixed", "/bbs/app/comment/create/"]
     )
-    assert (
-        build_write_rnd("fixed", "100")
-        == "15:c0d3f4c20f8df217223daaafca5c787f3723fe13c549273dae7a0a22953a8d2e"
-    )
+
+
+def test_write_rnd_defaults_to_root_path() -> None:
+    # Callers that do not know the endpoint path keep a valid signature whose
+    # pathname segment degrades to "/" (matches the old two-argument call site).
+    assert decrypt_write_rnd(build_write_rnd("fixed", "100")) == ["100", "fixed", "/"]
