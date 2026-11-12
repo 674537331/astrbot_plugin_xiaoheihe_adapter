@@ -406,7 +406,9 @@ class XiaoheiheApiClient:
             request_params.setdefault("heybox_id", self.credentials.uid)
         if contract.write_signature:
             request_params.update(WRITE_CLIENT_PARAMS)
-            request_params.pop("heybox_id", None)
+            # [rnd16] 真实浏览器写请求保留 heybox_id，且不带 device_info/_notip
+            request_params.pop("device_info", None)
+            request_params.pop("_notip", None)
         headers: dict[str, str] = {}
         headers["Referer"] = "https://www.xiaoheihe.cn/"
         if self.credentials and self.credentials.access_token:
@@ -439,7 +441,7 @@ class XiaoheiheApiClient:
             )
             if contract.write_signature:
                 signed.params["_rnd"] = build_write_rnd(
-                    signed.params["nonce"], signed.params["_time"]
+                    signed.params["nonce"], signed.params["_time"], contract.path
                 )
             try:
                 response = await self._client.request(
